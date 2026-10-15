@@ -3,7 +3,7 @@
 
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use serde::Serialize;
@@ -20,6 +20,8 @@ use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 
 pub enum Msg {
     Refresh,
+    /// 歌曲信息（标题、歌手、封面）变了：封面要重新读
+    PropsChanged,
     /// 页面刚加载好：强制把当前状态和封面重新推一遍
     Resync,
     Toggle,
@@ -50,6 +52,8 @@ pub struct MediaInfo {
 const MAX_COVER: u32 = 4 * 1024 * 1024;
 /// 系统常常连发好几个事件，攒 40ms 一起处理
 const DEBOUNCE: Duration = Duration::from_millis(40);
+/// 换歌后过这么久再补读一次封面：浏览器常常先报标题、封面图稍后才下载好
+const COVER_RETRIES: [Duration; 2] = [Duration::from_millis(1500), Duration::from_millis(4000)];
 
 pub fn spawn(app: AppHandle) -> Sender<Msg> {
     let (tx, rx) = channel();
@@ -72,7 +76,7 @@ fn subscribe(s: &Session, tx: &Sender<Msg>) -> windows::core::Result<[i64; 3]> {
     let (a, b, c) = (tx.clone(), tx.clone(), tx.clone());
     Ok([
         s.MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| {
-            let _ = a.send(Msg::Refresh);
+            let _ = a.send(Msg::PropsChanged);
             Ok(())
         }))?,
         s.PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| {
@@ -113,21 +117,43 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
     let mut cover_key = String::new();
     let mut last_cover: Vec<u8> = Vec::new();
 
+    // 换歌后排好的封面补读时间点；没有计划时就一直睡到有事件
+    let mut cover_retries: Vec<Instant> = Vec::new();
+
     let _ = tx.send(Msg::Refresh);
-    while let Ok(msg) = rx.recv() {
-        let mut force = matches!(msg, Msg::Resync);
-        control(&msg, current.as_ref());
+    loop {
+        let first = match cover_retries.iter().min() {
+            Some(&at) => match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                Ok(m) => Some(m),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
+            None => match rx.recv() {
+                Ok(m) => Some(m),
+                Err(_) => return Ok(()),
+            },
+        };
+        // 到了补读时间（等待超时）也要重新读封面
+        let mut refetch_cover = first.is_none();
+        let mut force = false;
+        let mut handle = |m: &Msg, cur: Option<&Session>| {
+            force |= matches!(m, Msg::Resync);
+            refetch_cover |= matches!(m, Msg::PropsChanged);
+            control(m, cur);
+        };
+        if let Some(m) = &first {
+            handle(m, current.as_ref());
+        }
         // 合并紧接着到来的消息
         loop {
             match rx.recv_timeout(DEBOUNCE) {
-                Ok(m) => {
-                    force |= matches!(m, Msg::Resync);
-                    control(&m, current.as_ref());
-                }
+                Ok(m) => handle(&m, current.as_ref()),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             }
         }
+        let now = Instant::now();
+        cover_retries.retain(|t| *t > now);
 
         if force {
             last_info = None;
@@ -156,9 +182,13 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
             last_info = Some(info.clone());
         }
 
-        // 封面只在换歌（或之前没拿到）时读取
+        // 封面在换歌、歌曲信息变化、之前没拿到、或到了补读时间时读取；
+        // 读到的和上次一样就不推送，页面不会白白刷新
         let key = format!("{}|{}|{}", info.source, info.title, info.artist);
-        if info.active && (key != cover_key || last_cover.is_empty()) {
+        if info.active && (key != cover_key || last_cover.is_empty() || refetch_cover) {
+            if key != cover_key {
+                cover_retries = COVER_RETRIES.iter().map(|d| now + *d).collect();
+            }
             cover_key = key;
             let bytes = current.as_ref().and_then(|s| read_cover(s).ok()).unwrap_or_default();
             if bytes.0 != last_cover {
@@ -175,12 +205,12 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
                 last_cover = bytes.0;
             }
         } else if !info.active && !last_cover.is_empty() {
+            cover_retries.clear();
             cover_key.clear();
             last_cover.clear();
             let _ = app.emit("media-cover", String::new());
         }
     }
-    Ok(())
 }
 
 fn control(msg: &Msg, s: Option<&Session>) {
@@ -189,7 +219,7 @@ fn control(msg: &Msg, s: Option<&Session>) {
         Msg::Toggle => s.TryTogglePlayPauseAsync().and_then(|op| op.join()),
         Msg::Next => s.TrySkipNextAsync().and_then(|op| op.join()),
         Msg::Prev => s.TrySkipPreviousAsync().and_then(|op| op.join()),
-        Msg::Refresh | Msg::Resync => Ok(true),
+        Msg::Refresh | Msg::Resync | Msg::PropsChanged => Ok(true),
     };
 }
 
