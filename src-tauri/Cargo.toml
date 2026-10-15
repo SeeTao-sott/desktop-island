@@ -20,6 +20,8 @@ windows = { version = "0.62", features = [
   "Foundation_Collections",
   "Media_Control",
   "Storage_Streams",
+  "System_Power",
+  "Win32_System_Power",
 ] }
 
 [profile.release]

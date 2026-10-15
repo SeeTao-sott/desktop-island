@@ -7,27 +7,50 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
+    <!-- 警告时的彩色光晕，在胶囊后面 -->
+    <div id="halo" class="glow halo"></div>
+
     <div id="island" class="island">
+      <div class="tint"></div>
+
       <!-- 收起 · 只有时间 -->
-      <div class="layer c-time">
+      <div class="layer compact c-time">
         <span class="time js-time"></span>
       </div>
 
       <!-- 收起 · 正在放歌 -->
-      <div class="layer c-music">
+      <div class="layer compact c-music">
         <img class="c-cover js-cover" alt="" />
         <span class="time js-time"></span>
         <span class="eq js-eq"><i></i><i></i><i></i></span>
       </div>
 
+      <!-- 收起 · 番茄钟倒计时 -->
+      <div class="layer compact c-pomo">
+        <svg class="ic ic-tomato" viewBox="0 0 24 24"><use href="#i-tomato" /></svg>
+        <span class="time js-pomo-left"></span>
+      </div>
+
+      <!-- 收起 · 番茄钟完成 -->
+      <div class="layer compact c-done">
+        <svg class="ic ic-ok" viewBox="0 0 24 24"><use href="#i-check" /></svg>
+        <span class="label">专注完成</span>
+      </div>
+
+      <!-- 收起 · 刚出现警告时的提示 -->
+      <div class="layer compact c-alert">
+        <svg class="ic ic-alert" viewBox="0 0 24 24"><use class="js-alert-icon" href="#i-battery" /></svg>
+        <span class="label js-alert-short"></span>
+      </div>
+
       <!-- 展开 · 时间和日期 -->
-      <div class="layer e-time">
+      <div class="layer expanded e-time">
         <div class="time-big js-time"></div>
         <div class="date js-date"></div>
       </div>
 
       <!-- 展开 · 音乐卡片 -->
-      <div class="layer e-music">
+      <div class="layer expanded e-music">
         <img class="e-cover js-cover" alt="" />
         <div class="info">
           <div class="track js-track">
@@ -53,8 +76,45 @@
           </div>
         </div>
       </div>
+
+      <!-- 展开 · 底部条：番茄钟 -->
+      <div class="layer strip s-pomo">
+        <svg class="ic ic-tomato" viewBox="0 0 24 24"><use href="#i-tomato" /></svg>
+        <span class="strip-text js-pomo-text"></span>
+        <div class="pills">
+          <button class="pill js-pomo-a"></button>
+          <button class="pill pill-quiet js-pomo-b"></button>
+        </div>
+      </div>
+
+      <!-- 展开 · 底部条：警告 -->
+      <div class="layer strip s-warn">
+        <svg class="ic ic-alert" viewBox="0 0 24 24"><use class="js-alert-icon" href="#i-battery" /></svg>
+        <span class="strip-text js-alert-long"></span>
+      </div>
     </div>
+
+    <!-- 番茄钟完成 / 新警告时闪一下的描边，在胶囊上面 -->
+    <div id="flash" class="glow flash"></div>
+
     <div id="fps" class="fps" hidden></div>
+
+    <svg width="0" height="0" style="position: absolute">
+      <symbol id="i-tomato" viewBox="0 0 24 24">
+        <path fill="#ff6b5a" d="M12 7.2c4.6 0 8 2.9 8 6.6S16.6 21 12 21s-8-3.4-8-7.2 3.4-6.6 8-6.6z" />
+        <path fill="#6fd08c" d="M12 3.2l1.3 2.6 2.8-.6-1.6 2.3 2.2 1.4h-3l-1.7 1.6-1.7-1.6h-3l2.2-1.4-1.6-2.3 2.8.6z" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4 18.7 7z" />
+      </symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24">
+        <path d="M16 6h-1V4H9v2H8a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1zm-1 13H9v-3h6z" />
+      </symbol>
+      <symbol id="i-thermo" viewBox="0 0 24 24">
+        <path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0zM12 20a2 2 0 0 1-1-3.7V9h2v7.3A2 2 0 0 1 12 20z" />
+      </symbol>
+    </svg>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

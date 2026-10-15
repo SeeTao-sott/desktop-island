@@ -1,11 +1,18 @@
 // 发布版不弹出控制台窗口
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alerts;
+mod config;
 mod hover;
 mod media;
+mod pomodoro;
 
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use tauri::{Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
+
+use alerts::{AlertHub, Alerts};
+use config::Config;
+use pomodoro::{PomoState, Pomodoro};
 
 /// 胶囊在窗口内的可交互区域（CSS 像素，相对窗口左上角）
 #[derive(Clone, Copy, Default, serde::Deserialize)]
@@ -28,7 +35,12 @@ pub struct IslandState {
 }
 
 #[tauri::command]
-fn media_cmd(tx: tauri::State<'_, media::MediaTx>, action: String) {
+fn set_hit_rect(state: State<'_, Arc<IslandState>>, rect: HitRect) {
+    *state.hit.lock().unwrap() = rect;
+}
+
+#[tauri::command]
+fn media_cmd(tx: State<'_, media::MediaTx>, action: String) {
     let msg = match action.as_str() {
         "toggle" => media::Msg::Toggle,
         "next" => media::Msg::Next,
@@ -40,8 +52,22 @@ fn media_cmd(tx: tauri::State<'_, media::MediaTx>, action: String) {
 }
 
 #[tauri::command]
-fn set_hit_rect(state: tauri::State<'_, Arc<IslandState>>, rect: HitRect) {
-    *state.hit.lock().unwrap() = rect;
+fn pomodoro_cmd(p: State<'_, Arc<Pomodoro>>, action: String) -> PomoState {
+    if action == "get" {
+        p.get()
+    } else {
+        p.act(&action)
+    }
+}
+
+#[tauri::command]
+fn alerts_get(hub: State<'_, Arc<AlertHub>>) -> Alerts {
+    hub.get()
+}
+
+#[tauri::command]
+fn config_get(cfg: State<'_, Config>) -> Config {
+    cfg.inner().clone()
 }
 
 /// 放到主屏幕顶部正中。用物理像素计算，DPI 缩放下也对得齐
@@ -61,16 +87,30 @@ fn main() {
 
     tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![set_hit_rect, media_cmd])
+        .invoke_handler(tauri::generate_handler![
+            set_hit_rect,
+            media_cmd,
+            pomodoro_cmd,
+            alerts_get,
+            config_get
+        ])
         .setup(move |app| {
+            let dir = app.path().app_config_dir()?;
+            let (cfg, cfg_path) = config::load(&dir);
+            eprintln!("配置文件: {}", cfg_path.display());
+
             let win = app.get_webview_window("main").expect("找不到主窗口");
             // 默认整个窗口点击穿透，鼠标进入胶囊时再由 hover 线程打开
             win.set_ignore_cursor_events(true)?;
             place_top_center(&win)?;
             win.show()?;
             hover::spawn(win, state.clone());
-            let tx = media::spawn(app.handle().clone());
-            app.manage(media::MediaTx(tx));
+
+            let handle = app.handle().clone();
+            app.manage(media::MediaTx(media::spawn(handle.clone())));
+            app.manage(Pomodoro::new(handle.clone(), cfg.pomodoro_minutes));
+            app.manage(alerts::spawn(handle, cfg.clone()));
+            app.manage(cfg);
             Ok(())
         })
         .on_window_event(|window, event| {

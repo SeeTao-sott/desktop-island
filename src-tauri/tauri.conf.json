@@ -13,9 +13,9 @@
     "windows": [
       {
         "label": "main",
-        "title": "灵动岛",
+        "title": "çµåŠ¨å²›",
         "width": 440,
-        "height": 180,
+        "height": 240,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
