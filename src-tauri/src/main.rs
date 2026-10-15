@@ -4,6 +4,7 @@
 mod alerts;
 mod autostart;
 mod config;
+mod desktop_icons;
 mod fileops;
 mod fullscreen;
 mod hotkey;
@@ -24,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{App, AppHandle, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
+use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
 use windows::core::w;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
 use windows::Win32::System::Threading::CreateMutexW;
@@ -159,7 +160,11 @@ fn place_window(win: &WebviewWindow, offset: (i32, i32)) -> tauri::Result<()> {
 
 fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &str) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
-    let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, shelf.is_some(), None::<&str>)?;
+    let has_shelf = shelf.is_some();
+    let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, has_shelf, None::<&str>)?;
+    let migrate = MenuItem::with_id(app, "migrate", "从桌面搬进架子…", has_shelf, None::<&str>)?;
+    let restore = MenuItem::with_id(app, "restore", "把桌面来的东西搬回桌面…", has_shelf, None::<&str>)?;
+    let icons = CheckMenuItem::with_id(app, "desktop_icons", "隐藏桌面图标", true, desktop_icons::hidden(), None::<&str>)?;
     let open_cfg = MenuItem::with_id(app, "open_config", "打开配置文件", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "重启（应用新配置）", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, autostart::is_enabled(), None::<&str>)?;
@@ -168,6 +173,9 @@ fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &
         app,
         &[
             &shelf_item,
+            &migrate,
+            &restore,
+            &icons,
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
@@ -179,6 +187,7 @@ fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &
     )?;
 
     let auto_item = auto.clone();
+    let icons_item = icons.clone();
     TrayIconBuilder::with_id("island")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .tooltip("灵动岛")
@@ -190,6 +199,21 @@ fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &
                 if let Some(s) = &shelf {
                     s.toggle();
                 }
+            }
+            // 打开架子，并在架子里弹出"搬家"/"搬回"的确认页
+            "migrate" | "restore" => {
+                if let Some(s) = &shelf {
+                    s.show(true);
+                    let _ = app.emit("shelf-sheet", event.id().as_ref());
+                }
+            }
+            "desktop_icons" => {
+                let want = icons_item.is_checked().unwrap_or(false);
+                let item = icons_item.clone();
+                // 资源管理器改完要一点时间，放到后台线程里等
+                std::thread::spawn(move || {
+                    let _ = item.set_checked(desktop_icons::set_hidden(want));
+                });
             }
             "open_config" => {
                 let _ = Command::new("notepad.exe").arg(&cfg_path).spawn();
@@ -240,6 +264,11 @@ fn main() {
             shelf_cmds::shelf_rename_category,
             shelf_cmds::shelf_remove_category,
             shelf_cmds::shelf_drag_out,
+            shelf_cmds::shelf_migrate_plan,
+            shelf_cmds::shelf_migrate,
+            shelf_cmds::shelf_restore_plan,
+            shelf_cmds::shelf_restore,
+            shelf_cmds::shelf_open_record,
             shelf_cmds::shelf_icon
         ])
         .setup(move |app| {

@@ -33,6 +33,9 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 use crate::fileops;
 
+mod migrate;
+pub use migrate::{HomeItem, MigrateResult, PlanItem};
+
 /// 默认分类，按这个顺序排在最前面
 pub const DEFAULT_CATEGORIES: [&str; 5] = ["软件", "文档", "图片", "压缩包", "其他"];
 /// 从架子移除的东西放这里，由用户自己决定删不删

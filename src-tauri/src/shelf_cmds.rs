@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::icons;
-use crate::shelf_fs::{OpResult, ShelfData, ShelfFs};
+use crate::shelf_fs::{HomeItem, MigrateResult, OpResult, PlanItem, ShelfData, ShelfFs};
 
 type Fs<'a> = State<'a, Arc<ShelfFs>>;
 
@@ -86,6 +86,45 @@ pub async fn shelf_rename_category(fs: Fs<'_>, old: String, new: String) -> Resu
 pub async fn shelf_remove_category(fs: Fs<'_>, name: String) -> Result<OpResult, String> {
     let fs = fs.inner().clone();
     blocking(move || fs.remove_category(name)).await
+}
+
+// ---------------- 桌面搬家 ----------------
+
+#[tauri::command]
+pub async fn shelf_migrate_plan(fs: Fs<'_>) -> Result<Vec<PlanItem>, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.migrate_plan()).await
+}
+
+#[tauri::command]
+pub async fn shelf_migrate(fs: Fs<'_>, paths: Vec<String>) -> Result<MigrateResult, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.migrate(paths)).await
+}
+
+#[tauri::command]
+pub async fn shelf_restore_plan(fs: Fs<'_>) -> Result<Vec<HomeItem>, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.restore_plan()).await
+}
+
+#[tauri::command]
+pub async fn shelf_restore(fs: Fs<'_>, homes: Vec<String>) -> Result<OpResult, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.restore(homes)).await
+}
+
+/// 用记事本打开搬家记录（只允许打开配置文件夹里的"搬家记录-*.txt"）
+#[tauri::command]
+pub fn shelf_open_record(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri::Manager;
+    let p = PathBuf::from(&path);
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    if p.parent() != Some(dir.as_path()) || !name.starts_with("搬家记录-") || !name.ends_with(".txt") {
+        return Err("只能打开搬家记录".into());
+    }
+    std::process::Command::new("notepad.exe").arg(&p).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// 开始把架子里的东西拖出去（拖完页面会收到 shelf-dragout-done）

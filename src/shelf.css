@@ -566,3 +566,129 @@ body:not([data-open="true"]) .fps {
   border-radius: 12px;
   font-size: 13.5px;
 }
+
+/* ---------- 阶段 4：确认页（从桌面搬家 / 搬回桌面） ---------- */
+.sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border-radius: inherit;
+  background: rgb(16, 16, 22);
+  opacity: 0;
+  transform: translate3d(0, 24px, 0);
+  transition:
+    opacity 0.18s,
+    transform 0.36s var(--ease-bounce);
+}
+.sheet.open {
+  opacity: 1;
+  transform: none;
+}
+/* 上面的 display: flex 会盖过 hidden，关掉后要真的不显示，否则透明的确认页会挡住点击 */
+.sheet[hidden] {
+  display: none;
+}
+.sheet-head {
+  padding: 18px 18px 10px;
+}
+.sheet-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.sheet-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--sub);
+}
+.sheet-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+}
+.sheet-list::-webkit-scrollbar {
+  width: 6px;
+}
+.sheet-list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.sheet-group {
+  margin: 12px 6px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(190, 205, 255, 0.85);
+}
+.sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: 10px;
+}
+.sheet-row:hover {
+  background: var(--hover);
+}
+.sheet-row input {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  accent-color: rgb(140, 170, 255);
+}
+.sheet-ic {
+  width: 26px;
+  height: 26px;
+}
+.sheet-ic img {
+  max-width: 26px;
+  max-height: 26px;
+}
+.sub.warn,
+.sheet-fail {
+  color: rgb(var(--c-gpu));
+}
+.sheet-fail {
+  margin: 2px 8px;
+  font-size: 12px;
+}
+.sheet-big {
+  margin: 18px 8px 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.sheet-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.pill {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: var(--pill);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.pill:active {
+  transform: scale(0.94);
+}
+.pill:disabled {
+  opacity: 0.45;
+}
+.pill-quiet {
+  background: transparent;
+  color: var(--sub);
+}
+.pill-primary {
+  background: rgba(140, 170, 255, 0.92);
+  color: #0d1020;
+  font-weight: 600;
+}

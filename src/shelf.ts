@@ -5,6 +5,7 @@ import { SPRING, fpsReporter } from "./motion";
 import { api, displayName, formatSize, parentName, type Category, type Item, type OpResult, type ShelfData } from "./shelf-api";
 import { reportOp, showError } from "./shelf-toast";
 import { closeMenu, menuOpen, openMenu, type MenuEntry } from "./shelf-menu";
+import { closeSheet, initSheet, sheetOpen, showSheet } from "./shelf-sheet";
 
 /** 默认分类的图标；自己建的分类用文件夹图标 */
 const ICONS: Record<string, string> = {
@@ -577,6 +578,7 @@ window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement && e.target.classList.contains("rename")) return;
   if (e.key === "Escape") {
     if (menuOpen()) return closeMenu();
+    if (sheetOpen()) return closeSheet();
     invoke("shelf_cmd", { action: "hide" }).catch(() => {});
     return;
   }
@@ -674,12 +676,16 @@ function applyState(st: ShelfState) {
   } else {
     search.blur();
     closeMenu();
+    closeSheet();
   }
   animator.kick();
 }
 
 listen<ShelfState>("shelf-state", (e) => applyState(e.payload));
 listen<ShelfData>("shelf-items", (e) => applyData(e.payload));
+// 托盘里点了"从桌面搬进架子…"/"搬回桌面…"
+initSheet(() => api.list().then(applyData).catch(() => {}));
+listen<string>("shelf-sheet", (e) => showSheet(e.payload));
 api.list().then(applyData).catch((e) => showError(`读取架子失败：${e}`));
 
 // ---------- 告诉 Rust 哪块区域算"在架子上"：面板 + 右边的空隙 ----------

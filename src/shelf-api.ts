@@ -24,7 +24,7 @@ export interface ShelfData {
 
 export interface OpResult {
   opId: number | null;
-  kind: "put" | "move" | "rename" | "remove" | "undo" | "rename-category" | "remove-category";
+  kind: "put" | "move" | "rename" | "remove" | "undo" | "rename-category" | "remove-category" | "migrate" | "restore";
   category: string | null;
   moved: { from: string; to: string; name: string }[];
   failed: { name: string; reason: string }[];
