@@ -155,10 +155,9 @@ function render() {
 }
 
 // ---------- 提醒：描边闪几下 + 胶囊弹一下 ----------
-const FLASH_RGB: Record<string, string> = { done: "94, 224, 138", battery: "255, 179, 64", gpu: "255, 90, 79" };
-
 function pulse(kind: "done" | Level) {
-  flash.style.setProperty("--flash", FLASH_RGB[kind] ?? FLASH_RGB.done);
+  const rgb = getComputedStyle(document.documentElement).getPropertyValue(`--c-${kind}`).trim();
+  flash.style.setProperty("--flash", rgb || "var(--c-done)");
   flash.getAnimations().forEach((a) => a.cancel());
   flash.animate(
     [{ opacity: 0 }, { opacity: 1 }, { opacity: 0.15 }, { opacity: 1 }, { opacity: 0.15 }, { opacity: 1 }, { opacity: 0 }],
@@ -229,6 +228,45 @@ function reportFps(frames: number[]) {
   fpsEl.hidden = false;
   fpsEl.textContent = `动画 ${Math.round(1000 / avg)} fps · 最慢一帧 ${worst.toFixed(1)}ms · ${frames.length} 帧`;
 }
+
+// ---------- 配置文件里的颜色 ----------
+interface Config {
+  color_background: string;
+  color_text: string;
+  color_glow: string;
+  color_battery: string;
+  color_gpu: string;
+  color_done: string;
+}
+
+// 把任意 CSS 颜色转成 "r, g, b"，方便配不同透明度
+function toRgbTriplet(color: string) {
+  const probe = document.createElement("i");
+  probe.style.color = color;
+  document.body.appendChild(probe);
+  const m = getComputedStyle(probe).color.match(/\d+(\.\d+)?/g);
+  probe.remove();
+  return m ? m.slice(0, 3).join(", ") : "";
+}
+
+function applyConfig(cfg: Config) {
+  const root = document.documentElement.style;
+  const valid = (c: string) => typeof c === "string" && CSS.supports("color", c);
+  // 写错的颜色直接忽略，保留默认值
+  if (valid(cfg.color_background)) root.setProperty("--bg", cfg.color_background);
+  if (valid(cfg.color_text)) root.setProperty("--text", cfg.color_text);
+  if (valid(cfg.color_glow)) root.setProperty("--glow", cfg.color_glow);
+  for (const [k, v] of [["battery", cfg.color_battery], ["gpu", cfg.color_gpu], ["done", cfg.color_done]]) {
+    if (valid(v)) root.setProperty(`--c-${k}`, toRgbTriplet(v));
+  }
+}
+
+invoke<Config>("config_get").then(applyConfig).catch(() => {});
+
+// 全屏程序退出、灵动岛重新出现时：如果番茄钟在隐藏期间结束了，补闪一次
+listen("island-visible", () => {
+  if (pomoPhase() === "done") pulse("done");
+});
 
 updateClock();
 initMusic(retarget);

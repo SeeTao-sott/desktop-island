@@ -9,6 +9,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// 位置：相对"屏幕顶部正中"的偏移（逻辑像素，右/下为正）
+    pub offset_x: i32,
+    pub offset_y: i32,
+    /// 颜色：任何 CSS 颜色写法都行，比如 "#ffb340"、"rgba(14, 14, 18, 0.86)"
+    pub color_background: String,
+    pub color_text: String,
+    pub color_glow: String,
+    pub color_battery: String,
+    pub color_gpu: String,
+    pub color_done: String,
+    /// 有全屏程序（游戏、全屏视频）时自动隐藏
+    pub hide_in_fullscreen: bool,
     /// 番茄钟时长（分钟）
     pub pomodoro_minutes: u32,
     /// 电量低于这个百分比、并且没在充电时提醒
@@ -24,6 +36,15 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            offset_x: 0,
+            offset_y: 0,
+            color_background: "rgba(14, 14, 18, 0.86)".into(),
+            color_text: "#f2f2f5".into(),
+            color_glow: "rgba(140, 170, 255, 0.16)".into(),
+            color_battery: "#ffb340".into(),
+            color_gpu: "#ff5a4f".into(),
+            color_done: "#5ee08a".into(),
+            hide_in_fullscreen: true,
             pomodoro_minutes: 25,
             battery_low_percent: 20,
             gpu_temp_limit_c: 85,
@@ -40,6 +61,8 @@ impl Config {
         self.battery_low_percent = self.battery_low_percent.clamp(1, 99);
         self.gpu_temp_limit_c = self.gpu_temp_limit_c.clamp(40, 110);
         self.gpu_poll_seconds = self.gpu_poll_seconds.clamp(1, 60);
+        self.offset_x = self.offset_x.clamp(-2000, 2000);
+        self.offset_y = self.offset_y.clamp(0, 400);
         self
     }
 }

@@ -4,11 +4,14 @@
   --glow: rgba(140, 170, 255, 0.16);
   --text: #f2f2f5;
   --sub: rgba(235, 235, 245, 0.6);
-  /* 警告色（RGB 三元组，方便配透明度） */
-  --alert: 255, 179, 64;
+  /* 提醒色（RGB 三元组，方便配透明度），会被配置文件覆盖 */
+  --c-battery: 255, 179, 64;
+  --c-gpu: 255, 90, 79;
+  --c-done: 94, 224, 138;
+  --alert: var(--c-battery);
 }
 body[data-alert="gpu"] {
-  --alert: 255, 90, 79;
+  --alert: var(--c-gpu);
 }
 
 html,
@@ -304,7 +307,7 @@ img.empty {
   box-shadow: 0 0 18px 2px rgba(var(--alert), 0.5);
 }
 .flash {
-  --flash: 94, 224, 138;
+  --flash: var(--c-done);
   box-shadow:
     inset 0 0 0 1.5px rgba(var(--flash), 0.95),
     0 0 22px 4px rgba(var(--flash), 0.55);
@@ -323,7 +326,7 @@ img.empty {
   white-space: nowrap;
 }
 .c-done {
-  color: rgb(94, 224, 138);
+  color: rgb(var(--c-done));
 }
 .c-alert,
 .s-warn {
