@@ -325,10 +325,14 @@ impl Shelf {
                 crate::shelf_drop::set_overlay(&self.win, rect);
             }
 
+            // 拖着文件离开了面板（比如从架子拖去别的程序）：不管有没有焦点都照常收回，
+            // 免得架子挡住后面的目标；拖回边缘会再滑出来
+            let dragging_away = file_drag && !inside;
             let stay = inside
-                || self.pinned.load(Ordering::SeqCst)
-                || self.focused.load(Ordering::SeqCst)
-                || self.hold.load(Ordering::SeqCst);
+                || (!dragging_away
+                    && (self.pinned.load(Ordering::SeqCst)
+                        || self.focused.load(Ordering::SeqCst)
+                        || self.hold.load(Ordering::SeqCst)));
             if stay {
                 outside_since = None;
             } else {

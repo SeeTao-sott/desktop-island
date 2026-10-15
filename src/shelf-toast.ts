@@ -65,6 +65,8 @@ const VERB: Record<OpResult["kind"], string> = {
   rename: "已改名为",
   remove: "已移到「已移除」",
   undo: "已撤销",
+  "rename-category": "分类已改名为",
+  "remove-category": "已移到「已移除」",
 };
 
 /** 根据一次操作的结果显示提示；onUndo 由调用方提供（撤销后刷新等） */
@@ -76,6 +78,8 @@ export function reportOp(r: OpResult, onUndo: (opId: number) => void) {
     const where = (p: string) => p.split("\\").slice(-2, -1)[0];
     if (r.kind === "remove") text = n === 1 ? `「${first.name}」${VERB.remove}` : `${n} 项${VERB.remove}`;
     else if (r.kind === "rename") text = `${VERB.rename}「${first.name}」`;
+    else if (r.kind === "rename-category") text = `${VERB["rename-category"]}「${first.name}」`;
+    else if (r.kind === "remove-category") text = `分类「${first.name}」${VERB["remove-category"]}`;
     else if (r.kind === "undo") text = n === 1 ? `${VERB.undo}，「${first.name}」已放回原处` : `${VERB.undo}，${n} 项已放回原处`;
     else {
       const cats = [...new Set(r.moved.map((m) => where(m.to)))];

@@ -13,19 +13,23 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use serde::Serialize;
 use tauri::{Emitter, WebviewWindow};
-use windows::core::{implement, w, Ref};
+use windows::core::{implement, w, Ref, HSTRING};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, POINTL, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
-    CoCreateInstance, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL,
+    CoCreateInstance, CoTaskMemFree, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{
     IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY,
-    DROPEFFECT_NONE,
+    DROPEFFECT_LINK, DROPEFFECT_NONE,
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
-use windows::Win32::UI::Shell::{CLSID_DragDropHelper, DragQueryFileW, IDropTargetHelper, HDROP};
+use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+use windows::Win32::UI::Shell::{
+    BHID_DataObject, CLSID_DragDropHelper, DragQueryFileW, IDropTargetHelper, IShellItemArray,
+    SHCreateShellItemArrayFromIDLists, SHDoDragDrop, SHParseDisplayName, HDROP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
     HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WNDCLASSEXW, WS_EX_LAYERED,
@@ -235,6 +239,47 @@ pub fn init(win: &WebviewWindow) {
         TARGET.with(|t| *t.borrow_mut() = Some(target));
         OVERLAY.store(overlay.0 as isize, Ordering::SeqCst);
     }
+}
+
+// ---------------- 从架子拖出去 ----------------
+
+/// 用资源管理器同一套 Shell 拖拽把文件拖出去（阶段 0 验证过）。必须在界面线程里调用，
+/// 会一直阻塞到松手。只允许"复制"和"创建快捷方式"：拖出去不会把架子里的原件搬走。
+fn shell_drag(hwnd: HWND, paths: &[String]) -> windows::core::Result<DROPEFFECT> {
+    unsafe {
+        let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();
+        let result = (|| {
+            for p in paths {
+                let mut pidl = std::ptr::null_mut();
+                SHParseDisplayName(&HSTRING::from(p.as_str()), None, &mut pidl, 0, None)?;
+                pidls.push(pidl);
+            }
+            let consts: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| *p as *const _).collect();
+            let items: IShellItemArray = SHCreateShellItemArrayFromIDLists(&consts)?;
+            let data: IDataObject = items.BindToHandler(None, &BHID_DataObject)?;
+            SHDoDragDrop(Some(hwnd), &data, None, DROPEFFECT_COPY | DROPEFFECT_LINK)
+        })();
+        for p in pidls {
+            CoTaskMemFree(Some(p as *const _));
+        }
+        result
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct DragOutDone {
+    /// 对方接受的方式：0 取消、1 复制、4 快捷方式
+    effect: u32,
+}
+
+/// 开始把这些文件拖出去；拖完给页面发 shelf-dragout-done
+pub fn drag_out(win: &WebviewWindow, paths: Vec<String>) {
+    let w = win.clone();
+    let _ = win.run_on_main_thread(move || {
+        let Ok(h) = w.hwnd() else { return };
+        let effect = shell_drag(HWND(h.0), &paths).map(|e| e.0).unwrap_or(0);
+        let _ = w.emit("shelf-dragout-done", DragOutDone { effect });
+    });
 }
 
 /// 盖上（Some = 面板在屏幕上的位置，物理像素）或拿掉隐形玻璃。任何线程都能调。

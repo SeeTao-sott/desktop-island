@@ -60,6 +60,9 @@ interface Section {
 
 const sections = new Map<string, Section>();
 let data: ShelfData | null = null;
+/** 当前搜索词（小写，已去空格）和每个分类里的匹配数 */
+let query = "";
+const matchCount = new Map<string, number>();
 
 // 每个分类展开没有，记在本机（读写失败就用默认）
 const EXPANDED_KEY = "shelf-expanded";
@@ -98,14 +101,20 @@ function makeSection(cat: Category): Section {
     enter: animator.add(new Spring(0, SPRING.slide)),
     expanded: false,
   };
-  el.querySelector(".sec-head")!.addEventListener("click", () => {
+  const head = el.querySelector<HTMLElement>(".sec-head")!;
+  head.addEventListener("click", () => {
+    if (query) return; // 搜索时展开与否由搜索结果决定
     setExpanded(s, !s.expanded);
     expandedPref[s.name] = s.expanded;
     saveExpanded();
   });
+  head.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    showCategoryMenu(s, e.clientX, e.clientY);
+  });
   // 内容高度变了（加了文件、图标加载完）就跟着调整
   new ResizeObserver(() => {
-    if (s.expanded) {
+    if (isOpen(s)) {
       s.height.target = s.inner.offsetHeight;
       animator.kick();
     }
@@ -113,15 +122,25 @@ function makeSection(cat: Category): Section {
   return s;
 }
 
-function setExpanded(s: Section, next: boolean, instant = false) {
-  s.expanded = next;
-  s.height.target = next ? s.inner.offsetHeight : 0;
-  s.turn.target = next ? 1 : 0;
+/** 搜索时：有匹配的分类自动展开；不搜索时按用户自己的展开状态 */
+function isOpen(s: Section) {
+  return query ? (matchCount.get(s.name) ?? 0) > 0 : s.expanded;
+}
+
+function syncSection(s: Section, instant = false) {
+  const open = isOpen(s);
+  s.height.target = open ? s.inner.offsetHeight : 0;
+  s.turn.target = open ? 1 : 0;
   if (instant) {
     s.height.value = s.height.target;
     s.turn.value = s.turn.target;
   }
   animator.kick();
+}
+
+function setExpanded(s: Section, next: boolean, instant = false) {
+  s.expanded = next;
+  syncSection(s, instant);
 }
 
 // ---------- 文件项 ----------
@@ -144,6 +163,10 @@ function makeItem(it: Item): HTMLElement {
   el.innerHTML = `<div class="ic"></div><div class="meta"><div class="nm"></div><div class="sub"></div></div>`;
   el.addEventListener("click", () => select(el.dataset.path!));
   el.addEventListener("dblclick", () => openItem(el.dataset.path!));
+  // 按住拖动 → 系统拖拽：可以拖到别的程序，也可以拖回架子的其他分类
+  el.addEventListener("mousedown", (e) => {
+    if (e.button === 0 && !(e.target instanceof HTMLInputElement)) press = { path: el.dataset.path!, x: e.clientX, y: e.clientY };
+  });
   el.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     select(el.dataset.path!);
@@ -214,6 +237,7 @@ function applyData(next: ShelfData) {
 
   next.categories.forEach((cat, index) => {
     let s = sections.get(cat.name);
+    const isNew = !s;
     if (!s) {
       s = makeSection(cat);
       sections.set(cat.name, s);
@@ -244,9 +268,9 @@ function applyData(next: ShelfData) {
     const current = [...s.items.children];
     if (current.length !== wanted.length || wanted.some((el, i) => current[i] !== el)) s.items.replaceChildren(...wanted);
 
-    if (firstRun) {
-      // 第一次：按记住的状态，没记过的话有东西就展开
-      setExpanded(s, expandedPref[cat.name] ?? cat.items.length > 0, true);
+    if (firstRun || isNew) {
+      // 第一次、或新出现的分类：按记住的状态，没记过的话有东西就展开
+      setExpanded(s, expandedPref[cat.name] ?? cat.items.length > 0, firstRun);
     }
   });
 
@@ -272,15 +296,75 @@ function applyData(next: ShelfData) {
   animator.kick();
 }
 
-// 搜索框：阶段 3 做完整搜索，这里先按名字简单过滤
+// ---------- 搜索 ----------
+const noResult = document.createElement("div");
+noResult.className = "no-result";
+noResult.hidden = true;
+list.appendChild(noResult);
+
+/** 名字里包含搜索词就算匹配（不分大小写；快捷方式按显示的名字算，空格分开的几个词要都包含） */
+function matches(it: Item, q: string) {
+  const name = `${displayName(it)} ${it.name}`.toLowerCase();
+  return q.split(/\s+/).every((w) => name.includes(w));
+}
+
 function applySearch() {
-  const q = search.value.trim().toLowerCase();
-  for (const [p, el] of itemEls) {
-    const it = itemByPath.get(p);
-    el.hidden = !!q && !!it && !it.name.toLowerCase().includes(q);
+  query = search.value.trim().toLowerCase();
+  matchCount.clear();
+  let total = 0;
+  for (const [name, s] of sections) {
+    let n = 0;
+    for (const el of s.items.children as HTMLCollectionOf<HTMLElement>) {
+      const it = itemByPath.get(el.dataset.path!);
+      const hit = !query || (!!it && matches(it, query));
+      el.hidden = !hit;
+      if (hit) n++;
+    }
+    matchCount.set(name, n);
+    total += n;
+    // 搜索时没有匹配的分类先藏起来
+    s.el.hidden = !!query && n === 0;
+    syncSection(s);
   }
+  noResult.hidden = !query || total > 0;
+  noResult.textContent = `没找到「${search.value.trim()}」`;
+  list.appendChild(noResult);
+  // 选中的被筛掉了就换成第一个结果
+  if (query && (!selected || itemEls.get(selected)?.hidden)) select(visibleItems()[0]?.dataset.path ?? null);
 }
 search.addEventListener("input", applySearch);
+
+/** 当前看得见的文件项（按界面上的顺序） */
+function visibleItems(): HTMLElement[] {
+  return [...list.querySelectorAll<HTMLElement>(".sec:not([hidden]) .item:not([hidden])")].filter((el) => {
+    const s = sections.get(el.closest<HTMLElement>(".sec")!.dataset.name!);
+    return !!s && isOpen(s);
+  });
+}
+
+function moveSelection(step: number) {
+  const items = visibleItems();
+  if (!items.length) return;
+  const i = items.findIndex((el) => el.dataset.path === selected);
+  const next = items[Math.max(0, Math.min(items.length - 1, i < 0 ? 0 : i + step))];
+  select(next.dataset.path!);
+  next.scrollIntoView({ block: "nearest" });
+}
+
+// 搜索框里：↑↓ 选、回车打开、Esc 先清空再收回
+search.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    moveSelection(e.key === "ArrowDown" ? 1 : -1);
+  } else if (e.key === "Enter") {
+    const target = selected && !itemEls.get(selected)?.hidden ? selected : visibleItems()[0]?.dataset.path;
+    if (target) openItem(target);
+  } else if (e.key === "Escape" && search.value) {
+    e.stopPropagation();
+    search.value = "";
+    applySearch();
+  }
+});
 
 // ---------- 操作 ----------
 async function run(op: Promise<OpResult>) {
@@ -323,6 +407,134 @@ function showItemMenu(path: string, x: number, y: number) {
     { label: "从架子移除", danger: true, action: () => run(api.remove([path])) },
   ]);
 }
+
+// ---------- 分类：新建、改名、移除 ----------
+function showCategoryMenu(s: Section, x: number, y: number) {
+  const cat = data?.categories.find((c) => c.name === s.name);
+  if (!cat) return;
+  if (cat.builtin) {
+    openMenu(x, y, [
+      { label: s.expanded ? "收起" : "展开", action: () => toggleSection(s) },
+      { label: "-" },
+      { label: "默认分类不能改名或移除", disabled: true },
+    ]);
+    return;
+  }
+  const empty = cat.items.length === 0;
+  openMenu(x, y, [
+    { label: s.expanded ? "收起" : "展开", action: () => toggleSection(s) },
+    { label: "重命名分类", action: () => startRenameCategory(s) },
+    { label: "-" },
+    {
+      label: empty ? "移除这个分类" : "移除分类（里面还有东西）",
+      danger: true,
+      disabled: !empty,
+      action: () => run(api.removeCategory(s.name)),
+    },
+  ]);
+}
+
+function toggleSection(s: Section) {
+  setExpanded(s, !s.expanded);
+  expandedPref[s.name] = s.expanded;
+  saveExpanded();
+}
+
+/** 就地输入框：回车确认、Esc 取消、点别处也算确认（空的就取消） */
+function inlineInput(host: HTMLElement, initial: string, onCommit: (v: string) => void, className = "rename") {
+  const input = document.createElement("input");
+  input.className = className;
+  input.value = initial;
+  input.spellcheck = false;
+  host.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit: boolean) => {
+    if (done) return;
+    done = true;
+    input.replaceWith(host);
+    const v = input.value.trim();
+    if (commit && v && v !== initial) onCommit(v);
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("blur", () => finish(true));
+}
+
+function startRenameCategory(s: Section) {
+  // 整行标题换成输入框（输入框不能放在按钮里面）
+  const head = s.el.querySelector<HTMLElement>(".sec-head")!;
+  inlineInput(head, s.name, (v) => {
+    // 展开状态跟着新名字走（先记下，新分类一出现就按它展开）
+    expandedPref[v] = s.expanded;
+    saveExpanded();
+    run(api.renameCategory(s.name, v));
+  }, "rename cat-rename");
+}
+
+// 标题旁的"＋"：在列表末尾出现一个输入框
+const addCat = document.querySelector<HTMLButtonElement>(".js-add-cat")!;
+addCat.addEventListener("click", () => {
+  const row = document.createElement("div");
+  row.className = "new-cat";
+  const holder = document.createElement("span");
+  list.insertBefore(row, noResult);
+  row.appendChild(holder);
+  row.scrollIntoView({ block: "nearest" });
+  inlineInput(
+    holder,
+    "",
+    async (v) => {
+      try {
+        // 新分类默认展开，露出"把文件拖到这里"
+        expandedPref[v] = true;
+        saveExpanded();
+        await api.createCategory(v);
+        applyData(await api.list());
+      } catch (e) {
+        showError(String(e));
+      }
+    },
+    "rename new-cat-input",
+  );
+  const input = row.querySelector<HTMLInputElement>("input")!;
+  input.placeholder = "新分类的名字，比如 FYP";
+  // 输入框收起后这一行也去掉
+  input.addEventListener("blur", () => window.setTimeout(() => row.remove(), 0));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === "Escape") window.setTimeout(() => row.remove(), 0);
+  });
+});
+
+// ---------- 拖出去 / 在分类之间拖 ----------
+let press: { path: string; x: number; y: number } | null = null;
+let draggingPath: string | null = null;
+
+window.addEventListener("mousemove", (e) => {
+  if (!press || !(e.buttons & 1)) return;
+  if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6) return;
+  const path = press.path;
+  press = null;
+  select(path);
+  draggingPath = path;
+  itemEls.get(path)?.classList.add("dragging-out");
+  api.dragOut([path]).catch((err) => {
+    showError(String(err));
+    endDragOut();
+  });
+});
+window.addEventListener("mouseup", () => (press = null));
+
+function endDragOut() {
+  if (draggingPath) itemEls.get(draggingPath)?.classList.remove("dragging-out");
+  draggingPath = null;
+}
+listen("shelf-dragout-done", endDragOut);
 
 // 重命名：就地改，回车确认、Esc 取消、点别处也算确认
 function startRename(path: string) {

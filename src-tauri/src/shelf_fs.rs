@@ -301,7 +301,7 @@ impl ShelfFs {
 
     // ---------------- 安全检查 ----------------
 
-    fn inside_shelf(&self, p: &Path) -> bool {
+    pub fn inside_shelf(&self, p: &Path) -> bool {
         let (r, s) = (lower(&self.root), lower(p));
         s.starts_with(&format!("{r}\\"))
     }
@@ -320,18 +320,32 @@ impl ShelfFs {
 
     // ---------------- 操作 ----------------
 
-    /// 把外面的文件放进架子。category 为空时按类型自动分类
+    /// 把拖进来的东西放进架子。category 为空时按类型自动分类。
+    /// 拖进来的本来就是架子里的东西（在分类之间拖动）：松在某个分类上就移过去，否则当作取消
     pub fn put(&self, paths: Vec<String>, category: Option<String>) -> OpResult {
         let _lock = self.busy.lock().unwrap();
         let mut pairs = Vec::new();
         let mut moved = Vec::new();
         let mut failed = Vec::new();
+        let mut any_outside = false;
         for p in paths.iter().map(PathBuf::from) {
             let name = file_name(&p);
             if self.inside_shelf(&p) {
-                failed.push(Failed { name, reason: "已经在架子里了".into() });
+                let Some(cat) = &category else { continue };
+                let dir = match self.category_dir(cat) {
+                    Ok(d) => d,
+                    Err(reason) => {
+                        failed.push(Failed { name, reason });
+                        continue;
+                    }
+                };
+                if p.parent().map(lower) != Some(lower(&dir)) {
+                    let res = fileops::move_into(&p, &dir, &name);
+                    self.record(&mut pairs, &mut moved, &mut failed, &p, res);
+                }
                 continue;
             }
+            any_outside = true;
             if let Err(reason) = self.guard(&p) {
                 self.log("put", &p, None, Some(&reason), 0);
                 failed.push(Failed { name, reason });
@@ -341,7 +355,85 @@ impl ShelfFs {
             let res = self.category_dir(&cat).and_then(|dir| fileops::move_into(&p, &dir, &name));
             self.record(&mut pairs, &mut moved, &mut failed, &p, res);
         }
-        self.finish("put", category, pairs, moved, failed)
+        let kind = if any_outside { "put" } else { "move" };
+        self.finish(kind, category, pairs, moved, failed)
+    }
+
+    // ---------------- 分类 ----------------
+
+    /// 新分类名能不能用：不能为空、不能有特殊符号、不能和已有分类（不分大小写）或「已移除」重名
+    fn check_category_name(&self, name: &str) -> Result<String, String> {
+        let name = name.trim().trim_end_matches(['.', ' ']).to_string();
+        if name.is_empty() {
+            return Err("分类名不能为空".into());
+        }
+        if name.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) || name == "." || name == ".." {
+            return Err("分类名里不能有 \\ / : * ? \" < > | 这些符号".into());
+        }
+        if name == REMOVED {
+            return Err(format!("「{REMOVED}」是保留的名字"));
+        }
+        let exists = fs::read_dir(&self.root)
+            .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().to_lowercase() == name.to_lowercase()))
+            .unwrap_or(false);
+        if exists {
+            return Err(format!("已经有叫「{name}」的分类了"));
+        }
+        Ok(name)
+    }
+
+    fn custom_category(&self, name: &str) -> Result<PathBuf, String> {
+        if DEFAULT_CATEGORIES.contains(&name) {
+            return Err(format!("「{name}」是默认分类，自动分类要用到它，不能改名或移除"));
+        }
+        let dir = self.category_dir(name)?;
+        if !dir.is_dir() {
+            return Err(format!("找不到分类「{name}」"));
+        }
+        Ok(dir)
+    }
+
+    /// 新建分类 = 在架子文件夹里新建一个子文件夹
+    pub fn create_category(&self, name: String) -> Result<String, String> {
+        let _lock = self.busy.lock().unwrap();
+        let name = self.check_category_name(&name)?;
+        let dir = self.root.join(&name);
+        fs::create_dir(&dir).map_err(|e| fileops::describe_io(&e, &dir))?;
+        self.log("new-category", &dir, None, None, 0);
+        self.refresh();
+        Ok(name)
+    }
+
+    /// 分类改名 = 子文件夹改名（新名字已存在就拒绝，不合并、不覆盖）
+    pub fn rename_category(&self, old: String, new: String) -> OpResult {
+        let _lock = self.busy.lock().unwrap();
+        let (mut pairs, mut moved, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        let res = self.custom_category(&old).and_then(|dir| {
+            let new = new.trim().to_string();
+            // 只改大小写时跳过重名检查
+            let new = if new.to_lowercase() == old.to_lowercase() { new } else { self.check_category_name(&new)? };
+            let target = self.root.join(&new);
+            let h = (HSTRING::from(dir.as_os_str()), HSTRING::from(target.as_os_str()));
+            unsafe { MoveFileExW(&h.0, &h.1, MOVE_FILE_FLAGS(0)) }
+                .map(|_| target)
+                .map_err(|e| fileops::describe(e.code().0 as u32 & 0xFFFF, &dir))
+        });
+        self.record(&mut pairs, &mut moved, &mut failed, &self.root.join(&old), res);
+        self.finish("rename-category", None, pairs, moved, failed)
+    }
+
+    /// 移除分类：只允许空的自定义分类，整个文件夹移进「已移除」（不删除）
+    pub fn remove_category(&self, name: String) -> OpResult {
+        let _lock = self.busy.lock().unwrap();
+        let (mut pairs, mut moved, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+        let res = self.custom_category(&name).and_then(|dir| {
+            if !list_items(&dir).is_empty() {
+                return Err(format!("「{name}」里还有东西，先把它们移到别的分类"));
+            }
+            fileops::move_into(&dir, &self.root.join(REMOVED), &name)
+        });
+        self.record(&mut pairs, &mut moved, &mut failed, &self.root.join(&name), res);
+        self.finish("remove-category", None, pairs, moved, failed)
     }
 
     /// 架子里的东西换到另一个分类

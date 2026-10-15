@@ -71,6 +71,34 @@ pub async fn shelf_open_removed(fs: Fs<'_>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn shelf_create_category(fs: Fs<'_>, name: String) -> Result<String, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.create_category(name)).await?
+}
+
+#[tauri::command]
+pub async fn shelf_rename_category(fs: Fs<'_>, old: String, new: String) -> Result<OpResult, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.rename_category(old, new)).await
+}
+
+#[tauri::command]
+pub async fn shelf_remove_category(fs: Fs<'_>, name: String) -> Result<OpResult, String> {
+    let fs = fs.inner().clone();
+    blocking(move || fs.remove_category(name)).await
+}
+
+/// 开始把架子里的东西拖出去（拖完页面会收到 shelf-dragout-done）
+#[tauri::command]
+pub fn shelf_drag_out(window: tauri::WebviewWindow, fs: Fs<'_>, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() || !paths.iter().all(|p| fs.inside_shelf(&PathBuf::from(p))) {
+        return Err("只能拖架子里的东西".into());
+    }
+    crate::shelf_drop::drag_out(&window, paths);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn shelf_icon(path: String, modified: u64, thumb: bool) -> Result<Option<String>, String> {
     blocking(move || icons::data_url(&PathBuf::from(path), modified, thumb)).await
 }

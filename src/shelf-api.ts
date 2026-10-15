@@ -24,7 +24,7 @@ export interface ShelfData {
 
 export interface OpResult {
   opId: number | null;
-  kind: "put" | "move" | "rename" | "remove" | "undo";
+  kind: "put" | "move" | "rename" | "remove" | "undo" | "rename-category" | "remove-category";
   category: string | null;
   moved: { from: string; to: string; name: string }[];
   failed: { name: string; reason: string }[];
@@ -41,6 +41,11 @@ export const api = {
   reveal: (path: string) => invoke<void>("shelf_reveal", { path }),
   openRemoved: () => invoke<void>("shelf_open_removed"),
   icon: (path: string, modified: number, thumb: boolean) => invoke<string | null>("shelf_icon", { path, modified, thumb }),
+  createCategory: (name: string) => invoke<string>("shelf_create_category", { name }),
+  renameCategory: (old: string, name: string) => invoke<OpResult>("shelf_rename_category", { old, new: name }),
+  removeCategory: (name: string) => invoke<OpResult>("shelf_remove_category", { name }),
+  /** 开始把文件拖出去（Shell 拖拽），拖完会收到 shelf-dragout-done */
+  dragOut: (paths: string[]) => invoke<void>("shelf_drag_out", { paths }),
   /** 有撤销提示时让架子先别收回 */
   hold: (on: boolean) => invoke("shelf_cmd", { action: on ? "hold" : "release" }).catch(() => {}),
 };

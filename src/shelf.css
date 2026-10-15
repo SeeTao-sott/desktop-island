@@ -187,8 +187,8 @@
 
 /* 开发模式帧率：放在面板右上，不挡底部的提示；架子收起时不显示，免得挡住别的窗口 */
 .fps {
-  right: 26px;
-  top: 22px;
+  right: 60px;
+  top: 0;
 }
 body:not([data-open="true"]) .fps {
   display: none;
@@ -499,4 +499,70 @@ body:not([data-open="true"]) .fps {
 }
 .removed-link[hidden] {
   display: none;
+}
+
+/* ---------- 阶段 3：新建分类、搜索结果、拖出去 ---------- */
+.icon-btn {
+  margin-left: auto;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--sub);
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    transform 0.28s var(--ease-bounce);
+}
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.icon-btn:active {
+  transform: scale(0.88);
+  transition-duration: 0.08s;
+}
+
+.new-cat {
+  margin: 6px 4px 0;
+  padding: 6px 6px 6px 30px;
+  border-radius: 12px;
+  background: rgba(140, 170, 255, 0.1);
+  animation: toast-in 0.3s var(--ease-bounce);
+}
+.new-cat-input {
+  height: 26px;
+}
+
+.no-result {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--sub);
+  font-size: 12.5px;
+}
+.no-result[hidden],
+.sec[hidden] {
+  display: none;
+}
+
+/* 正在被拖出去的那一项：变淡，表示"它在你手上" */
+.item.dragging-out {
+  opacity: 0.45;
+}
+.cat-rename {
+  display: block;
+  height: 36px;
+  padding: 0 12px 0 30px;
+  border-radius: 12px;
+  font-size: 13.5px;
 }

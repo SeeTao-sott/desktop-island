@@ -236,6 +236,10 @@ fn main() {
             shelf_cmds::shelf_open,
             shelf_cmds::shelf_reveal,
             shelf_cmds::shelf_open_removed,
+            shelf_cmds::shelf_create_category,
+            shelf_cmds::shelf_rename_category,
+            shelf_cmds::shelf_remove_category,
+            shelf_cmds::shelf_drag_out,
             shelf_cmds::shelf_icon
         ])
         .setup(move |app| {
