@@ -1,0 +1,89 @@
+:root {
+  --bg: rgba(14, 14, 18, 0.86);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --glow: rgba(140, 170, 255, 0.16);
+  --text: #f2f2f5;
+  --sub: rgba(235, 235, 245, 0.6);
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color: var(--text);
+}
+
+.island {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 34px;
+  border-radius: 17px;
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 1px var(--stroke),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 14px var(--glow),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  will-change: transform, width, height;
+  contain: layout paint style;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  will-change: opacity, transform;
+  pointer-events: none;
+}
+
+.time {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.expanded {
+  opacity: 0;
+}
+
+.time-big {
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.date {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--sub);
+}
+
+/* 开发模式下的帧率提示，放在胶囊下方 */
+.fps {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #7dff9b;
+  font: 11px/1.4 Consolas, monospace;
+  white-space: nowrap;
+  pointer-events: none;
+}
