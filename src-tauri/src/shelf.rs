@@ -116,8 +116,8 @@ impl Shelf {
         let _ = shelf.place();
         let _ = shelf.win.set_ignore_cursor_events(true);
         let _ = shelf.win.show();
-        // 拖放接收在启动后就装好，不等架子滑出（见 shelf_drop.rs）
-        crate::shelf_drop::install_after_startup(shelf.win.clone());
+        // 拖文件进来用的隐形玻璃窗口（见 shelf_drop.rs）。这里在界面线程里（setup 中调用）
+        crate::shelf_drop::init(&shelf.win);
         let worker = shelf.clone();
         thread::spawn(move || worker.run());
         shelf
@@ -134,11 +134,20 @@ impl Shelf {
         self.win.set_position(PhysicalPosition::new(work.right - w as i32, work.top))
     }
 
-    /// 装上架子自己的拖放接收（见 shelf_drop.rs）。要在界面线程里做；
-    /// 浏览器内核可能后来又换回它自己的，所以每次滑出、鼠标进入面板都装一次
-    fn fix_drop_targets(&self) {
-        let win = self.win.clone();
-        let _ = self.win.run_on_main_thread(move || crate::shelf_drop::install(&win));
+    /// 面板（含右边空隙）在屏幕上的位置，物理像素
+    fn panel_screen_rect(&self) -> Option<RECT> {
+        let hwnd = HWND(self.hwnd as *mut _);
+        let mut r = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut r) }.ok()?;
+        let scale = unsafe { GetDpiForWindow(hwnd) } as f64 / 96.0;
+        let scale = if scale > 0.0 { scale } else { 1.0 };
+        let hit = *self.hit.lock().unwrap();
+        Some(RECT {
+            left: r.left + (hit.x * scale) as i32,
+            top: r.top + (hit.y * scale) as i32,
+            right: r.left + ((hit.x + hit.w) * scale) as i32,
+            bottom: r.top + ((hit.y + hit.h) * scale) as i32,
+        })
     }
 
     pub fn set_hold(&self, on: bool) {
@@ -176,7 +185,6 @@ impl Shelf {
         self.pinned.store(pinned, Ordering::SeqCst);
         // 平时窗口不可聚焦（显示时不会抢走别的程序的焦点）；滑出后才允许点进来打字
         let _ = self.win.set_focusable(true);
-        self.fix_drop_targets();
         let fg = unsafe { GetForegroundWindow() }.0 as isize;
         if fg != self.hwnd {
             self.prev_fg.store(fg, Ordering::SeqCst);
@@ -193,6 +201,7 @@ impl Shelf {
         }
         self.pinned.store(false, Ordering::SeqCst);
         let _ = self.win.set_ignore_cursor_events(true);
+        crate::shelf_drop::set_overlay(&self.win, None);
         self.emit();
         // 收起后键盘焦点不能留在看不见的架子上，还给原来的窗口
         if self.focused.load(Ordering::SeqCst) {
@@ -242,6 +251,8 @@ impl Shelf {
         let mut dwell: Option<(Instant, i32)> = None;
         let mut outside_since: Option<Instant> = None;
         let mut interactive = false;
+        // 隐形玻璃现在有没有盖在面板上
+        let mut overlay_on = false;
 
         loop {
             let mut pt = POINT::default();
@@ -257,6 +268,7 @@ impl Shelf {
                 // ---------- 藏着：看要不要滑出来 ----------
                 interactive = false;
                 outside_since = None;
+                overlay_on = false;
                 let h = (mon.bottom - mon.top) as f64;
                 let at_edge = pt.x >= mon.right - EDGE_PX && pt.x < mon.right;
                 let in_zone = at_edge
@@ -304,9 +316,13 @@ impl Shelf {
             if inside != interactive {
                 interactive = inside;
                 let _ = self.win.set_ignore_cursor_events(!inside);
-                if inside {
-                    self.fix_drop_targets();
-                }
+            }
+            // 有文件正拖着：在面板上盖隐形玻璃接住它；拖完马上拿掉
+            let file_drag = matches!(capture_kind(), Capture::FileDrag);
+            if file_drag != overlay_on {
+                overlay_on = file_drag;
+                let rect = if file_drag { self.panel_screen_rect() } else { None };
+                crate::shelf_drop::set_overlay(&self.win, rect);
             }
 
             let stay = inside

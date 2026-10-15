@@ -1,32 +1,36 @@
 //! 架子自己的"拖放接收"。
-//! Tauri/WebView2 默认的接收在架子这种"先隐藏再显示"的窗口上不可靠（浏览器内核后创建的子窗口
-//! 会注册一个不收外部文件的目标，拖进来显示"禁止"）。所以这里直接在架子窗口和它的子窗口上
-//! 注册我们自己的接收：读出拖进来的文件路径和位置，转发给页面。只作用于架子自己的窗口。
 //!
-//! 要点：
-//! - 程序启动后就装好（不等架子滑出），否则拖着文件推到边缘、架子刚滑出来的那一下，
-//!   系统还在用旧的目标，要移开再回来才认
-//! - 用系统的"拖拽图像助手"（IDropTargetHelper）画拖拽预览，预览才不会被置顶的架子挡在后面
+//! 为什么不直接用网页（WebView2）的子窗口接：那些子窗口属于浏览器内核的另一个进程，
+//! 内核会不定时把它自己的拖放目标注册回去，和我们的互相覆盖，表现为拖进来时有时"复制"、
+//! 有时"禁止"。内核自带的拖放又会把快捷方式解析成它指向的程序，不能用来搬文件。
+//!
+//! 所以：拖文件经过架子时，在面板上方盖一块我们自己创建的"隐形玻璃"窗口
+//! （几乎全透明，但能接住拖放），拖放目标注册在它上面，不会被任何人覆盖；拖完立刻拿掉，
+//! 不影响平时点击和滚动。用系统的"拖拽图像助手"画拖拽预览，预览显示在架子上方。
 
 use std::cell::{Cell, RefCell};
-use std::thread;
-use std::time::Duration;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use serde::Serialize;
 use tauri::{Emitter, WebviewWindow};
-use windows::core::{implement, Ref, BOOL};
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, POINTL};
+use windows::core::{implement, w, Ref};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, POINTL, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{
     CoCreateInstance, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{
-    IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, RevokeDragDrop, CF_HDROP, DROPEFFECT,
-    DROPEFFECT_COPY, DROPEFFECT_NONE,
+    IDropTarget, IDropTarget_Impl, RegisterDragDrop, ReleaseStgMedium, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY,
+    DROPEFFECT_NONE,
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::{CLSID_DragDropHelper, DragQueryFileW, IDropTargetHelper, HDROP};
-use windows::Win32::UI::WindowsAndMessaging::EnumChildWindows;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, RegisterClassExW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow,
+    HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+};
 
 #[derive(Clone, Serialize)]
 struct DragPayload {
@@ -176,48 +180,86 @@ impl IDropTarget_Impl for ShelfDropTarget_Impl {
 }
 
 thread_local! {
-    /// 接收对象只建一个，反复注册时复用（只在界面线程里用）
+    /// 接收对象（只在界面线程里用；拖放目标注册期间要一直活着）
     static TARGET: RefCell<Option<IDropTarget>> = const { RefCell::new(None) };
 }
 
-/// 先撤掉原来的（浏览器内核的、Tauri 的、或者上一次我们自己的），再换成我们的
-unsafe fn register(h: HWND, target: &IDropTarget) {
-    let _ = RevokeDragDrop(h);
-    let _ = RegisterDragDrop(h, target);
+/// 隐形玻璃窗口的句柄（0 = 还没建好）
+static OVERLAY: AtomicIsize = AtomicIsize::new(0);
+
+unsafe extern "system" fn overlay_proc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    DefWindowProcW(h, msg, w, l)
 }
 
-unsafe extern "system" fn register_child(h: HWND, lparam: LPARAM) -> BOOL {
-    register(h, &*(lparam.0 as *const IDropTarget));
-    BOOL(1)
-}
-
-/// 在架子窗口本身和它所有子窗口上装好我们的拖放接收。必须在界面线程里调用。
-/// 浏览器内核的子窗口可能后来才创建或被换掉，所以会在启动后、每次滑出、鼠标进入面板时再装（很便宜）。
-pub fn install(win: &WebviewWindow) {
+/// 建好隐形玻璃窗口并注册拖放接收。架子窗口建好后调用一次，必须在界面线程里。
+pub fn init(win: &WebviewWindow) {
     let Ok(h) = win.hwnd() else { return };
     let root = HWND(h.0);
-    let target = TARGET.with(|t| {
-        t.borrow_mut()
-            .get_or_insert_with(|| {
-                let helper = unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok() };
-                ShelfDropTarget { win: win.clone(), root, valid: Cell::new(false), helper }.into()
-            })
-            .clone()
-    });
     unsafe {
-        // 外层窗口也装上：子窗口万一还没装好，系统往外找也会落到我们这里
-        register(root, &target);
-        let _ = EnumChildWindows(Some(root), Some(register_child), LPARAM(&target as *const IDropTarget as isize));
+        let class = w!("DesktopIslandShelfDropOverlay");
+        let instance = GetModuleHandleW(None).map(|m| HINSTANCE(m.0)).ok();
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(overlay_proc),
+            hInstance: instance.unwrap_or_default(),
+            lpszClassName: class,
+            ..Default::default()
+        };
+        RegisterClassExW(&wc);
+        // 不在任务栏、不抢焦点、置顶；归架子窗口所有，跟着它一起
+        let Ok(overlay) = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+            class,
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            Some(root),
+            None,
+            instance,
+            None,
+        ) else {
+            eprintln!("拖放玻璃窗口创建失败");
+            return;
+        };
+        // 透明度 1/255：眼睛看不见，但鼠标和拖放能落在它上面
+        let _ = SetLayeredWindowAttributes(overlay, COLORREF(0), 1, LWA_ALPHA);
+
+        let helper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok();
+        let target: IDropTarget = ShelfDropTarget { win: win.clone(), root, valid: Cell::new(false), helper }.into();
+        if RegisterDragDrop(overlay, &target).is_err() {
+            eprintln!("拖放接收注册失败");
+        }
+        TARGET.with(|t| *t.borrow_mut() = Some(target));
+        OVERLAY.store(overlay.0 as isize, Ordering::SeqCst);
     }
 }
 
-/// 程序启动后过一会儿（等页面和浏览器内核的子窗口都建好）先装一次，之后再补一次
-pub fn install_after_startup(win: WebviewWindow) {
-    thread::spawn(move || {
-        for delay in [1500u64, 5000] {
-            thread::sleep(Duration::from_millis(delay));
-            let w = win.clone();
-            let _ = win.run_on_main_thread(move || install(&w));
+/// 盖上（Some = 面板在屏幕上的位置，物理像素）或拿掉隐形玻璃。任何线程都能调。
+pub fn set_overlay(win: &WebviewWindow, rect: Option<RECT>) {
+    let h = OVERLAY.load(Ordering::SeqCst);
+    if h == 0 {
+        return;
+    }
+    let _ = win.run_on_main_thread(move || unsafe {
+        let overlay = HWND(h as *mut _);
+        match rect {
+            Some(r) => {
+                let _ = SetWindowPos(
+                    overlay,
+                    Some(HWND_TOPMOST),
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
+            }
+            None => {
+                let _ = ShowWindow(overlay, SW_HIDE);
+            }
         }
     });
 }
