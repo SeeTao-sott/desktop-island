@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>架子</title>
+    <link rel="stylesheet" href="/src/shelf.css" />
+  </head>
+  <body>
+    <aside id="panel" class="panel glass">
+      <header class="head">
+        <div class="title-row">
+          <span class="title">架子</span>
+          <span class="hint js-hint">把文件拖进来</span>
+        </div>
+        <label class="search">
+          <svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 0 1 5.2 10.4l4.4 4.4-1.4 1.4-4.4-4.4A6.5 6.5 0 1 1 10.5 4zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z" /></svg>
+          <input id="search" type="text" placeholder="搜索架子" spellcheck="false" autocomplete="off" />
+        </label>
+      </header>
+      <div id="list" class="list"></div>
+      <footer class="foot js-foot"></footer>
+    </aside>
+
+    <template id="tpl-section">
+      <section class="sec">
+        <button class="sec-head">
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg>
+          <svg class="sec-ic" viewBox="0 0 24 24"><use /></svg>
+          <span class="sec-name"></span>
+          <span class="count">0</span>
+        </button>
+        <div class="sec-body">
+          <div class="sec-inner">
+            <div class="empty">空空的 · 把文件拖到这里</div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <div id="fps" class="fps" hidden></div>
+
+    <svg width="0" height="0" style="position: absolute">
+      <symbol id="c-apps" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="7" height="7" rx="2" /><rect x="13" y="4" width="7" height="7" rx="2" />
+        <rect x="4" y="13" width="7" height="7" rx="2" /><rect x="13" y="13" width="7" height="7" rx="2" />
+      </symbol>
+      <symbol id="c-docs" viewBox="0 0 24 24">
+        <path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm6 1.5V9h4.5M9 13h6M9 16.5h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="c-images" viewBox="0 0 24 24">
+        <rect x="3.5" y="5" width="17" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+        <circle cx="9" cy="10" r="1.7" /><path d="M5 17l4.5-4.5 3 3 2.5-2.5L19 17z" />
+      </symbol>
+      <symbol id="c-archives" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+        <path d="M12 4v3h-1.5v2H12v2h-1.5v2H12v2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+      </symbol>
+      <symbol id="c-other" viewBox="0 0 24 24">
+        <circle cx="6" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="18" cy="12" r="1.8" />
+      </symbol>
+    </svg>
+
+    <script type="module" src="/src/shelf.ts"></script>
+  </body>
+</html>

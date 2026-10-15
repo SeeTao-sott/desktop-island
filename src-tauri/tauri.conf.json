@@ -13,9 +13,27 @@
     "windows": [
       {
         "label": "main",
-        "title": "çµåŠ¨å²›",
+        "title": "灵动岛",
         "width": 440,
         "height": 240,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "focusable": false
+      },
+      {
+        "label": "shelf",
+        "title": "架子",
+        "url": "shelf.html",
+        "width": 360,
+        "height": 800,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

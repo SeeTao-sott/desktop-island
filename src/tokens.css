@@ -1,0 +1,53 @@
+/* 灵动岛和架子共用的设计变量：颜色、字体、玻璃质感。改这里两边一起变 */
+:root {
+  --bg: rgba(14, 14, 18, 0.86);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --glow: rgba(140, 170, 255, 0.16);
+  --text: #f2f2f5;
+  --sub: rgba(235, 235, 245, 0.6);
+  --hover: rgba(255, 255, 255, 0.1);
+  --pill: rgba(255, 255, 255, 0.14);
+  /* 提醒色（RGB 三元组，方便配透明度），会被配置文件覆盖 */
+  --c-battery: 255, 179, 64;
+  --c-gpu: 255, 90, 79;
+  --c-done: 94, 224, 138;
+  --alert: var(--c-battery);
+  /* 按钮按下回弹的曲线 */
+  --ease-bounce: cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color: var(--text);
+}
+
+/* 深色半透明玻璃 + 细描边 + 顶部高光 + 淡淡外发光 */
+.glass {
+  background: var(--bg);
+  box-shadow:
+    inset 0 0 0 1px var(--stroke),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 14px var(--glow),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* 开发模式下的帧率提示 */
+.fps {
+  position: absolute;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #7dff9b;
+  font: 11px/1.4 Consolas, monospace;
+  white-space: nowrap;
+  pointer-events: none;
+}

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Animator, Spring } from "./spring";
+import { SPRING, fpsReporter } from "./motion";
 import { initMusic, musicActive, onExpandChange as musicExpand } from "./music";
 import { initPomodoro, pomoPhase, onExpandChange as pomoExpand } from "./pomodoro";
 import { alertLevel, initAlerts, type Level } from "./alerts";
@@ -33,12 +34,12 @@ const tint = island.querySelector<HTMLElement>(".tint")!;
 const fpsEl = document.getElementById("fps")!;
 const el = (cls: string) => island.querySelector<HTMLElement>("." + cls.replace(/[A-Z]/, (c) => "-" + c.toLowerCase()))!;
 
-// 形状弹簧带一点回弹；内容淡入淡出阻尼更大，避免文字晃
-const shapeCfg = { stiffness: 420, damping: 28, precision: 0.05 };
-const fadeCfg = { stiffness: 520, damping: 40, precision: 0.002 };
-const slideCfg = { stiffness: 420, damping: 34, precision: 0.05 };
+// 弹簧参数和架子共用（见 motion.ts）
+const shapeCfg = SPRING.shape;
+const fadeCfg = SPRING.fade;
+const slideCfg = SPRING.slide;
 
-const animator = new Animator(render, reportFps);
+const animator = new Animator(render, fpsReporter(fpsEl));
 const w = animator.add(new Spring(COMPACT_W.cTime, shapeCfg));
 const h = animator.add(new Spring(COMPACT_H, shapeCfg));
 const r = animator.add(new Spring(COMPACT_H / 2, shapeCfg));
@@ -218,15 +219,6 @@ function updateClock() {
   dateEl.textContent = `${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
   const msToNextMinute = 60_000 - (d.getSeconds() * 1000 + d.getMilliseconds()) + 30;
   window.setTimeout(updateClock, msToNextMinute);
-}
-
-// ---------- 开发用 FPS：只统计动画期间的帧，不额外占用空闲 ----------
-function reportFps(frames: number[]) {
-  if (!import.meta.env.DEV || frames.length < 3) return;
-  const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
-  const worst = Math.max(...frames);
-  fpsEl.hidden = false;
-  fpsEl.textContent = `动画 ${Math.round(1000 / avg)} fps · 最慢一帧 ${worst.toFixed(1)}ms · ${frames.length} 帧`;
 }
 
 // ---------- 配置文件里的颜色 ----------

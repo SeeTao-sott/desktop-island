@@ -1,6 +1,7 @@
 //! 全屏程序（游戏、全屏视频）时自动隐藏，退出全屏后再出现；顺便盯着主屏幕分辨率变化。
 //! 只用系统的只读查询（SHQueryUserNotificationState、前台窗口位置），不挂钩子、不碰其他进程。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -20,27 +21,36 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// 每次检查只是几个系统查询，耗时微秒级
 const INTERVAL: Duration = Duration::from_millis(500);
 
-pub fn spawn(win: WebviewWindow, hide_in_fullscreen: bool, on_monitor_change: impl Fn() + Send + 'static) {
-    let own = match win.hwnd() {
-        Ok(h) => h.0 as isize,
-        Err(_) => return,
-    };
+/// 现在是不是有全屏程序在前台；架子据此决定能不能弹出
+pub static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+
+/// windows：全屏时要一起藏起来的窗口（灵动岛、架子）
+pub fn spawn(windows: Vec<WebviewWindow>, hide_in_fullscreen: bool, on_monitor_change: impl Fn() + Send + 'static) {
+    let own: Vec<isize> = windows.iter().filter_map(|w| w.hwnd().ok()).map(|h| h.0 as isize).collect();
     thread::spawn(move || {
-        let own = HWND(own as *mut _);
+        let own: Vec<HWND> = own.into_iter().map(|h| HWND(h as *mut _)).collect();
         let mut hidden = false;
         let mut last_monitor = primary_monitor_rect();
         loop {
+            // 就算关了"全屏隐藏"，也要记下全屏状态：玩游戏时架子绝不能弹出来
+            let fullscreen = unsafe { fullscreen_active(&own) };
+            FULLSCREEN.store(fullscreen, Ordering::SeqCst);
             if hide_in_fullscreen {
-                let fullscreen = unsafe { fullscreen_active(own) };
                 if fullscreen != hidden {
                     hidden = fullscreen;
-                    if fullscreen {
-                        let _ = win.hide();
-                    } else {
-                        let _ = win.show();
-                        // 独占全屏的游戏退出后，置顶状态可能被打乱，重新设一次
-                        let _ = win.set_always_on_top(true);
-                        let _ = win.emit("island-visible", true);
+                    for win in &windows {
+                        if fullscreen {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.show();
+                            // 独占全屏的游戏退出后，置顶状态可能被打乱，重新设一次
+                            let _ = win.set_always_on_top(true);
+                        }
+                    }
+                    if !fullscreen {
+                        if let Some(w) = windows.first() {
+                            let _ = w.emit("island-visible", true);
+                        }
                     }
                 }
             }
@@ -67,7 +77,7 @@ fn primary_monitor_rect() -> (i32, i32, i32, i32) {
     }
 }
 
-unsafe fn fullscreen_active(own: HWND) -> bool {
+unsafe fn fullscreen_active(own: &[HWND]) -> bool {
     // 1) 系统明确报告的 D3D 独占全屏 / 演示模式。
     //    不单独相信 QUNS_BUSY：任何盖满屏幕的透明置顶浮层（录屏、显卡浮层等）都会触发它，造成误隐藏
     if let Ok(state) = SHQueryUserNotificationState() {
@@ -78,7 +88,7 @@ unsafe fn fullscreen_active(own: HWND) -> bool {
 
     // 2) 前台窗口盖满主屏幕：无边框全屏游戏、浏览器全屏视频
     let fg = GetForegroundWindow();
-    if fg.is_invalid() || fg == own {
+    if fg.is_invalid() || own.contains(&fg) {
         return false;
     }
     // 桌面本身也是盖满屏幕的窗口，要排除

@@ -5,9 +5,11 @@ mod alerts;
 mod autostart;
 mod config;
 mod fullscreen;
+mod hotkey;
 mod hover;
 mod media;
 mod pomodoro;
+mod shelf;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -25,6 +27,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use alerts::{AlertHub, Alerts};
 use config::Config;
 use pomodoro::{PomoState, Pomodoro};
+use shelf::{Shelf, ShelfState};
 
 /// 胶囊在窗口内的可交互区域（CSS 像素，相对窗口左上角）
 #[derive(Clone, Copy, Default, serde::Deserialize)]
@@ -75,6 +78,21 @@ fn pomodoro_cmd(p: State<'_, Arc<Pomodoro>>, action: String) -> PomoState {
 #[tauri::command]
 fn alerts_get(hub: State<'_, Arc<AlertHub>>) -> Alerts {
     hub.get()
+}
+
+#[tauri::command]
+fn shelf_set_hit_rect(shelf: State<'_, Arc<Shelf>>, rect: HitRect) {
+    shelf.set_hit(rect);
+}
+
+#[tauri::command]
+fn shelf_cmd(shelf: State<'_, Arc<Shelf>>, action: String) -> ShelfState {
+    match action.as_str() {
+        "toggle" => shelf.toggle(),
+        "hide" => shelf.hide(),
+        _ => {}
+    }
+    shelf.state()
 }
 
 #[tauri::command]
@@ -132,7 +150,9 @@ fn place_window(win: &WebviewWindow, offset: (i32, i32)) -> tauri::Result<()> {
 
 // ---------------- 托盘 ----------------
 
-fn build_tray(app: &App, cfg_path: PathBuf) -> tauri::Result<()> {
+fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &str) -> tauri::Result<()> {
+    let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
+    let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, shelf.is_some(), None::<&str>)?;
     let open_cfg = MenuItem::with_id(app, "open_config", "打开配置文件", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "重启（应用新配置）", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, autostart::is_enabled(), None::<&str>)?;
@@ -140,6 +160,8 @@ fn build_tray(app: &App, cfg_path: PathBuf) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &shelf_item,
+            &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
             &PredefinedMenuItem::separator(app)?,
@@ -157,6 +179,11 @@ fn build_tray(app: &App, cfg_path: PathBuf) -> tauri::Result<()> {
         // 左键、右键都能打开菜单
         .show_menu_on_left_click(true)
         .on_menu_event(move |app: &AppHandle, event| match event.id().as_ref() {
+            "shelf" => {
+                if let Some(s) = &shelf {
+                    s.toggle();
+                }
+            }
             "open_config" => {
                 let _ = Command::new("notepad.exe").arg(&cfg_path).spawn();
             }
@@ -190,7 +217,9 @@ fn main() {
             media_cmd,
             pomodoro_cmd,
             alerts_get,
-            config_get
+            config_get,
+            shelf_set_hit_rect,
+            shelf_cmd
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -204,16 +233,48 @@ fn main() {
             place_window(&win, offset)?;
             win.show()?;
 
-            // 缩放比例或主屏幕分辨率变了，重新摆位置
+            // 缩放比例变了，重新摆位置
             let w2 = win.clone();
             win.on_window_event(move |e| {
                 if let WindowEvent::ScaleFactorChanged { .. } = e {
                     let _ = place_window(&w2, offset);
                 }
             });
-            let w3 = win.clone();
-            fullscreen::spawn(win.clone(), cfg.hide_in_fullscreen, move || {
+
+            // ---------- 侧边架子：同一个程序里的第二个窗口 ----------
+            let shelf_win = app.get_webview_window("shelf").expect("找不到架子窗口");
+            let shelf = if cfg.shelf_enabled {
+                let s = Shelf::new(shelf_win.clone(), &cfg);
+                let s2 = s.clone();
+                shelf_win.on_window_event(move |e| match e {
+                    WindowEvent::Focused(f) => s2.set_focused(*f),
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        let _ = s2.place();
+                    }
+                    _ => {}
+                });
+                let s3 = s.clone();
+                if !hotkey::spawn(&cfg.shelf_hotkey, move || s3.toggle()) {
+                    eprintln!("架子快捷键没有生效，可以从托盘菜单打开");
+                }
+                app.manage(s.clone());
+                Some(s)
+            } else {
+                let _ = shelf_win.destroy();
+                None
+            };
+
+            // 全屏时灵动岛和架子一起藏；主屏幕分辨率变了两个都重新摆
+            let mut hide_list = vec![win.clone()];
+            if shelf.is_some() {
+                hide_list.push(shelf_win.clone());
+            }
+            let (w3, s4) = (win.clone(), shelf.clone());
+            fullscreen::spawn(hide_list, cfg.hide_in_fullscreen, move || {
                 let _ = place_window(&w3, offset);
+                if let Some(s) = &s4 {
+                    let _ = s.place();
+                }
             });
             hover::spawn(win, state.clone());
 
@@ -221,10 +282,11 @@ fn main() {
             app.manage(media::MediaTx(media::spawn(handle.clone())));
             app.manage(Pomodoro::new(handle.clone(), cfg.pomodoro_minutes));
             app.manage(alerts::spawn(handle, cfg.clone()));
+            let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
             app.manage(cfg);
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())

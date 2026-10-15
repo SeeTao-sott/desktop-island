@@ -31,6 +31,21 @@ pub struct Config {
     pub gpu_poll_seconds: u32,
     /// 用电池时也读显卡温度（双显卡笔记本上可能会唤醒独显、多耗电）
     pub gpu_poll_on_battery: bool,
+
+    // ---------- 侧边架子 ----------
+    /// 是否启用架子
+    pub shelf_enabled: bool,
+    /// 右边缘触发区域：从屏幕高度的这个比例到那个比例（0 = 顶，1 = 底）。避开右上角关闭按钮和右下角
+    pub shelf_zone_top: f64,
+    pub shelf_zone_bottom: f64,
+    /// 鼠标在边缘停留多久才滑出（毫秒）
+    pub shelf_dwell_ms: u64,
+    /// 鼠标离开后多久收回（毫秒）
+    pub shelf_leave_delay_ms: u64,
+    /// 打开/关闭架子的快捷键，比如 "Ctrl+Alt+D"；留空表示不用快捷键
+    pub shelf_hotkey: String,
+    /// 架子面板宽度（逻辑像素）
+    pub shelf_width: u32,
 }
 
 impl Default for Config {
@@ -50,6 +65,13 @@ impl Default for Config {
             gpu_temp_limit_c: 85,
             gpu_poll_seconds: 5,
             gpu_poll_on_battery: false,
+            shelf_enabled: true,
+            shelf_zone_top: 0.25,
+            shelf_zone_bottom: 0.75,
+            shelf_dwell_ms: 300,
+            shelf_leave_delay_ms: 500,
+            shelf_hotkey: "Ctrl+Alt+D".into(),
+            shelf_width: 320,
         }
     }
 }
@@ -63,6 +85,11 @@ impl Config {
         self.gpu_poll_seconds = self.gpu_poll_seconds.clamp(1, 60);
         self.offset_x = self.offset_x.clamp(-2000, 2000);
         self.offset_y = self.offset_y.clamp(0, 400);
+        self.shelf_zone_top = self.shelf_zone_top.clamp(0.0, 0.95);
+        self.shelf_zone_bottom = self.shelf_zone_bottom.clamp(self.shelf_zone_top + 0.05, 1.0);
+        self.shelf_dwell_ms = self.shelf_dwell_ms.clamp(50, 3000);
+        self.shelf_leave_delay_ms = self.shelf_leave_delay_ms.clamp(0, 5000);
+        self.shelf_width = self.shelf_width.clamp(240, 600);
         self
     }
 }
