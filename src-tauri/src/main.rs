@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hover;
+mod media;
 
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, PhysicalPosition, WebviewWindow, WindowEvent};
@@ -27,6 +28,18 @@ pub struct IslandState {
 }
 
 #[tauri::command]
+fn media_cmd(tx: tauri::State<'_, media::MediaTx>, action: String) {
+    let msg = match action.as_str() {
+        "toggle" => media::Msg::Toggle,
+        "next" => media::Msg::Next,
+        "prev" => media::Msg::Prev,
+        "sync" => media::Msg::Resync,
+        _ => media::Msg::Refresh,
+    };
+    let _ = tx.0.send(msg);
+}
+
+#[tauri::command]
 fn set_hit_rect(state: tauri::State<'_, Arc<IslandState>>, rect: HitRect) {
     *state.hit.lock().unwrap() = rect;
 }
@@ -48,7 +61,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![set_hit_rect])
+        .invoke_handler(tauri::generate_handler![set_hit_rect, media_cmd])
         .setup(move |app| {
             let win = app.get_webview_window("main").expect("找不到主窗口");
             // 默认整个窗口点击穿透，鼠标进入胶囊时再由 hover 线程打开
@@ -56,6 +69,8 @@ fn main() {
             place_top_center(&win)?;
             win.show()?;
             hover::spawn(win, state.clone());
+            let tx = media::spawn(app.handle().clone());
+            app.manage(media::MediaTx(tx));
             Ok(())
         })
         .on_window_event(|window, event| {

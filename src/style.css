@@ -87,3 +87,176 @@ body {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* ---------- 音乐 ---------- */
+img.empty {
+  visibility: hidden;
+}
+
+.c-music {
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 0 10px 0 6px;
+  box-sizing: border-box;
+}
+
+.c-cover {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 小音量条：静态图标，暂停时变暗，不做循环动画以免空闲时一直重绘 */
+.eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  opacity: 0.35;
+  transition: opacity 0.3s;
+}
+.eq i {
+  width: 3px;
+  border-radius: 1.5px;
+  background: #9fe3b5;
+}
+.eq i:nth-child(1) { height: 7px; }
+.eq i:nth-child(2) { height: 12px; }
+.eq i:nth-child(3) { height: 9px; }
+.island.playing .eq {
+  opacity: 1;
+}
+
+.e-music {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px 0 14px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.e-cover {
+  flex: none;
+  width: 92px;
+  height: 92px;
+  border-radius: 16px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.title,
+.artist {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.artist {
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--sub);
+}
+
+.bar {
+  margin-top: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.85);
+  transform-origin: left center;
+  transform: scaleX(0);
+  will-change: transform;
+}
+
+.ctrl-row {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.t {
+  width: 44px;
+  font-size: 11px;
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+}
+.t.js-total {
+  text-align: right;
+}
+
+.ctrls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  /* 按下缩一下，松开带点回弹 */
+  transition:
+    transform 0.28s cubic-bezier(0.2, 1.6, 0.4, 1),
+    background-color 0.15s;
+}
+.btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.btn:active {
+  transform: scale(0.86);
+  transition-duration: 0.08s;
+}
+.btn:disabled {
+  opacity: 0.3;
+  background: transparent;
+  transform: none;
+}
+.btn-main {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.btn-main svg {
+  width: 20px;
+  height: 20px;
+}
+.btn-main .ic-pause,
+.island.playing .btn-main .ic-play {
+  display: none;
+}
+.island.playing .btn-main .ic-pause {
+  display: block;
+}

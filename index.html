@@ -8,12 +8,50 @@
   </head>
   <body>
     <div id="island" class="island">
-      <div class="layer compact">
-        <span id="time-compact" class="time"></span>
+      <!-- 收起 · 只有时间 -->
+      <div class="layer c-time">
+        <span class="time js-time"></span>
       </div>
-      <div class="layer expanded">
-        <div id="time-big" class="time-big"></div>
-        <div id="date" class="date"></div>
+
+      <!-- 收起 · 正在放歌 -->
+      <div class="layer c-music">
+        <img class="c-cover js-cover" alt="" />
+        <span class="time js-time"></span>
+        <span class="eq js-eq"><i></i><i></i><i></i></span>
+      </div>
+
+      <!-- 展开 · 时间和日期 -->
+      <div class="layer e-time">
+        <div class="time-big js-time"></div>
+        <div class="date js-date"></div>
+      </div>
+
+      <!-- 展开 · 音乐卡片 -->
+      <div class="layer e-music">
+        <img class="e-cover js-cover" alt="" />
+        <div class="info">
+          <div class="track js-track">
+            <div class="title js-title"></div>
+            <div class="artist js-artist"></div>
+          </div>
+          <div class="bar js-bar"><div class="fill js-fill"></div></div>
+          <div class="ctrl-row">
+            <span class="t js-elapsed"></span>
+            <div class="ctrls">
+              <button class="btn js-prev" aria-label="上一首">
+                <svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9.5 12z" /></svg>
+              </button>
+              <button class="btn btn-main js-toggle" aria-label="播放/暂停">
+                <svg class="ic-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                <svg class="ic-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" /></svg>
+              </button>
+              <button class="btn js-next" aria-label="下一首">
+                <svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z" /></svg>
+              </button>
+            </div>
+            <span class="t js-total"></span>
+          </div>
+        </div>
       </div>
     </div>
     <div id="fps" class="fps" hidden></div>
