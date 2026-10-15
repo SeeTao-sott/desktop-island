@@ -116,6 +116,8 @@ impl Shelf {
         let _ = shelf.place();
         let _ = shelf.win.set_ignore_cursor_events(true);
         let _ = shelf.win.show();
+        // 拖放接收在启动后就装好，不等架子滑出（见 shelf_drop.rs）
+        crate::shelf_drop::install_after_startup(shelf.win.clone());
         let worker = shelf.clone();
         thread::spawn(move || worker.run());
         shelf
