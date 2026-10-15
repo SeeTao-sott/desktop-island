@@ -50,6 +50,8 @@ pub struct Shelf {
     open: AtomicBool,
     pinned: AtomicBool,
     focused: AtomicBool,
+    /// 页面上有"撤销"提示时先别自动收回，免得按钮还没点就跟着藏起来
+    hold: AtomicBool,
     /// 滑出前的前台窗口，用快捷键收回时把焦点还给它
     prev_fg: AtomicIsize,
     hit: Mutex<HitRect>,
@@ -103,6 +105,7 @@ impl Shelf {
             open: AtomicBool::new(false),
             pinned: AtomicBool::new(false),
             focused: AtomicBool::new(false),
+            hold: AtomicBool::new(false),
             prev_fg: AtomicIsize::new(0),
             hit: Mutex::new(HitRect::default()),
             zone: (cfg.shelf_zone_top, cfg.shelf_zone_bottom),
@@ -127,6 +130,17 @@ impl Shelf {
         let h = (work.bottom - work.top) as u32;
         self.win.set_size(PhysicalSize::new(w, h))?;
         self.win.set_position(PhysicalPosition::new(work.right - w as i32, work.top))
+    }
+
+    /// 装上架子自己的拖放接收（见 shelf_drop.rs）。要在界面线程里做；
+    /// 浏览器内核可能后来又换回它自己的，所以每次滑出、鼠标进入面板都装一次
+    fn fix_drop_targets(&self) {
+        let win = self.win.clone();
+        let _ = self.win.run_on_main_thread(move || crate::shelf_drop::install(&win));
+    }
+
+    pub fn set_hold(&self, on: bool) {
+        self.hold.store(on, Ordering::SeqCst);
     }
 
     pub fn set_hit(&self, r: HitRect) {
@@ -160,6 +174,7 @@ impl Shelf {
         self.pinned.store(pinned, Ordering::SeqCst);
         // 平时窗口不可聚焦（显示时不会抢走别的程序的焦点）；滑出后才允许点进来打字
         let _ = self.win.set_focusable(true);
+        self.fix_drop_targets();
         let fg = unsafe { GetForegroundWindow() }.0 as isize;
         if fg != self.hwnd {
             self.prev_fg.store(fg, Ordering::SeqCst);
@@ -287,9 +302,15 @@ impl Shelf {
             if inside != interactive {
                 interactive = inside;
                 let _ = self.win.set_ignore_cursor_events(!inside);
+                if inside {
+                    self.fix_drop_targets();
+                }
             }
 
-            let stay = inside || self.pinned.load(Ordering::SeqCst) || self.focused.load(Ordering::SeqCst);
+            let stay = inside
+                || self.pinned.load(Ordering::SeqCst)
+                || self.focused.load(Ordering::SeqCst)
+                || self.hold.load(Ordering::SeqCst);
             if stay {
                 outside_since = None;
             } else {

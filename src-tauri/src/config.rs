@@ -46,6 +46,14 @@ pub struct Config {
     pub shelf_hotkey: String,
     /// 架子面板宽度（逻辑像素）
     pub shelf_width: u32,
+    /// 架子用来存放东西的真实文件夹，每个分类是里面的一个子文件夹
+    pub shelf_dir: String,
+}
+
+/// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
+fn default_shelf_dir() -> String {
+    let base = std::env::var("OneDrive").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| "C:\\".into());
+    std::path::Path::new(&base).join("架子").to_string_lossy().to_string()
 }
 
 impl Default for Config {
@@ -72,6 +80,7 @@ impl Default for Config {
             shelf_leave_delay_ms: 500,
             shelf_hotkey: "Ctrl+Alt+D".into(),
             shelf_width: 320,
+            shelf_dir: default_shelf_dir(),
         }
     }
 }
@@ -90,6 +99,9 @@ impl Config {
         self.shelf_dwell_ms = self.shelf_dwell_ms.clamp(50, 3000);
         self.shelf_leave_delay_ms = self.shelf_leave_delay_ms.clamp(0, 5000);
         self.shelf_width = self.shelf_width.clamp(240, 600);
+        if self.shelf_dir.trim().is_empty() {
+            self.shelf_dir = default_shelf_dir();
+        }
         self
     }
 }

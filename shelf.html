@@ -19,7 +19,20 @@
         </label>
       </header>
       <div id="list" class="list"></div>
-      <footer class="foot js-foot"></footer>
+
+      <!-- 拖文件进来时的提示 -->
+      <div id="drop-tip" class="drop-tip"><span class="js-drop-text">松手放进架子</span></div>
+
+      <!-- 操作提示（含撤销） -->
+      <div id="toasts" class="toasts"></div>
+
+      <!-- 右键菜单 -->
+      <div id="menu" class="menu glass" hidden></div>
+
+      <footer class="foot">
+        <span class="js-foot"></span>
+        <button class="removed-link js-removed" hidden></button>
+      </footer>
     </aside>
 
     <template id="tpl-section">
@@ -32,6 +45,7 @@
         </button>
         <div class="sec-body">
           <div class="sec-inner">
+            <div class="items"></div>
             <div class="empty">空空的 · 把文件拖到这里</div>
           </div>
         </div>
@@ -58,6 +72,9 @@
       </symbol>
       <symbol id="c-other" viewBox="0 0 24 24">
         <circle cx="6" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="18" cy="12" r="1.8" />
+      </symbol>
+      <symbol id="c-folder" viewBox="0 0 24 24">
+        <path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
       </symbol>
     </svg>
 

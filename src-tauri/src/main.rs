@@ -4,12 +4,17 @@
 mod alerts;
 mod autostart;
 mod config;
+mod fileops;
 mod fullscreen;
 mod hotkey;
 mod hover;
+mod icons;
 mod media;
 mod pomodoro;
 mod shelf;
+mod shelf_cmds;
+mod shelf_drop;
+mod shelf_fs;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -90,6 +95,8 @@ fn shelf_cmd(shelf: State<'_, Arc<Shelf>>, action: String) -> ShelfState {
     match action.as_str() {
         "toggle" => shelf.toggle(),
         "hide" => shelf.hide(),
+        "hold" => shelf.set_hold(true),
+        "release" => shelf.set_hold(false),
         _ => {}
     }
     shelf.state()
@@ -219,7 +226,17 @@ fn main() {
             alerts_get,
             config_get,
             shelf_set_hit_rect,
-            shelf_cmd
+            shelf_cmd,
+            shelf_cmds::shelf_list,
+            shelf_cmds::shelf_put,
+            shelf_cmds::shelf_move,
+            shelf_cmds::shelf_rename,
+            shelf_cmds::shelf_remove,
+            shelf_cmds::shelf_undo,
+            shelf_cmds::shelf_open,
+            shelf_cmds::shelf_reveal,
+            shelf_cmds::shelf_open_removed,
+            shelf_cmds::shelf_icon
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -258,6 +275,14 @@ fn main() {
                     eprintln!("架子快捷键没有生效，可以从托盘菜单打开");
                 }
                 app.manage(s.clone());
+                // 架子的真实文件夹：建好默认分类，开始监听变化，移动日志写在配置文件旁边
+                let shelf_fs = shelf_fs::ShelfFs::new(
+                    app.handle().clone(),
+                    PathBuf::from(&cfg.shelf_dir),
+                    dir.join("shelf-log.jsonl"),
+                );
+                eprintln!("架子文件夹: {}", shelf_fs.root().display());
+                app.manage(shelf_fs);
                 Some(s)
             } else {
                 let _ = shelf_win.destroy();
