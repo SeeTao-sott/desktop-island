@@ -96,14 +96,23 @@ body.editing .edit-chips {
 body.editing .widget.dragging .edit-chips {
   opacity: 0;
 }
-/* 尺寸按钮挂在组件下面，会盖到下一行的组件：只给鼠标所在的那个显示，并把它提到上面 */
-body.editing .widget:not(:hover):not(.has-settings) .edit-chips {
+/* 尺寸按钮挂在组件下面，会盖到下一行的组件：只给"当前选中"的那个显示，并把它提到上面。
+   选中 = 鼠标最后进入的组件，移到按钮上（中间隔着空隙）也不会丢；进入别的组件才换 */
+body.editing .widget:not(.active) .edit-chips {
   opacity: 0;
   pointer-events: none;
 }
-body.editing .widget:hover,
-body.editing .widget.has-settings {
+body.editing .widget.active {
   z-index: 5;
+}
+/* 组件和按钮之间的空隙也算按钮的一部分 */
+.edit-chips::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14px;
+  height: 14px;
 }
 .chip {
   height: 26px;

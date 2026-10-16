@@ -154,6 +154,10 @@ function mount(item: Item): Live | null {
   buildChips(l);
   bindDrag(l);
   remove.addEventListener("click", () => removeWidget(l));
+  // 编辑时鼠标进入哪个组件，就显示哪个的尺寸按钮（一直留着，直到进入别的组件）
+  el.addEventListener("pointerenter", () => {
+    if (editing && !l.removing) setActive(l);
+  });
   live.push(l);
   if (paused) inst.setPaused(true);
   return l;
@@ -184,10 +188,8 @@ function toggleSettings(l: Live) {
   if (l.panel) {
     l.panel.remove();
     l.panel = null;
-    l.el.classList.remove("has-settings");
     return;
   }
-  l.el.classList.add("has-settings");
   const p = document.createElement("div");
   p.className = "w-settings";
   for (const d of l.mod.settings ?? []) {
@@ -209,11 +211,14 @@ function toggleSettings(l: Live) {
   l.panel = p;
 }
 
+function setActive(l: Live | null) {
+  for (const o of live) o.el.classList.toggle("active", o === l);
+}
+
 function closeAllSettings() {
   for (const l of live) {
     l.panel?.remove();
     l.panel = null;
-    l.el.classList.remove("has-settings");
   }
 }
 
@@ -402,6 +407,7 @@ function setEditing(on: boolean) {
   editFade.target = on ? 1 : 0;
   if (!on) {
     closeAllSettings();
+    setActive(null);
     showLibrary(false);
     save();
   }
