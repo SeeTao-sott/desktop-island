@@ -16,6 +16,7 @@ mod shelf;
 mod shelf_cmds;
 mod shelf_drop;
 mod shelf_fs;
+mod widgets;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -34,6 +35,7 @@ use alerts::{AlertHub, Alerts};
 use config::Config;
 use pomodoro::{PomoState, Pomodoro};
 use shelf::{Shelf, ShelfState};
+use widgets::Widgets;
 
 /// 胶囊在窗口内的可交互区域（CSS 像素，相对窗口左上角）
 #[derive(Clone, Copy, Default, serde::Deserialize)]
@@ -105,6 +107,33 @@ fn shelf_cmd(shelf: State<'_, Arc<Shelf>>, action: String) -> ShelfState {
 }
 
 #[tauri::command]
+fn widgets_set_hits(w: State<'_, Arc<Widgets>>, rects: Vec<HitRect>) {
+    w.set_hits(rects);
+}
+
+/// edit-on / edit-off / toggle；返回现在是不是在编辑模式
+#[tauri::command]
+fn widgets_cmd(w: State<'_, Arc<Widgets>>, action: String) -> bool {
+    match action.as_str() {
+        "edit-on" => w.set_editing(true),
+        "edit-off" => w.set_editing(false),
+        "toggle" => w.toggle_editing(),
+        _ => {}
+    }
+    w.editing()
+}
+
+#[tauri::command]
+fn widgets_layout_get(w: State<'_, Arc<Widgets>>) -> Option<serde_json::Value> {
+    w.load_layout()
+}
+
+#[tauri::command]
+fn widgets_layout_save(w: State<'_, Arc<Widgets>>, layout: serde_json::Value) -> Result<(), String> {
+    w.save_layout(&layout).map_err(|e| format!("布局没保存成功：{e}"))
+}
+
+#[tauri::command]
 fn config_get(cfg: State<'_, Config>) -> Config {
     cfg.inner().clone()
 }
@@ -159,8 +188,21 @@ fn place_window(win: &WebviewWindow, offset: (i32, i32)) -> tauri::Result<()> {
 
 // ---------------- 托盘 ----------------
 
-fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &str) -> tauri::Result<()> {
+fn build_tray(
+    app: &App,
+    cfg_path: PathBuf,
+    shelf: Option<Arc<Shelf>>,
+    hotkey: &str,
+    widgets: Option<Arc<Widgets>>,
+    widgets_hotkey: &str,
+) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
+    let widgets_label = if widgets_hotkey.is_empty() {
+        "编辑桌面小组件".to_string()
+    } else {
+        format!("编辑桌面小组件\t{widgets_hotkey}")
+    };
+    let widgets_item = MenuItem::with_id(app, "widgets_edit", widgets_label, widgets.is_some(), None::<&str>)?;
     let has_shelf = shelf.is_some();
     let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, has_shelf, None::<&str>)?;
     let migrate = MenuItem::with_id(app, "migrate", "从桌面搬进架子…", has_shelf, None::<&str>)?;
@@ -177,6 +219,8 @@ fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &
             &migrate,
             &restore,
             &icons,
+            &PredefinedMenuItem::separator(app)?,
+            &widgets_item,
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
@@ -206,6 +250,11 @@ fn build_tray(app: &App, cfg_path: PathBuf, shelf: Option<Arc<Shelf>>, hotkey: &
                 if let Some(s) = &shelf {
                     s.show(true);
                     let _ = app.emit("shelf-sheet", event.id().as_ref());
+                }
+            }
+            "widgets_edit" => {
+                if let Some(w) = &widgets {
+                    w.toggle_editing();
                 }
             }
             "desktop_icons" => {
@@ -270,7 +319,11 @@ fn main() {
             shelf_cmds::shelf_restore_plan,
             shelf_cmds::shelf_restore,
             shelf_cmds::shelf_open_record,
-            shelf_cmds::shelf_icon
+            shelf_cmds::shelf_icon,
+            widgets_set_hits,
+            widgets_cmd,
+            widgets_layout_get,
+            widgets_layout_save
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -323,16 +376,32 @@ fn main() {
                 None
             };
 
-            // 全屏时灵动岛和架子一起藏；主屏幕分辨率变了两个都重新摆
+            // ---------- 桌面小组件：壁纸之上、程序窗口之下 ----------
+            let widgets = if cfg.widgets_enabled {
+                let w = Widgets::new(app.handle(), dir.clone());
+                let w2 = w.clone();
+                if !hotkey::spawn(&cfg.widgets_edit_hotkey, move || w2.toggle_editing()) {
+                    eprintln!("小组件编辑快捷键没有生效，可以从托盘菜单进入");
+                }
+                app.manage(w.clone());
+                Some(w)
+            } else {
+                None
+            };
+
+            // 全屏时灵动岛和架子一起藏（小组件本来就在程序下面，只暂停更新）；主屏幕分辨率变了都重新摆
             let mut hide_list = vec![win.clone()];
             if shelf.is_some() {
                 hide_list.push(shelf_win.clone());
             }
-            let (w3, s4) = (win.clone(), shelf.clone());
+            let (w3, s4, wg) = (win.clone(), shelf.clone(), widgets.clone());
             fullscreen::spawn(hide_list, cfg.hide_in_fullscreen, move || {
                 let _ = place_window(&w3, offset);
                 if let Some(s) = &s4 {
                     let _ = s.place();
+                }
+                if let Some(w) = &wg {
+                    w.replace();
                 }
             });
             hover::spawn(win, state.clone());
@@ -342,10 +411,11 @@ fn main() {
             app.manage(Pomodoro::new(handle.clone(), cfg.pomodoro_minutes));
             app.manage(alerts::spawn(handle, cfg.clone()));
             let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
+            let widgets_hotkey = if widgets.is_some() { cfg.widgets_edit_hotkey.clone() } else { String::new() };
             app.manage(cfg);
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())

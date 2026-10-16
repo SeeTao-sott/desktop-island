@@ -1,0 +1,94 @@
+/* 时钟组件：大字号时间用等宽数字，跳秒时不左右晃 */
+.w-clock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
+
+.clk-time {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.clk-ampm:empty,
+.clk-sec:empty {
+  display: none;
+}
+.clk-ampm {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--w-sub);
+  margin-right: 2px;
+}
+.clk-sec {
+  font-size: 0.42em;
+  font-weight: 500;
+  color: var(--w-sub);
+}
+.clk-date {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--w-sub);
+}
+
+/* 小：时间在上，日期在下 */
+.size-small .clk-time {
+  font-size: 44px;
+}
+.size-small .clk-date {
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 中：一行大时间 + 日期 */
+.size-medium .clk-time {
+  font-size: 64px;
+}
+.size-medium .clk-date {
+  font-size: 15px;
+}
+
+/* 大：时间 + 日期 + 月历 */
+.w-clock.size-large {
+  justify-content: flex-start;
+  padding: 22px 24px;
+}
+.size-large .clk-time {
+  font-size: 58px;
+}
+.clk-cal {
+  flex: 1;
+  margin-top: 18px;
+}
+.cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 6px;
+  text-align: center;
+  font-size: 13px;
+}
+.cal-head {
+  color: var(--w-sub);
+  font-size: 12px;
+  padding-bottom: 2px;
+}
+.cal-day {
+  justify-self: center;
+  width: 26px;
+  line-height: 26px;
+  border-radius: 50%;
+}
+.cal-day.today {
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+  font-weight: 600;
+}

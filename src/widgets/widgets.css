@@ -1,0 +1,220 @@
+@import "../tokens.css";
+
+/* 小组件自己的颜色变量。阶段 2 会根据壁纸自动改写这几个值 */
+:root {
+  --w-bg: var(--bg);
+  --w-text: var(--text);
+  --w-sub: var(--sub);
+  --w-stroke: var(--stroke);
+  --w-accent: rgba(140, 170, 255, 0.92);
+  --w-on-accent: #0d1020;
+  --w-radius: 22px;
+}
+
+.board {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- 一个组件 ---------- */
+.widget {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--w-radius);
+  color: var(--w-text);
+  transform-origin: center;
+  will-change: transform;
+}
+.widget-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--w-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--w-stroke),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* ---------- 编辑模式 ---------- */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background-color: rgba(6, 8, 14, 0.42);
+  /* 网格点：每个格子的左上角一个点，和吸附位置对齐 */
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.28) 1.4px, transparent 1.6px);
+  background-size: 88px 88px;
+  /* 点在格子中心画，往回挪半格对准格子左上角（离边 24px） */
+  background-position: -20px -20px;
+}
+
+body.editing .widget {
+  cursor: grab;
+}
+body.editing .widget.dragging {
+  cursor: grabbing;
+  z-index: 10;
+}
+/* 编辑时组件内容不接收鼠标，整块都能拖 */
+body.editing .widget-body > * {
+  pointer-events: none;
+}
+.edit-ring {
+  position: absolute;
+  inset: -5px;
+  border-radius: calc(var(--w-radius) + 5px);
+  border: 1.5px dashed rgba(255, 255, 255, 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+body.editing .edit-ring {
+  opacity: var(--edit, 0);
+}
+
+/* 尺寸和设置按钮：编辑模式下挂在组件下面 */
+.edit-chips {
+  position: absolute;
+  left: 50%;
+  bottom: -40px;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 16px;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+body.editing .edit-chips {
+  opacity: var(--edit, 0);
+  pointer-events: auto;
+}
+body.editing .widget.dragging .edit-chips {
+  opacity: 0;
+}
+.chip {
+  height: 26px;
+  min-width: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  font-size: 12.5px;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.chip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.chip:active {
+  transform: scale(0.92);
+}
+.chip.on {
+  background: rgba(255, 255, 255, 0.9);
+  color: #111;
+  font-weight: 600;
+}
+.chip svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  vertical-align: -3px;
+}
+
+/* 组件设置：编辑模式下点齿轮，盖在组件上 */
+.w-settings {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px;
+  border-radius: inherit;
+  background: rgba(16, 16, 22, 0.94);
+  color: var(--text);
+  pointer-events: auto !important;
+}
+.w-settings[hidden] {
+  display: none;
+}
+.w-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.w-settings label:hover {
+  background: var(--hover);
+}
+.w-settings input {
+  width: 16px;
+  height: 16px;
+  accent-color: rgb(140, 170, 255);
+}
+
+/* 拖动时的落点 */
+.slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--w-radius);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+/* 顶部的编辑栏 */
+.edit-bar {
+  position: absolute;
+  left: 50%;
+  /* 让开顶部的灵动岛 */
+  top: 64px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 6px 6px 18px;
+  border-radius: 22px;
+  font-size: 13px;
+  color: var(--sub);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -12px);
+}
+body.editing .edit-bar {
+  pointer-events: auto;
+}
+
+.pill {
+  height: 32px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--pill);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.pill:active {
+  transform: scale(0.94);
+}
+.pill-primary {
+  background: rgba(140, 170, 255, 0.92);
+  color: #0d1020;
+  font-weight: 600;
+}
+
+.fps {
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "灵动岛和架子窗口：只开放事件监听",
-  "windows": ["main", "shelf"],
+  "description": "灵动岛、架子和桌面小组件窗口：只开放事件监听",
+  "windows": ["main", "shelf", "widgets"],
   "permissions": ["core:default"]
 }

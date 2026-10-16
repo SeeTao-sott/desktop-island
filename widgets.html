@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>桌面小组件</title>
+    <link rel="stylesheet" href="/src/widgets/widgets.css" />
+  </head>
+  <body>
+    <!-- 编辑模式：压暗背景 + 网格点 -->
+    <div id="backdrop" class="backdrop"></div>
+    <!-- 拖动时显示"松手会落在哪" -->
+    <div id="slot" class="slot" hidden></div>
+    <div id="board" class="board"></div>
+
+    <div id="edit-bar" class="edit-bar glass">
+      <span class="edit-hint">拖动摆放 · 下方切换大小</span>
+      <button class="pill pill-primary js-done">完成</button>
+    </div>
+
+    <div id="fps" class="fps" hidden></div>
+    <script type="module" src="/src/widgets/main.ts"></script>
+  </body>
+</html>

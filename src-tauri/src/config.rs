@@ -48,6 +48,12 @@ pub struct Config {
     pub shelf_width: u32,
     /// 架子用来存放东西的真实文件夹，每个分类是里面的一个子文件夹
     pub shelf_dir: String,
+
+    // ---------- 桌面小组件 ----------
+    /// 是否启用桌面小组件
+    pub widgets_enabled: bool,
+    /// 进入 / 退出编辑模式的快捷键；留空表示不用快捷键（托盘里也能进）
+    pub widgets_edit_hotkey: String,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -81,6 +87,8 @@ impl Default for Config {
             shelf_hotkey: "Ctrl+Alt+D".into(),
             shelf_width: 320,
             shelf_dir: default_shelf_dir(),
+            widgets_enabled: true,
+            widgets_edit_hotkey: "Ctrl+Alt+W".into(),
         }
     }
 }

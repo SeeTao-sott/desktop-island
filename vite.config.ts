@@ -5,7 +5,7 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   build: {
     target: "es2022",
-    // 两个窗口两个页面：灵动岛 index.html、侧边架子 shelf.html
-    rollupOptions: { input: { island: "index.html", shelf: "shelf.html" } },
+    // 每个窗口一个页面：灵动岛 index.html、侧边架子 shelf.html、桌面小组件 widgets.html
+    rollupOptions: { input: { island: "index.html", shelf: "shelf.html", widgets: "widgets.html" } },
   },
 });
