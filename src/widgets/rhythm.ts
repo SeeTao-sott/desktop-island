@@ -67,10 +67,15 @@ let cleanup: (() => void) | null = null;
 export const rhythmOpen = () => root !== null;
 
 /** 双击律动组件：在它上方弹出选歌菜单 */
+let opening = false;
+
 export async function openRhythm(anchor: Rect) {
-  if (root) return;
+  // 自己判断的双击和浏览器的 dblclick 可能前后脚都来，只开一次
+  if (root || opening) return;
+  opening = true;
   const on = await invoke<boolean>("widgets_rhythm", { on: true }).catch(() => false);
-  if (!on) return;
+  opening = false;
+  if (!on || root) return;
   root = document.createElement("div");
   root.className = "rh-root";
   document.body.appendChild(root);
@@ -107,7 +112,15 @@ function showMenu(anchor: Rect) {
   swap(() => {
     // 几乎透明的底：接住"点外面"的点击（完全透明的地方鼠标会穿过去）
     const shade = el("div", "rh-shade", root!);
-    shade.addEventListener("pointerdown", () => closeRhythm());
+    // 点外面关闭：要在外面完整地按下再松开，而且刚弹出来的一小会儿不算
+    // （双击的余波、窗口被激活时补发的鼠标事件，都不该把菜单马上关掉）
+    const opened = performance.now();
+    let downOnShade = false;
+    shade.addEventListener("pointerdown", () => (downOnShade = performance.now() - opened > 300));
+    shade.addEventListener("pointerup", () => {
+      if (downOnShade) closeRhythm();
+      downOnShade = false;
+    });
     const card = el("div", "rh-menu", root!);
     el("div", "rh-menu-title", card, "选一首歌");
     const list = el("div", "rh-list", card);
@@ -228,15 +241,11 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     const [c1, c2] = vividPair(getComputedStyle(document.documentElement).getPropertyValue("--w-accent"));
     stage.style.setProperty("--rh-c", c1);
     stage.style.setProperty("--rh-c2", c2);
-    // 轨道背景：从灵动岛下面一直到判定线
+    // 轨道区域（不画框）：从灵动岛下面一直到判定线
     const road = el("div", "rh-road", stage);
     road.style.transform = `translate(${left}px, ${SPAWN_Y}px)`;
     road.style.width = `${LANE_W * 4}px`;
     road.style.height = `${travel}px`;
-    for (let i = 1; i < 4; i++) {
-      const sep = el("div", "rh-sep", road);
-      sep.style.transform = `translateX(${i * LANE_W}px)`;
-    }
     // 按住时轨道亮起来
     const glow = KEYS.map((_, i) => {
       const g = el("div", "rh-lane-glow", road);

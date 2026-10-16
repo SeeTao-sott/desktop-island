@@ -248,11 +248,14 @@ impl Widgets {
         self.win.lock().unwrap().clone()
     }
 
-    /// 铺满主屏幕工作区
+    /// 铺满主屏幕工作区。浮到最上面（编辑、音游）时底部少 1 像素：
+    /// 盖满整个屏幕又在最前面的窗口会被动态壁纸（Wallpaper Engine 等）当成"最大化 / 全屏程序"而暂停，
+    /// 少 1 像素看不出来，但不再被这样判断
     fn place(&self, win: &WebviewWindow) {
         if let Some(r) = work_area() {
+            let trim = if RAISED.load(Ordering::SeqCst) { 1 } else { 0 };
             let _ = win.set_position(PhysicalPosition::new(r.left, r.top));
-            let _ = win.set_size(PhysicalSize::new((r.right - r.left) as u32, (r.bottom - r.top) as u32));
+            let _ = win.set_size(PhysicalSize::new((r.right - r.left) as u32, (r.bottom - r.top - trim) as u32));
         }
     }
 
@@ -306,6 +309,8 @@ impl Widgets {
     fn overlay(&self, win: &WebviewWindow, on: bool, focus: bool) {
         let hwnd = HWND(self.hwnd.load(Ordering::SeqCst) as *mut _);
         RAISED.store(on, Ordering::SeqCst);
+        // 浮上来时少 1 像素、沉回去时恢复铺满（见 place）
+        self.place(win);
         if on && focus {
             // 先放开"不激活"，Tauri 自己记的状态也跟着改，免得它以后重写样式又加回来
             FOCUS.store(true, Ordering::SeqCst);

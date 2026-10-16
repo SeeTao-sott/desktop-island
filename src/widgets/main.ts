@@ -206,10 +206,22 @@ function mount(item: Item): Live | null {
   });
   // 双击律动（音频可视化）组件：弹出选歌，玩音游。编辑模式下双击不算（那是在拖动摆放）
   if (mod.kind === "audio") {
-    el.addEventListener("dblclick", () => {
+    // 浏览器内核偶尔会把没激活的窗口上的第一下点击当成"激活"吃掉，dblclick 就不来了：
+    // 自己也按两次按下的间隔和距离判断一遍，哪个先到算哪个
+    let lastDown = { t: 0, x: 0, y: 0 };
+    const open = () => {
       if (editing || l.removing) return;
       openRhythm({ x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target });
+    };
+    el.addEventListener("pointerdown", (e) => {
+      const now = performance.now();
+      const near = Math.abs(e.clientX - lastDown.x) < 10 && Math.abs(e.clientY - lastDown.y) < 10;
+      if (e.button === 0 && near && now - lastDown.t < 450) {
+        lastDown.t = 0;
+        open();
+      } else lastDown = { t: now, x: e.clientX, y: e.clientY };
     });
+    el.addEventListener("dblclick", open);
   }
   live.push(l);
   if (paused) l.model.setPaused(true);
