@@ -62,8 +62,8 @@ export function waveRenderer(layout: Layout): Renderer {
         const z = Math.max(a + 1, Math.floor(((i + 1) * N) / n));
         let m = 0;
         for (let k = a; k < z; k++) m = Math.max(m, Math.abs(d.wave[k]));
-        // 开 0.7 次方：小声的地方也看得见起伏
-        target[i] = Math.pow(m / 127, 0.7);
+        // 开 0.85 次方：小声的地方也看得见，又不会把高低差抹平
+        target[i] = Math.pow(m / 127, 0.85);
       }
     },
     quiet() {

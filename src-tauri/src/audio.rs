@@ -211,16 +211,16 @@ fn rms(s: &[f32]) -> f32 {
     (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt()
 }
 
-/// 波形：整个窗口（约 43 毫秒）分成 WAVE 段，每段取绝对值最大的那个采样（保留正负）。
-/// 比平均降采样更像示波器：鼓点的尖峰不会被抹平
+/// 波形：最近一小段声音的真实起伏，分成 WAVE 个点。
 ///
 /// 自动增益：记住最近约 1 秒的最大振幅（agc），按它放大后再量化成 -127..127。
 /// 系统音量小、歌本身小声时也能占满组件；放大倍数有上限，安静时不会把底噪放大成满屏
 fn wave(s: &[f32], agc: &mut f32) -> Vec<i8> {
-    let step = s.len() / WAVE;
-    let peaks: Vec<f32> = (0..WAVE)
-        .map(|i| s[i * step..(i + 1) * step].iter().copied().fold(0f32, |m, x| if x.abs() > m.abs() { x } else { m }))
-        .collect();
+    // 取最近约 21 毫秒（1024 个采样），每 8 个取平均（带正负）：这是声音真实的起伏，
+    // 相邻的柱子高低错落；取峰值的话声音一满每段都差不多大，看起来像一个死板的菱形
+    let tail = &s[s.len() - 1024..];
+    let step = tail.len() / WAVE;
+    let peaks: Vec<f32> = (0..WAVE).map(|i| tail[i * step..(i + 1) * step].iter().sum::<f32>() / step as f32).collect();
     let peak = peaks.iter().fold(0f32, |m, x| m.max(x.abs()));
     // 约 1.5 秒衰减一半：鼓点之间不会一下子缩成一条线
     *agc = peak.max(*agc * 0.992);
@@ -255,7 +255,8 @@ impl Analyzer {
             }
             edges.push((a, z.min(N / 2)));
             // 每倍频程 +3 dB
-            tilt.push(((f0 * f1).sqrt() / 1000.0).log2() * 3.0);
+            // 每倍频程 +2 dB（补偿音乐高频天生弱；补太多高音会翘起来，变成两边高中间低）
+            tilt.push(((f0 * f1).sqrt() / 1000.0).log2() * 2.0);
         }
         Self { window, edges, tilt }
     }
@@ -268,8 +269,9 @@ impl Analyzer {
             .iter()
             .zip(&self.tilt)
             .map(|(&(a, z), &t)| {
-                // 段内取最大值：窄的高音峰也看得见
-                let m = (a..z).map(|k| re[k] * re[k] + im[k] * im[k]).fold(0f32, f32::max).sqrt() / (N as f32 / 4.0);
+                // 段内取平均能量：高音的段很宽，取最大值会被个别尖峰顶得太高
+                let p = (a..z).map(|k| re[k] * re[k] + im[k] * im[k]).sum::<f32>() / (z - a) as f32;
+                let m = p.sqrt() / (N as f32 / 4.0);
                 let db = 20.0 * m.max(1e-9).log10() + t;
                 // -62 dB ~ -8 dB 映射到 0..255
                 (((db + 62.0) / 54.0).clamp(0.0, 1.0) * 255.0) as u8
