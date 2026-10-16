@@ -1,0 +1,6 @@
+把从 BeatSaver 下载的谱 zip 解压到这里，一首歌一个文件夹，比如：
+  charts/die-for-you/Info.dat
+  charts/die-for-you/ExpertPlusStandard.dat
+  ...
+歌的音频文件不用管（游戏用你自己在浏览器里放的歌）。
+这些文件夹不进 git。

@@ -3,3 +3,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 *.log
+
+# 音游的谱（从 BeatSaver 下载，不进 git）
+charts/*/

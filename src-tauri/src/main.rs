@@ -4,6 +4,8 @@
 mod alerts;
 mod audio;
 mod autostart;
+#[allow(dead_code)] // 阶段 2 才接到界面上
+mod chart;
 mod config;
 mod desktop;
 mod desktop_icons;
