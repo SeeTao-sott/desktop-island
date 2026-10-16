@@ -34,6 +34,11 @@ fn parse(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     if mods == MOD_NOREPEAT {
         return None;
     }
+    // Win+D 是系统自己的"显示桌面"，不去抢
+    if mods == MOD_NOREPEAT | MOD_WIN && key == Some(b'D' as u32) {
+        eprintln!("Win+D 是系统的快捷键，不能用");
+        return None;
+    }
     key.map(|k| (mods, k))
 }
 

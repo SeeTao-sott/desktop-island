@@ -5,6 +5,7 @@ mod alerts;
 mod audio;
 mod autostart;
 mod config;
+mod desktop;
 mod desktop_icons;
 mod fileops;
 mod fullscreen;
@@ -28,7 +29,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow, WindowEvent};
 use windows::core::w;
@@ -186,6 +187,12 @@ fn widgets_layout_save(w: State<'_, Arc<Widgets>>, layout: serde_json::Value) ->
     w.save_layout(&layout).map_err(|e| format!("布局没保存成功：{e}"))
 }
 
+/// 灵动岛被双击：按设置回到桌面 / 全部最小化
+#[tauri::command]
+fn island_double_click(keep: State<'_, desktop::Keep>) {
+    desktop::run(desktop::double_click(), keep.inner().clone());
+}
+
 #[tauri::command]
 fn config_get(cfg: State<'_, Config>) -> Config {
     cfg.inner().clone()
@@ -248,6 +255,8 @@ fn build_tray(
     hotkey: &str,
     widgets: Option<Arc<Widgets>>,
     widgets_hotkey: &str,
+    keep: desktop::Keep,
+    desktop_hotkey: &str,
 ) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
     let widgets_label = if widgets_hotkey.is_empty() {
@@ -267,6 +276,19 @@ fn build_tray(
     let restart = MenuItem::with_id(app, "restart", "重启（应用新配置）", true, None::<&str>)?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, autostart::is_enabled(), None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出灵动岛", true, None::<&str>)?;
+    let desktop_label = if desktop_hotkey.is_empty() { "回到桌面".to_string() } else { format!("回到桌面	{desktop_hotkey}") };
+    let desktop_item = MenuItem::with_id(app, "show_desktop", desktop_label, true, None::<&str>)?;
+    // 双击灵动岛做什么：三选一，打勾的是当前的
+    let now = desktop::double_click();
+    let dbl: Vec<CheckMenuItem<tauri::Wry>> = [
+        (desktop::Action::Desktop, "回到桌面（再双击恢复）"),
+        (desktop::Action::Minimize, "全部最小化（再双击恢复）"),
+        (desktop::Action::Off, "不做什么"),
+    ]
+    .into_iter()
+    .map(|(a, text)| CheckMenuItem::with_id(app, format!("dbl_{}", a.key()), text, true, a == now, None::<&str>))
+    .collect::<tauri::Result<_>>()?;
+    let dbl_menu = Submenu::with_items(app, "双击灵动岛", true, &[&dbl[0], &dbl[1], &dbl[2]])?;
     let menu = Menu::with_items(
         app,
         &[
@@ -278,6 +300,9 @@ fn build_tray(
             &widgets_item,
             &skin_item,
             &preview_item,
+            &PredefinedMenuItem::separator(app)?,
+            &desktop_item,
+            &dbl_menu,
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
@@ -341,6 +366,15 @@ fn build_tray(
                 let _ = auto_item.set_checked(autostart::is_enabled());
             }
             "quit" => app.exit(0),
+            "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
+            id if id.starts_with("dbl_") => {
+                let a = desktop::Action::parse(&id[4..]);
+                desktop::set_double_click(a);
+                for (item, key) in dbl.iter().zip(["desktop", "minimize", "off"]) {
+                    let _ = item.set_checked(key == a.key());
+                }
+                config::set_value(&cfg_path, "island_double_click", serde_json::Value::from(a.key()));
+            }
             _ => {}
         })
         .build(app)?;
@@ -357,6 +391,7 @@ fn main() {
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![
             set_hit_rect,
+            island_double_click,
             media_cmd,
             pomodoro_cmd,
             alerts_get,
@@ -472,6 +507,31 @@ fn main() {
                     w.replace();
                 }
             });
+            // ---------- 回到桌面 / 全部最小化：做完要保持显示的窗口（灵动岛、架子，都是置顶的） ----------
+            let mut keep = desktop::Keep::default();
+            if let Ok(h) = win.hwnd() {
+                keep.windows.push((h.0 as isize, true));
+            }
+            if shelf.is_some() {
+                if let Ok(h) = shelf_win.hwnd() {
+                    keep.windows.push((h.0 as isize, true));
+                }
+            }
+            desktop::set_double_click(desktop::Action::parse(&cfg.island_double_click));
+            let desktop_hotkey = {
+                let k = keep.clone();
+                // 快捷键做的事和双击一样；双击设成"不做什么"时就是回到桌面
+                let ok = hotkey::spawn(&cfg.show_desktop_hotkey, move || {
+                    let a = match desktop::double_click() {
+                        desktop::Action::Off => desktop::Action::Desktop,
+                        a => a,
+                    };
+                    desktop::run(a, k.clone());
+                });
+                if ok { cfg.show_desktop_hotkey.clone() } else { String::new() }
+            };
+            app.manage(keep.clone());
+
             hover::spawn(win, state.clone());
 
             let handle = app.handle().clone();
@@ -494,7 +554,7 @@ fn main() {
             }
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())

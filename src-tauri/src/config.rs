@@ -62,6 +62,13 @@ pub struct Config {
     pub widgets_wallpaper_check_seconds: u32,
     /// "系统状态"组件多少秒更新一次
     pub widgets_status_seconds: u32,
+
+    // ---------- 回到桌面 ----------
+    /// 双击灵动岛做什么："desktop" 回到桌面（再双击恢复）、"minimize" 全部最小化（再双击恢复）、"off" 不做什么
+    pub island_double_click: String,
+    /// 回到桌面的快捷键，比如 "Ctrl+Alt+Q"；留空表示不用。做的事和双击灵动岛一样（双击设成"不做什么"时是回到桌面）。
+    /// 不能用 Win+D（那是系统自己的）
+    pub show_desktop_hotkey: String,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -101,6 +108,8 @@ impl Default for Config {
             widgets_manual_color: "#5b7bd5".into(),
             widgets_wallpaper_check_seconds: 30,
             widgets_status_seconds: 3,
+            island_double_click: "desktop".into(),
+            show_desktop_hotkey: String::new(),
         }
     }
 }
@@ -123,6 +132,9 @@ impl Config {
         self.widgets_status_seconds = self.widgets_status_seconds.clamp(1, 60);
         if self.widgets_color_mode != "manual" {
             self.widgets_color_mode = "auto".into();
+        }
+        if !matches!(self.island_double_click.as_str(), "desktop" | "minimize" | "off") {
+            self.island_double_click = "desktop".into();
         }
         if self.shelf_dir.trim().is_empty() {
             self.shelf_dir = default_shelf_dir();
@@ -158,6 +170,20 @@ pub fn load(dir: &Path) -> (Config, PathBuf) {
         }
     };
     (cfg.sanitize(), path)
+}
+
+/// 托盘里改了某一项：只改这一个键，文件里其他内容原样保留
+pub fn set_value(path: &Path, key: &str, value: serde_json::Value) {
+    let mut obj = fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned());
+    // 文件读不了或格式有误时不动它，免得把用户写的内容冲掉
+    let Some(map) = obj.as_mut() else { return };
+    map.insert(key.to_string(), value);
+    if let Ok(text) = serde_json::to_string_pretty(map) {
+        let _ = fs::write(path, text);
+    }
 }
 
 /// 以后加了新配置项，老文件里没有的键自动补上默认值，已有的值不动

@@ -18,6 +18,8 @@ Windows 11 上的三样东西，在同一个程序里：
 
 - 音乐支持所有接入 Windows 媒体控制的播放器：Chrome / Edge 里的 YouTube、Spotify、网易云等。
 - 胶囊以外的透明区域不挡鼠标，可以正常点下面的东西。
+- **双击灵动岛 = 回到桌面**，再双击一次把窗口恢复（双击按钮不算）。托盘 →「双击灵动岛」可以改成「全部最小化（再双击恢复）」或「不做什么」。
+  回到桌面后灵动岛、架子、桌面小组件都照常显示。也可以在配置里设一个快捷键（`show_desktop_hotkey`），不能用 Win+D。
 
 ## 侧边架子怎么用
 
@@ -129,6 +131,8 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 - **从桌面搬进架子…** / **把桌面来的东西搬回桌面…** / **隐藏桌面图标**
 - **编辑桌面小组件**：进入 / 退出编辑模式
 - **切换小组件主题** / **小组件主题预览**
+- **回到桌面**：再点一次恢复
+- **双击灵动岛**：选双击灵动岛时做什么——回到桌面 / 全部最小化 / 不做什么（马上生效，会记到配置里）
 - **打开配置文件**：用记事本打开配置。
 - **重启（应用新配置）**：改完配置后点这个才会生效。
 - **开机自动启动**：打勾就会在开机后自动运行，再点一次取消。
@@ -182,6 +186,8 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 | `widgets_manual_color` | `"#5b7bd5"` | 手动颜色（只在 `"manual"` 时用），浅色会自动配深色字 |
 | `widgets_wallpaper_check_seconds` | `30` | Wallpaper Engine 开着时，每隔多少秒向它确认一次当前壁纸（10 ~ 3600） |
 | `widgets_status_seconds` | `3` | "系统状态"组件多少秒更新一次（1 ~ 60） |
+| `island_double_click` | `"desktop"` | 双击灵动岛做什么：`"desktop"` 回到桌面、`"minimize"` 全部最小化、`"off"` 不做什么（托盘里也能改） |
+| `show_desktop_hotkey` | `""` | 回到桌面的快捷键，比如 `"Ctrl+Alt+Q"`；做的事和双击灵动岛一样。留空表示不用，不能用 Win+D |
 
 颜色可以用任何 CSS 写法（`#ff8800`、`rgb(255,136,0)`、`orange`）。写错的值会被忽略，用回默认值。
 文件格式写坏时（比如少了逗号），程序会用全部默认值启动，不会改你的文件。
@@ -203,6 +209,7 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 - 不监听、不记录键盘。快捷键用系统的 RegisterHotKey，只在按下那一个组合时收到通知。鼠标只读取坐标和"现在是不是在拖东西"。
 - 显卡温度用 NVIDIA 官方的 `nvidia-smi` 读取。
 - 隐藏桌面图标用的是资源管理器自己的"显示桌面图标"命令，只有你在托盘里点了才会执行。
+- 回到桌面 / 全部最小化用的是 Windows 外壳自己的接口（Shell.Application 的 ToggleDesktop、MinimizeAll / UndoMinimizeALL），和任务栏右下角"显示桌面"是同一套，不模拟按键。
 - 音频可视化用的是 Windows 自带的"环回录音"：只读取系统正在播放的声音的副本做频谱分析，不是麦克风，不保存、不上传；只有这个组件在桌面上、而且没在全屏时才会读。
 - 桌面小组件只改自己的窗口（把它的"属主"设成桌面、压到最底），不改桌面或 Wallpaper Engine 的任何窗口。取壁纸用的是 Wallpaper Engine 官方命令行 `-control getWallpaper`，在看不见的控制台里运行。点组件时只读鼠标左键是否按着（为了松手后把焦点还给原来的程序），不读键盘。
 

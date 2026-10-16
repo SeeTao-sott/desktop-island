@@ -207,6 +207,14 @@ listen<boolean>("island-hover", (e) => {
   else collapseTimer = window.setTimeout(() => setExpanded(false), COLLAPSE_DELAY);
 });
 
+// ---------- 双击灵动岛：回到桌面 / 全部最小化（做什么在托盘"双击灵动岛"里选） ----------
+// 双击按钮（播放、番茄钟……）不算，那是在连点按钮
+island.addEventListener("dblclick", (e) => {
+  if ((e.target as Element).closest("button")) return;
+  window.getSelection()?.removeAllRanges();
+  invoke("island_double_click").catch(() => {});
+});
+
 // ---------- 时钟：只在整分钟时更新一次 ----------
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
 const timeEls = document.querySelectorAll<HTMLElement>(".js-time");
