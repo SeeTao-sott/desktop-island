@@ -5,14 +5,18 @@
 //! 所以最底也在桌面（壁纸）之上；按 Win+D 时系统把桌面提到前面，我们也跟着一起出现。
 //! 只改我们自己的窗口：不注入任何进程，不改桌面或 Wallpaper Engine 的窗口结构。
 //!
-//! 组件以外的地方点击穿透（和灵动岛一样，按鼠标位置切换）；编辑模式下整个窗口接收鼠标，
+//! 组件以外的地方点击穿透（按鼠标位置判断在不在组件形状里）；编辑模式下整个窗口接收鼠标，
 //! 并临时浮到程序窗口上面，方便摆放，退出编辑就沉回最底。
+//!
+//! 点击穿透不用 Tauri 的 set_ignore_cursor_events 来回切：它每次都会把"分层窗口"样式加上又去掉，
+//! 再强制刷新边框，透明窗口的整块画面会被系统重建一次——所有组件一起闪。
+//! 这里让窗口一直是分层窗口，只翻"鼠标穿透"那一位（WS_EX_TRANSPARENT），不重绘、不动位置和层级。
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use windows::core::w;
@@ -25,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetForegroundWindow, SetForegroundWindow, WA_INACTIVE, WM_ACTIVATE, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, STYLESTRUCT, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WINDOWPOS, WM_MOUSEACTIVATE, WM_STYLECHANGING,
-    WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 /// 一个组件的点击区域：外框（先粗判）+ 形状轮廓（圆、六边形、切角……），CSS 像素
@@ -71,6 +75,8 @@ const LABEL: &str = "widgets";
 const FAST: Duration = Duration::from_millis(16);
 const SLOW: Duration = Duration::from_millis(120);
 const NEAR_MARGIN: f64 = 80.0;
+/// 鼠标离开组件后再等这么久才恢复穿透：贴着边缘来回晃时不反复切换（进入是马上可点的，不丢点击）
+const LEAVE_DELAY: Duration = Duration::from_millis(60);
 
 /// 编辑模式时允许窗口浮到前面；平时任何 Z 顺序变化都压到最底
 static RAISED: AtomicBool = AtomicBool::new(false);
@@ -78,6 +84,8 @@ static RAISED: AtomicBool = AtomicBool::new(false);
 static LAST_FG: AtomicIsize = AtomicIsize::new(0);
 /// 被激活了、等松开鼠标后要把前台还给的窗口
 static PENDING_BACK: AtomicIsize = AtomicIsize::new(0);
+/// 现在窗口是否接收鼠标（false = 点击穿透）。子类按它锁住扩展样式里的穿透位
+static CLICKABLE: AtomicBool = AtomicBool::new(false);
 
 pub struct Widgets {
     app: AppHandle,
@@ -109,11 +117,18 @@ unsafe extern "system" fn subclass_proc(
             PENDING_BACK.store(back.0 as isize, Ordering::SeqCst);
             DefSubclassProc(hwnd, msg, wp, lp)
         }
-        // Tauri 切换点击穿透等状态时会整个重写扩展样式；在这里把我们要的几位锁住：
-        // 工具窗口（不进 Alt+Tab）、不激活，去掉"应用窗口"
+        // Tauri 切换置顶等状态时会整个重写扩展样式；在这里把我们要的几位锁住：
+        // 工具窗口（不进 Alt+Tab）、不激活、一直是分层窗口（这一位翻转会让整块画面重建 = 闪一下），
+        // 去掉"应用窗口"；鼠标穿透位按我们自己记的状态
         WM_STYLECHANGING if wp.0 as i32 == GWL_EXSTYLE.0 => {
             let ss = &mut *(lp.0 as *mut STYLESTRUCT);
-            ss.styleNew = (ss.styleNew | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) & !WS_EX_APPWINDOW.0;
+            let mut ex = (ss.styleNew | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_LAYERED.0) & !WS_EX_APPWINDOW.0;
+            if CLICKABLE.load(Ordering::SeqCst) {
+                ex &= !WS_EX_TRANSPARENT.0;
+            } else {
+                ex |= WS_EX_TRANSPARENT.0;
+            }
+            ss.styleNew = ex;
             DefSubclassProc(hwnd, msg, wp, lp)
         }
         WM_WINDOWPOSCHANGING if !RAISED.load(Ordering::SeqCst) => {
@@ -178,6 +193,9 @@ impl Widgets {
             let _ = SetWindowSubclass(hwnd, Some(subclass_proc), 0x5749_4447, 0);
         }
         attach_to_desktop(hwnd);
+        // 只在创建时用一次 Tauri 的开关：窗口变成"分层 + 穿透"，Tauri 自己记的状态也一致，
+        // 它以后重写样式也会带着分层位。之后的切换都走 set_clickable，只翻穿透位
+        CLICKABLE.store(false, Ordering::SeqCst);
         win.set_ignore_cursor_events(true)?;
         // 显示但不激活：不抢前台程序的焦点
         unsafe {
@@ -277,7 +295,7 @@ impl Widgets {
                 }
             }
         }
-        let _ = win.set_ignore_cursor_events(!on);
+        set_clickable(hwnd, on);
         let _ = win.emit("widgets-edit", on);
     }
 
@@ -300,14 +318,14 @@ impl Widgets {
 
     /// 鼠标在组件上才接收点击；全屏程序时通知页面暂停更新
     fn run(&self) {
-        let mut interactive = false;
         let mut paused = false;
+        // 鼠标最近一次在组件里的时间（离开防抖用）
+        let mut last_inside: Option<Instant> = None;
         loop {
             let fullscreen = crate::fullscreen::FULLSCREEN.load(Ordering::SeqCst);
             let win = self.window();
             let raw = self.hwnd.load(Ordering::SeqCst);
             let (Some(win), true) = (win, raw != 0) else {
-                interactive = false;
                 thread::sleep(SLOW);
                 continue;
             };
@@ -346,7 +364,9 @@ impl Widgets {
                 }
             }
             if self.editing() || paused {
-                interactive = self.editing();
+                // 编辑时整个窗口可点；全屏暂停时穿透（状态没变时 set_clickable 什么都不做）
+                set_clickable(hwnd, self.editing());
+                last_inside = None;
                 thread::sleep(SLOW);
                 continue;
             }
@@ -364,13 +384,28 @@ impl Widgets {
             let (lx, ly) = ((pt.x - rect.left) as f64 / scale, (pt.y - rect.top) as f64 / scale);
             let hits = self.hits.lock().unwrap().clone();
             let inside = hits.iter().any(|r| r.contains(lx, ly));
-            if inside != interactive {
-                interactive = inside;
-                let _ = win.set_ignore_cursor_events(!inside);
+            if inside {
+                last_inside = Some(Instant::now());
+                set_clickable(hwnd, true);
+            } else if last_inside.is_none_or(|t| t.elapsed() >= LEAVE_DELAY) {
+                set_clickable(hwnd, false);
             }
             let near = hits.iter().any(|r| r.near(lx, ly, NEAR_MARGIN));
             thread::sleep(if near { FAST } else { SLOW });
         }
+    }
+}
+
+/// 窗口接不接收鼠标：只翻扩展样式里的穿透位，不碰分层位、不调 SetWindowPos（不重绘、不改层级）。
+/// 状态没变就什么都不做
+fn set_clickable(hwnd: HWND, on: bool) {
+    if CLICKABLE.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 | WS_EX_LAYERED.0;
+        let ex = if on { ex & !WS_EX_TRANSPARENT.0 } else { ex | WS_EX_TRANSPARENT.0 };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex as isize);
     }
 }
 
