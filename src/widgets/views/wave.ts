@@ -1,15 +1,18 @@
-// 波形：把声音的实时波形画成一根根竖柱，以中线为轴上下对称（像示波器的包络）。
-//   - 一排时：中间的柱子高、往两端收矮，颜色也往两端淡出
-//   - 一圈时：从圆周同时往外、往里伸出短柱，最上和最下收短、两侧最长
-//   - 柱子之间留缝，能清楚看出一根一根；每根柱子后面垫一层更宽、半透明的柱子当发光（不用模糊滤镜）
-//   - 每根柱子自己平滑（涨得快、落得稍慢），不抖
+// 上下对称的竖柱：以中线为轴，每根柱子同时往上、往下伸。两种数据来源：
+//   - 波形（wave）：系统声音的时域采样，每根柱子 = 那一小段声音的实时起伏（|平均值|），每帧都跟着声音变
+//   - 对称频谱（sym）：和频谱柱一样来自频段强度，低音在正中间，往左右两边依次是中音、高音（左右镜像）
+//
+// 高度只来自数据，绝不乘任何固定形状。两端"淡出"只影响颜色的透明度（横向渐变），不影响高度。
+// 圆环主题下：从圆周同时往外、往里伸出短柱；对称频谱时低音在最上方，往两侧到最下方是高音。
+//
+// 柱子之间留缝；每根柱子后面垫一层更宽、半透明的柱子当发光（不用模糊滤镜）；每根柱子自己平滑，不抖。
 import type { AudioData } from "../skins/types";
 import type { Layout, Renderer, Rgb } from "./audio";
 
 const RISE = 22;
 const FALL = 9;
 /** Rust 发来的波形点数 */
-const N = 128;
+const N_WAVE = 128;
 /** 一圈时每边的柱子数（两边对称） */
 const RING_HALF = 36;
 
@@ -17,36 +20,56 @@ const rgba = ([r, g, b]: Rgb, a: number) => `rgba(${r | 0},${g | 0},${b | 0},${a
 /** 和白色混一点：柱子本身偏亮，发光层用原色 */
 const lighten = ([r, g, b]: Rgb, k: number): Rgb => [r + (255 - r) * k, g + (255 - g) * k, b + (255 - b) * k];
 
-export function waveRenderer(layout: Layout): Renderer {
+/** src[0..len) 按段取最大值，压成 out 的长度 */
+function regroup(src: ArrayLike<number>, len: number, out: Float32Array, scale: number, abs: boolean) {
+  const n = out.length;
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor((i * len) / n);
+    const z = Math.max(a + 1, Math.floor(((i + 1) * len) / n));
+    let m = 0;
+    for (let k = a; k < z; k++) m = Math.max(m, abs ? Math.abs(src[k]) : src[k]);
+    out[i] = m / scale;
+  }
+}
+
+function mirrorRenderer(layout: Layout, source: "wave" | "sym"): Renderer {
   const ring = layout === "ring";
   let W = 0;
   let H = 0;
-  let n = 0;
+  /** 柱子总数（一排时）；值数组：波形时一根一个值，对称频谱时左右共用（只存一半） */
+  let cols = 0;
   let cur = new Float32Array(0);
   let target = new Float32Array(0);
-  /** 两头收矮的包络 */
-  let taper = new Float32Array(0);
   let color: Rgb = [140, 170, 255];
   let body: CanvasGradient | string = "";
   let glow: CanvasGradient | string = "";
   let line: CanvasGradient | string = "";
   let dirty = true;
 
+  /** 需要几个值：一圈时每边 RING_HALF 个（两边镜像）；一排对称频谱时只要一半（左右镜像）；一排波形时每根一个 */
+  const valueCount = () => (ring ? RING_HALF : source === "sym" ? Math.ceil(cols / 2) : cols);
+
+  /** 一排时第 i 根柱子用哪个值 */
+  const valueOf = (i: number) => {
+    if (source === "wave") return cur[i];
+    // 对称频谱：正中间是低音（第 0 个值），往两边越来越高
+    const half = cols / 2;
+    const k = i < half ? Math.floor(half - 1 - i) : Math.floor(i - half);
+    return cur[Math.min(cur.length - 1, Math.max(0, k))];
+  };
+
   return {
     resize(w, h) {
       W = w;
       H = h;
-      // 柱子数量：一排时按宽度，每根约 7 像素；一圈时每边固定 36 根
-      const k = ring ? RING_HALF : Math.max(14, Math.min(72, Math.floor(w / 7)));
-      if (k !== n) {
-        n = k;
-        cur = new Float32Array(n);
-        target = new Float32Array(n);
-        taper = new Float32Array(n);
-        for (let i = 0; i < n; i++) {
-          // 一排：中间 1、两端约 0.15；一圈：k 从上到下，两侧（中间那段）最长
-          taper[i] = 0.15 + 0.85 * Math.pow(Math.sin((Math.PI * (i + 0.5)) / n), 1.4);
-        }
+      // 柱子数量：一排时按宽度，每根约 7 像素（对称频谱取偶数，左右刚好对称）
+      let c = Math.max(14, Math.min(72, Math.floor(w / 7)));
+      if (source === "sym" && c % 2) c -= 1;
+      cols = c;
+      const k = valueCount();
+      if (k !== cur.length) {
+        cur = new Float32Array(k);
+        target = new Float32Array(k);
       }
       dirty = true;
     },
@@ -55,15 +78,14 @@ export function waveRenderer(layout: Layout): Renderer {
       dirty = true;
     },
     feed(d: AudioData) {
-      if (d.wave.length !== N) return;
-      // 128 个点合成 n 根柱子（每根取段内最大的振幅）；音量已经在 Rust 里自动增益过
-      for (let i = 0; i < n; i++) {
-        const a = Math.floor((i * N) / n);
-        const z = Math.max(a + 1, Math.floor(((i + 1) * N) / n));
-        let m = 0;
-        for (let k = a; k < z; k++) m = Math.max(m, Math.abs(d.wave[k]));
-        // 开 0.85 次方：小声的地方也看得见，又不会把高低差抹平
-        target[i] = Math.pow(m / 127, 0.85);
+      if (source === "wave") {
+        if (d.wave.length !== N_WAVE) return;
+        // 每根柱子 = 一小段声音的起伏大小；音量已经在 Rust 里自动增益过
+        regroup(d.wave, N_WAVE, target, 127, true);
+      } else {
+        if (!d.bands.length) return;
+        // 64 个频段（低音在前）压成需要的个数，每个取段内最大
+        regroup(d.bands, d.bands.length, target, 255, false);
       }
     },
     quiet() {
@@ -71,7 +93,7 @@ export function waveRenderer(layout: Layout): Renderer {
     },
     step(dt) {
       let moving = false;
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < cur.length; i++) {
         const v = cur[i];
         const tv = target[i];
         cur[i] = v + (tv - v) * Math.min(1, (tv > v ? RISE : FALL) * dt);
@@ -88,14 +110,14 @@ export function waveRenderer(layout: Layout): Renderer {
   function drawLine(g: CanvasRenderingContext2D) {
     if (dirty) {
       dirty = false;
-      // 横向渐变：两端透明，中间最亮
+      // 横向渐变：只改透明度——两端透明，中间最亮（高度不受影响）
       const mk = (c: Rgb, a: number) => {
         const gr = g.createLinearGradient(0, 0, W, 0);
-        gr.addColorStop(0, rgba(c, 0));
-        gr.addColorStop(0.25, rgba(c, a * 0.65));
+        gr.addColorStop(0, rgba(c, a * 0.15));
+        gr.addColorStop(0.25, rgba(c, a * 0.7));
         gr.addColorStop(0.5, rgba(c, a));
-        gr.addColorStop(0.75, rgba(c, a * 0.65));
-        gr.addColorStop(1, rgba(c, 0));
+        gr.addColorStop(0.75, rgba(c, a * 0.7));
+        gr.addColorStop(1, rgba(c, a * 0.15));
         return gr;
       };
       body = mk(lighten(color, 0.35), 1);
@@ -105,25 +127,27 @@ export function waveRenderer(layout: Layout): Renderer {
     const padX = Math.max(8, W * 0.04);
     const mid = H / 2;
     const maxA = H * 0.44;
-    const slot = (W - padX * 2) / n;
+    const slot = (W - padX * 2) / cols;
     const bw = Math.max(1.5, slot * 0.5);
     const rad = Math.min(bw / 2, 2);
-    const h = (i: number) => Math.max(1, cur[i] * taper[i] * maxA);
+    const h = (i: number) => Math.max(1, valueOf(i) * maxA);
     // 中线
     g.fillStyle = line;
     g.fillRect(padX, mid - 0.5, W - padX * 2, 1);
     // 发光层：宽一点、半透明
     g.fillStyle = glow;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < cols; i++) {
       const x = padX + i * slot + (slot - bw) / 2;
-      g.fillRect(x - 1.5, mid - h(i) - 1.5, bw + 3, h(i) * 2 + 3);
+      const hh = h(i);
+      g.fillRect(x - 1.5, mid - hh - 1.5, bw + 3, hh * 2 + 3);
     }
     // 柱子：以中线为轴上下对称
     g.fillStyle = body;
     g.beginPath();
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < cols; i++) {
       const x = padX + i * slot + (slot - bw) / 2;
-      g.roundRect(x, mid - h(i), bw, h(i) * 2, rad);
+      const hh = h(i);
+      g.roundRect(x, mid - hh, bw, hh * 2, rad);
     }
     g.fill();
   }
@@ -140,11 +164,12 @@ export function waveRenderer(layout: Layout): Renderer {
       glow = rgba(color, 0.28);
       line = rgba(color, 0.3);
     }
+    const n = cur.length;
     const bw = Math.max(1.5, ((Math.PI * 2 * r0) / (n * 2)) * 0.5);
     const path = () => {
       g.beginPath();
       for (let k = 0; k < n; k++) {
-        const len = Math.max(1, cur[k] * taper[k] * amp);
+        const len = Math.max(1, cur[k] * amp);
         for (const side of [1, -1]) {
           const a = -Math.PI / 2 + side * ((k + 0.5) / n) * Math.PI;
           const [dx, dy] = [Math.cos(a), Math.sin(a)];
@@ -170,3 +195,8 @@ export function waveRenderer(layout: Layout): Renderer {
     g.stroke();
   }
 }
+
+/** 波形：系统声音的实时起伏 */
+export const waveRenderer = (layout: Layout) => mirrorRenderer(layout, "wave");
+/** 对称频谱：低音在中间，往两边是高音 */
+export const symRenderer = (layout: Layout) => mirrorRenderer(layout, "sym");

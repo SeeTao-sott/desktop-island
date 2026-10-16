@@ -58,8 +58,8 @@ export interface AudioData {
   silent: boolean;
   /** 设置的帧率（60 / 30） */
   fps: number;
-  /** 样式：频谱柱 / 波形 */
-  style: "bars" | "wave";
+  /** 样式：频谱柱 / 对称频谱 / 波形 */
+  style: "bars" | "sym" | "wave";
   /** 指定的颜色（封面色 / 手动色）；为空就用壁纸的强调色 */
   color: [number, number, number] | null;
   /** 收到这一帧的时间（performance.now） */

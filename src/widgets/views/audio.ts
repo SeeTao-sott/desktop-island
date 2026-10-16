@@ -5,7 +5,7 @@
 //   - 换样式时只换"画法"，canvas 和淡入淡出状态都留着
 import type { AudioData, View, ViewCtx } from "../skins/types";
 import { barsRenderer } from "./bars";
-import { waveRenderer } from "./wave";
+import { symRenderer, waveRenderer } from "./wave";
 
 export type Rgb = [number, number, number];
 
@@ -38,6 +38,7 @@ export type Layout = "line" | "ring";
 
 const RENDERERS: Record<AudioData["style"], (layout: Layout) => Renderer> = {
   bars: barsRenderer,
+  sym: symRenderer,
   wave: waveRenderer,
 };
 

@@ -27,7 +27,7 @@ const SWATCHES = [
   ["#3fd7e8", "青"],
 ] as const;
 
-const styleOf = (s: Settings): AudioData["style"] => (s.style === "wave" ? "wave" : "bars");
+const styleOf = (s: Settings): AudioData["style"] => (s.style === "wave" || s.style === "sym" ? s.style : "bars");
 const fpsOf = (s: Settings) => (s.fps30 === true ? 30 : 60);
 const hexRgb = (h: string): Rgb => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
@@ -87,6 +87,7 @@ const audio: WidgetModule<AudioData> = {
       default: "bars",
       options: [
         { value: "bars", label: "频谱柱" },
+        { value: "sym", label: "对称频谱" },
         { value: "wave", label: "波形" },
       ],
     },

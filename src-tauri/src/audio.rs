@@ -323,6 +323,31 @@ fn fft(re: &mut [f32], im: &mut [f32]) {
 mod tests {
     use super::*;
 
+    /// 单音测试（和在线测试音一样）：100 Hz 时只有左边（低音）那几根动；5000 Hz 时只有右边（高音）那几根动。
+    /// 打印出每个频段的值，方便肉眼核对
+    #[test]
+    fn single_tones_only_move_their_side() {
+        let rate = 48_000.0;
+        for (freq, low_side) in [(100.0f32, true), (5000.0, false)] {
+            let mut an = Analyzer::new(rate);
+            let s: Vec<f32> = (0..N).map(|i| (2.0 * PI * freq * i as f32 / rate).sin() * 0.5).collect();
+            let b = an.bands(&s);
+            let line: String = b.iter().map(|v| if *v > 200 { '█' } else if *v > 120 { '▆' } else if *v > 40 { '▂' } else { '·' }).collect();
+            println!("{freq:>6} Hz  {line}");
+            let peak = b.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
+            let half = BANDS / 2;
+            if low_side {
+                assert!(peak < half / 2, "100 Hz 的峰在第 {peak} 段，应该在左边");
+                // 右半边（中高音）都要很低
+                assert!(b[half..].iter().all(|v| *v < 40), "100 Hz 时右半边也有柱子动了：{:?}", &b[half..]);
+            } else {
+                assert!(peak > half + half / 2, "5000 Hz 的峰在第 {peak} 段，应该在右边");
+                // 左半边（低音、中低音）都要很低
+                assert!(b[..half].iter().all(|v| *v < 40), "5000 Hz 时左半边也有柱子动了：{:?}", &b[..half]);
+            }
+        }
+    }
+
     /// 1 kHz 的正弦波：能量应该集中在 1 kHz 附近的频段
     #[test]
     fn sine_lands_in_right_band() {
