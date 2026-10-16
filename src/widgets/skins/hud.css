@@ -1,0 +1,184 @@
+/* 科幻 HUD 主题：切角面板 + 细发光描边 + 四角括号 + 偶尔的扫光 */
+.sk-hud {
+  --hud-cut: 16px;
+  --hud-line: color-mix(in srgb, var(--w-accent) 70%, transparent);
+  --hud-glow: color-mix(in srgb, var(--w-accent) 45%, transparent);
+  font-family: "Bahnschrift", "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif;
+}
+.hud-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* 切角形状：点击区域也按这个形状算 */
+  clip-path: polygon(
+    var(--hud-cut) 0,
+    calc(100% - var(--hud-cut)) 0,
+    100% var(--hud-cut),
+    100% calc(100% - var(--hud-cut)),
+    calc(100% - var(--hud-cut)) 100%,
+    var(--hud-cut) 100%,
+    0 calc(100% - var(--hud-cut)),
+    0 var(--hud-cut)
+  );
+  background:
+    /* 很淡的横向扫描线，静止的 */
+    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--w-text) 3%, transparent) 3px 4px),
+    linear-gradient(160deg, color-mix(in srgb, var(--w-accent) 10%, transparent), transparent 55%),
+    var(--w-bg);
+}
+.hud-lines {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.hud-edge {
+  fill: none;
+  stroke: var(--hud-line);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 3px var(--hud-glow));
+}
+.hud-corners polyline {
+  fill: none;
+  stroke: var(--w-accent);
+  stroke-width: 2;
+  stroke-linecap: square;
+  filter: drop-shadow(0 0 4px var(--hud-glow));
+}
+
+/* 扫光：平时不存在于画面中；加上 .go 才划过一次 */
+.hud-sweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent, color-mix(in srgb, var(--w-accent) 16%, transparent) 50%, transparent);
+  transform: translateX(-110%);
+}
+.hud-sweep.go {
+  animation: hud-sweep 1.4s cubic-bezier(0.4, 0, 0.2, 1) 1;
+}
+@keyframes hud-sweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-110%);
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(260%);
+  }
+}
+
+/* 文字 */
+.hud-clock,
+.hud-pomo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+}
+.hud-tag {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--w-accent);
+  text-transform: uppercase;
+}
+.hud-tag-sub {
+  color: var(--w-sub);
+}
+.hud-big {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 4px 0 6px;
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-shadow: 0 0 10px var(--hud-glow);
+}
+.size-medium .hud-big {
+  font-size: 56px;
+}
+.hud-sec {
+  font-size: 0.42em;
+  color: var(--w-sub);
+  text-shadow: none;
+}
+.hud-sec:empty {
+  display: none;
+}
+.hud-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--w-sub);
+}
+.size-medium .hud-meta {
+  flex-direction: row;
+  gap: 12px;
+}
+
+/* 番茄钟分段条 */
+.hud-seg {
+  display: flex;
+  gap: 3px;
+  height: 7px;
+  margin-bottom: 10px;
+}
+.hud-seg i {
+  flex: 1;
+  background: color-mix(in srgb, var(--w-text) 12%, transparent);
+  transform: skewX(-20deg);
+}
+.hud-seg i.on {
+  background: var(--w-accent);
+  box-shadow: 0 0 5px var(--hud-glow);
+}
+.hud-pomo[data-phase="done"] .hud-big {
+  color: rgb(var(--c-done));
+}
+.hud-pomo[data-phase="paused"] .hud-seg i.on {
+  opacity: 0.5;
+}
+.hud-pomo .hud-big {
+  font-size: 34px;
+}
+.hud-pomo.size-medium .hud-big {
+  font-size: 46px;
+}
+.hud-btns {
+  display: flex;
+  gap: 8px;
+}
+.hud-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--hud-line);
+  background: transparent;
+  color: var(--w-text);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.hud-btn.primary {
+  background: color-mix(in srgb, var(--w-accent) 85%, transparent);
+  border-color: transparent;
+  color: var(--w-on-accent);
+  font-weight: 600;
+}

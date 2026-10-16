@@ -1,0 +1,65 @@
+@import "./widgets.css";
+
+html,
+body {
+  overflow: auto;
+  user-select: none;
+}
+body {
+  background: #0b0d14;
+}
+/* 背景：现在的壁纸 */
+.wall {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+.pv-head {
+  position: relative;
+  padding: 18px 28px 6px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+.pv-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+}
+.pv-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+}
+.pv-grid {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 14px 28px 32px;
+}
+.pv-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.pv-name {
+  flex: none;
+  width: 92px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+.pv-items {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.pv-widget {
+  position: relative;
+  flex: none;
+  color: var(--w-text);
+}

@@ -138,6 +138,37 @@ fn widgets_theme_get(hub: State<'_, Arc<theme::ThemeHub>>) -> Option<theme::Them
     hub.get()
 }
 
+/// 主题预览用：当前壁纸图片（data URL），放在预览窗口当背景
+#[tauri::command]
+fn widgets_wallpaper_preview(hub: State<'_, Arc<theme::ThemeHub>>) -> Option<String> {
+    use base64::Engine;
+    let path = hub.get()?.image;
+    let bytes = std::fs::read(&path).ok()?;
+    // 按文件开头几个字节判断格式（系统壁纸 TranscodedWallpaper 没有扩展名）
+    let mime = match bytes.get(..4)? {
+        [0xFF, 0xD8, ..] => "image/jpeg",
+        [0x89, b'P', b'N', b'G'] => "image/png",
+        [b'G', b'I', b'F', _] => "image/gif",
+        [b'R', b'I', b'F', b'F'] => "image/webp",
+        _ => "image/jpeg",
+    };
+    Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+/// 打开主题预览窗口（已经开着就拿到前面）
+fn open_theme_preview(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("theme-preview") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = tauri::WebviewWindowBuilder::new(app, "theme-preview", tauri::WebviewUrl::App("theme-preview.html".into()))
+        .title("小组件主题预览")
+        .inner_size(1290.0, 820.0)
+        .center()
+        .build();
+}
+
 #[tauri::command]
 fn widgets_layout_get(w: State<'_, Arc<Widgets>>) -> Option<serde_json::Value> {
     w.load_layout()
@@ -218,6 +249,7 @@ fn build_tray(
         format!("编辑桌面小组件\t{widgets_hotkey}")
     };
     let widgets_item = MenuItem::with_id(app, "widgets_edit", widgets_label, widgets.is_some(), None::<&str>)?;
+    let preview_item = MenuItem::with_id(app, "theme_preview", "小组件主题预览", widgets.is_some(), None::<&str>)?;
     let has_shelf = shelf.is_some();
     let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, has_shelf, None::<&str>)?;
     let migrate = MenuItem::with_id(app, "migrate", "从桌面搬进架子…", has_shelf, None::<&str>)?;
@@ -236,6 +268,7 @@ fn build_tray(
             &icons,
             &PredefinedMenuItem::separator(app)?,
             &widgets_item,
+            &preview_item,
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
@@ -272,6 +305,7 @@ fn build_tray(
                     w.toggle_editing();
                 }
             }
+            "theme_preview" => open_theme_preview(app),
             "desktop_icons" => {
                 let want = icons_item.is_checked().unwrap_or(false);
                 let item = icons_item.clone();
@@ -340,6 +374,7 @@ fn main() {
             widgets_layout_get,
             widgets_layout_save,
             widgets_theme_get,
+            widgets_wallpaper_preview,
             sysstat_watch
         ])
         .setup(move |app| {
@@ -436,6 +471,11 @@ fn main() {
             let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
             let widgets_hotkey = if widgets.is_some() { cfg.widgets_edit_hotkey.clone() } else { String::new() };
             app.manage(cfg);
+
+            // 启动参数 --theme-preview：一启动就打开主题预览窗口（测试用，平时从托盘打开）
+            if std::env::args().any(|a| a == "--theme-preview") {
+                open_theme_preview(app.handle());
+            }
 
             // 托盘失败不影响主体功能
             if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey) {

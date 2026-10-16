@@ -1,0 +1,185 @@
+/* 圆环主题：圆形（小、大）或胶囊形（中）的玻璃，外圈一道带强调色的细光 */
+.sk-ring {
+  --rg-glow: color-mix(in srgb, var(--w-accent) 55%, transparent);
+  --rg-shade: rgba(0, 0, 0, 0.42);
+  border-radius: 50%;
+}
+.sk-ring.rg-medium {
+  border-radius: 999px;
+}
+:root[data-theme="light"] .sk-ring {
+  --rg-shade: rgba(0, 0, 0, 0.14);
+}
+.rg-body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--w-bg);
+  /* 外圈光：静止的阴影，不会持续重绘 */
+  box-shadow:
+    inset 0 0 0 1px var(--w-stroke),
+    0 0 0 1px color-mix(in srgb, var(--w-accent) 40%, transparent),
+    0 0 18px color-mix(in srgb, var(--w-accent) 22%, transparent),
+    0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.rg-clock,
+.rg-pomo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.rg-dial {
+  position: relative;
+  flex: none;
+  height: 100%;
+  aspect-ratio: 1;
+}
+.rg-dial > svg {
+  position: absolute;
+  inset: 6%;
+  width: 88%;
+  height: 88%;
+}
+.rg-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.rg-hm {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.rg-small {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--w-sub);
+}
+.rg-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 28px 0 8px;
+  min-width: 0;
+}
+.size-small .rg-side,
+.size-large .rg-side {
+  display: none;
+}
+.rg-day,
+.rg-state {
+  font-size: 18px;
+  font-weight: 600;
+}
+.rg-week {
+  font-size: 14px;
+  color: var(--w-sub);
+}
+
+/* 时钟刻度：暗的一组 + 亮的一组（亮的那组整体加一次发光） */
+.rg-ticks line {
+  stroke: color-mix(in srgb, var(--w-text) 22%, transparent);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+.rg-ticks line.major {
+  stroke-width: 1.8;
+  stroke: color-mix(in srgb, var(--w-text) 40%, transparent);
+}
+.rg-ticks.lit line {
+  stroke: var(--w-accent);
+}
+.rg-ticks.lit {
+  filter: drop-shadow(0 0 1.6px var(--rg-glow));
+}
+
+/* 番茄钟：外圈细进度 + 冷却圆盘 */
+.rg-outer {
+  transform: rotate(-90deg);
+}
+.rg-track,
+.rg-arc {
+  fill: none;
+  stroke-width: 2.4;
+}
+.rg-track {
+  stroke: color-mix(in srgb, var(--w-text) 12%, transparent);
+}
+.rg-arc {
+  stroke: var(--w-accent);
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px var(--rg-glow));
+}
+.rg-cd {
+  --passed: 0deg;
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  /* 走过的部分透明，剩下的部分是暗色扇形 */
+  background: conic-gradient(transparent 0 var(--passed), var(--rg-shade) var(--passed) 360deg);
+}
+.rg-hand {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 0;
+  width: 2px;
+  height: 50%;
+  border-radius: 1px;
+  background: var(--w-accent);
+  box-shadow: 0 0 6px var(--rg-glow);
+  transform-origin: 50% 100%;
+}
+.rg-pomo .rg-hm {
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+.rg-pomo[data-phase="done"] .rg-arc {
+  stroke: rgb(var(--c-done));
+}
+.rg-pomo[data-phase="paused"] .rg-cd {
+  opacity: 0.6;
+}
+.rg-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.rg-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--w-text) 14%, transparent);
+  color: var(--w-text);
+  font: inherit;
+  font-size: 12.5px;
+}
+.rg-btn.primary {
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+  font-weight: 600;
+}
+.size-small .rg-btn {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+.size-small .rg-pomo .rg-small,
+.rg-pomo.size-small .rg-small {
+  display: none;
+}
+.rg-pomo.size-small .rg-hm,
+.rg-clock.size-small .rg-hm {
+  font-size: 30px;
+}
+.size-medium .rg-dial {
+  margin-left: 0;
+}
