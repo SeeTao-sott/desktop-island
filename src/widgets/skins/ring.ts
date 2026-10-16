@@ -30,9 +30,15 @@ function progressRing(parent: Element, r: number, cls = "") {
   const C = 2 * Math.PI * r;
   const s = svg("svg", { viewBox: "0 0 100 100", class: `rg-outer ${cls}` }, parent);
   svg("circle", { class: "rg-track", cx: 50, cy: 50, r }, s);
+  // 发光：下面垫一条更粗、半透明的同样进度（不用模糊滤镜，每秒更新也几乎不费显卡）
+  const glow = svg("circle", { class: "rg-glowline", cx: 50, cy: 50, r, "stroke-dasharray": C.toFixed(2) }, s);
   const arc = svg("circle", { class: "rg-arc", cx: 50, cy: 50, r, "stroke-dasharray": C.toFixed(2) }, s);
   const at = attrSetter();
-  return (frac: number) => at(arc, "stroke-dashoffset", (C * (1 - Math.min(1, Math.max(0, frac)))).toFixed(2));
+  return (frac: number) => {
+    const off = (C * (1 - Math.min(1, Math.max(0, frac)))).toFixed(2);
+    at(glow, "stroke-dashoffset", off);
+    at(arc, "stroke-dashoffset", off);
+  };
 }
 
 const ring: Skin = {

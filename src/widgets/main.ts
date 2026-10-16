@@ -10,6 +10,7 @@ import { MODULES, moduleOf } from "./registry";
 import { SKINS, skinOf } from "./skins/registry";
 import type { Frame, Kind, Pt, Skin, View } from "./skins/types";
 import { gridOf, type Cell } from "./grid";
+import { FALLBACK } from "./views";
 import { initTheme } from "./theme";
 import { SIZES, settingsWithDefaults, type Model, type Settings, type SizeKey, type WidgetModule } from "./types";
 
@@ -197,7 +198,9 @@ function buildSkin(l: Live) {
   l.host.className = "skin-host";
   const { w, h } = grid().box(l.item.size);
   const { frame, content } = skin.frame(l.host, l.item.size, w, h);
-  const view = skin.views[l.item.kind as Kind] as unknown as ((root: HTMLElement, ctx: object) => View<unknown>) | undefined;
+  const kind = l.item.kind as Kind;
+  // 主题专门写了这种组件就用主题的，否则用通用界面
+  const view = (skin.views[kind] ?? FALLBACK[kind]) as unknown as ((root: HTMLElement, ctx: object) => View<unknown>) | undefined;
   l.frame = frame;
   l.view = view
     ? view(content, { size: l.item.size, w, h, act: (a: string) => l.model.act?.(a) })

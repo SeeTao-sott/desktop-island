@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod alerts;
+mod audio;
 mod autostart;
 mod config;
 mod desktop_icons;
@@ -124,6 +125,12 @@ fn widgets_cmd(w: State<'_, Arc<Widgets>>, action: String) -> bool {
         _ => {}
     }
     w.editing()
+}
+
+/// 音频可视化组件出现 / 消失时调用：有人看才录取系统声音
+#[tauri::command]
+fn audio_watch(a: State<'_, Arc<audio::Audio>>, on: bool, fps: u32, wave: Option<bool>) {
+    a.watch(on, fps, wave.unwrap_or(false));
 }
 
 /// "系统状态"组件出现 / 消失时调用：有人看才去读 CPU
@@ -381,7 +388,8 @@ fn main() {
             widgets_layout_save,
             widgets_theme_get,
             widgets_wallpaper_preview,
-            sysstat_watch
+            sysstat_watch,
+            audio_watch
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -474,6 +482,8 @@ fn main() {
             let every = std::time::Duration::from_secs(cfg.widgets_status_seconds as u64);
             app.manage(sysstat::SysStat::spawn(handle, alert_hub.clone(), every));
             app.manage(alert_hub);
+            // 音频可视化：没有音频组件时线程一直睡着，不录任何声音
+            app.manage(audio::Audio::spawn(app.handle().clone()));
             let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
             let widgets_hotkey = if widgets.is_some() { cfg.widgets_edit_hotkey.clone() } else { String::new() };
             app.manage(cfg);

@@ -47,12 +47,28 @@ export interface StatusData {
   history: number[];
 }
 
+export interface AudioData {
+  /** 64 个频段，0..255，低音在前 */
+  bands: number[];
+  /** 最近的波形，-127..127 */
+  wave: number[];
+  /** 整体响度 0..1 */
+  level: number;
+  /** 安静了一阵：淡出、停止绘制 */
+  silent: boolean;
+  /** 设置的帧率（60 / 30） */
+  fps: number;
+  /** 收到这一帧的时间（performance.now） */
+  at: number;
+}
+
 /** 每种组件的数据类型；以后加组件就在这里加一行 */
 export interface DataOf {
   clock: ClockData;
   pomodoro: PomoData;
   music: MusicData;
   status: StatusData;
+  audio: AudioData;
 }
 export type Kind = keyof DataOf;
 
@@ -94,8 +110,8 @@ export interface Skin {
   frame(host: HTMLElement, size: SizeKey, w: number, h: number): { frame: Frame; content: HTMLElement };
   /** 形状的轮廓（相对外框左上角的像素点）：只有轮廓里面能点到，外面点击穿透 */
   outline(size: SizeKey, w: number, h: number): Pt[];
-  /** 每种组件在这个主题下的界面 */
-  views: { [K in Kind]: ViewFactory<DataOf[K]> };
+  /** 每种组件在这个主题下的界面；没写的组件用通用界面（views/ 下） */
+  views: { [K in Kind]?: ViewFactory<DataOf[K]> };
 }
 
 // ---------------- 小工具 ----------------

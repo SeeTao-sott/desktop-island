@@ -115,8 +115,12 @@
 .rg-ticks.lit line {
   stroke: var(--w-accent);
 }
-.rg-ticks.lit {
-  filter: drop-shadow(0 0 1.6px var(--rg-glow));
+/* 亮刻度不加模糊滤镜（开了秒每秒都会变，滤镜每次都要重算）：用更粗一点 + 强调色就够亮 */
+.rg-ticks.lit line {
+  stroke-width: 1.6;
+}
+.rg-ticks.lit line.major {
+  stroke-width: 2.4;
 }
 
 /* 进度环 */
@@ -134,7 +138,13 @@
 .rg-arc {
   stroke: var(--w-accent);
   stroke-linecap: round;
-  filter: drop-shadow(0 0 2px var(--rg-glow));
+}
+.rg-glowline {
+  fill: none;
+  stroke: var(--rg-glow);
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0.45;
 }
 
 /* 番茄钟：冷却圆盘 */

@@ -44,11 +44,11 @@ for (const skin of SKINS) {
     const { content } = skin.frame(host, size, w, h);
     const ctx = { size, w, h, act: (a: string) => pomo.act(a) };
     if (kind === "clock") {
-      const v = skin.views.clock(content, ctx);
+      const v = skin.views.clock!(content, ctx);
       clockViews.push(v);
       if (lastClock) v.update(lastClock);
     } else {
-      const v = skin.views.pomodoro(content, ctx);
+      const v = skin.views.pomodoro!(content, ctx);
       pomoViews.push(v);
       if (lastPomo) v.update(lastPomo);
     }

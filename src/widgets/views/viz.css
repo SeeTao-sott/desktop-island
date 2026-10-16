@@ -1,0 +1,11 @@
+/* 音频可视化：canvas 铺满组件 */
+.viz {
+  position: absolute;
+  inset: 0;
+}
+.viz canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
