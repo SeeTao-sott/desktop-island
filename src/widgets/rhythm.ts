@@ -35,15 +35,17 @@ export interface Rect {
   h: number;
 }
 
-const KEYS = ["d", "f", "j", "k"];
-const KEY_LABEL = ["D", "F", "J", "K"];
+const KEYS = ["a", "s", "k", "l"];
+const KEY_LABEL = ["A", "S", "K", "L"];
 /** 提前多久出现（秒） */
 const LEAD = 1.5;
 /** 判定窗口（秒） */
-const PERFECT = 0.05;
-const GREAT = 0.1;
-const MISS = 0.15;
-const LANE_W = 76;
+const PERFECT = 0.07;
+const GREAT = 0.13;
+const MISS = 0.18;
+const LANE_W = 110;
+/** 音符高度 */
+const NOTE_H = 30;
 /** 灵动岛（收起时）的下边缘再往下一点 */
 const SPAWN_Y = 56;
 const DIFF_LABEL: Record<string, string> = {
@@ -188,6 +190,28 @@ async function loadAndPlay(song: Song, diff: Difficulty, anchor: Rect) {
 
 // ---------------- 游戏 ----------------
 
+/** 把主题色调成两种显眼的颜色：外侧轨道用饱和的主题色，中间两条用同色系的亮色 */
+function vividPair(css: string): [string, string] {
+  const probe = document.createElement("i");
+  probe.style.color = css.trim() || "#7aa2ff";
+  document.body.appendChild(probe);
+  const m = getComputedStyle(probe).color.match(/[\d.]+/g);
+  probe.remove();
+  let [r, g, b] = m ? m.slice(0, 3).map((v) => Number(v) / 255) : [0.48, 0.64, 1];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  if (max !== min) {
+    const d = max - min;
+    h = max === r ? ((g - b) / d + (g < b ? 6 : 0)) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h *= 60;
+  }
+  // 灰色主题色没有色相可言：给个偏青的蓝
+  const sat = max === min ? 0 : (max - min) / (1 - Math.abs(max + min - 1));
+  if (sat < 0.15) h = 200;
+  return [`hsl(${h.toFixed(0)} 95% 62%)`, `hsl(${h.toFixed(0)} 100% 76%)`];
+}
+
 type Judge = "perfect" | "great" | "miss";
 const JUDGE_TEXT: Record<Judge, string> = { perfect: "Perfect", great: "Great", miss: "Miss" };
 
@@ -200,6 +224,10 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     const travel = judgeY - SPAWN_Y;
 
     const stage = el("div", "rh-stage", root!);
+    // 音符颜色：跟着壁纸的主题色，但调得更鲜艳、更亮，压在画面上也显眼
+    const [c1, c2] = vividPair(getComputedStyle(document.documentElement).getPropertyValue("--w-accent"));
+    stage.style.setProperty("--rh-c", c1);
+    stage.style.setProperty("--rh-c2", c2);
     // 轨道背景：从灵动岛下面一直到判定线
     const road = el("div", "rh-road", stage);
     road.style.transform = `translate(${left}px, ${SPAWN_Y}px)`;
@@ -220,11 +248,18 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     const line = el("div", "rh-line", stage);
     line.style.transform = `translate(${left - 12}px, ${judgeY - 2}px)`;
     line.style.width = `${LANE_W * 4 + 24}px`;
+    // 爆光：一团光 + 一圈往外扩的环
     const bursts = KEYS.map((_, i) => {
       const b = el("div", "rh-burst", stage);
-      b.style.left = `${left + i * LANE_W + LANE_W / 2 - 40}px`;
-      b.style.top = `${judgeY - 40}px`;
+      b.style.left = `${left + i * LANE_W + LANE_W / 2 - 70}px`;
+      b.style.top = `${judgeY - 70}px`;
       return b;
+    });
+    const rings = KEYS.map((_, i) => {
+      const r = el("div", "rh-ring", stage);
+      r.style.left = `${left + i * LANE_W + LANE_W / 2 - 60}px`;
+      r.style.top = `${judgeY - 60}px`;
+      return r;
     });
     KEY_LABEL.forEach((k, i) => {
       const lab = el("div", "rh-key", stage, k);
@@ -268,7 +303,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     const take = (lane: number) => {
       const n = pool.pop() ?? el("div", "rh-note", stage);
       n.hidden = false;
-      n.style.width = `${LANE_W - 12}px`;
+      n.style.width = `${LANE_W - 14}px`;
       n.dataset.lane = String(lane);
       return n;
     };
@@ -339,12 +374,20 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       else {
         combo++;
         maxCombo = Math.max(maxCombo, combo);
+        const ease = "cubic-bezier(0.2, 0.8, 0.3, 1)";
         bursts[lane].animate(
           [
-            { transform: "scale(0.4)", opacity: 1 },
-            { transform: "scale(1.4)", opacity: 0 },
+            { transform: "scale(0.35)", opacity: 1 },
+            { transform: "scale(1.3)", opacity: 0 },
           ],
-          { duration: 260, easing: "cubic-bezier(0.2, 0.8, 0.3, 1)" },
+          { duration: j === "perfect" ? 340 : 260, easing: ease },
+        );
+        rings[lane].animate(
+          [
+            { transform: "scale(0.3)", opacity: 0.95 },
+            { transform: "scale(1.5)", opacity: 0 },
+          ],
+          { duration: 380, easing: ease },
         );
       }
       judgeEl.textContent = JUDGE_TEXT[j];
@@ -390,7 +433,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       for (const [i, e] of live) {
         const n = notes[i];
         const y = judgeY - ((n.t - now) / LEAD) * travel;
-        e.style.transform = `translate3d(${left + n.lane * LANE_W + 6}px, ${y - 9}px, 0)`;
+        e.style.transform = `translate3d(${left + n.lane * LANE_W + 7}px, ${y - NOTE_H / 2}px, 0)`;
       }
       if (now > lastT + 2 && !finished) {
         finished = true;

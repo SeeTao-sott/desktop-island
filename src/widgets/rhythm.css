@@ -116,7 +116,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  background: linear-gradient(to bottom, transparent 40%, color-mix(in srgb, var(--w-accent) 35%, transparent));
+  background: linear-gradient(to bottom, transparent 30%, color-mix(in srgb, var(--rh-c) 40%, transparent));
   opacity: 0;
   transition: opacity 0.08s;
 }
@@ -125,39 +125,80 @@
 }
 
 .rh-line {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--w-accent);
-  box-shadow: 0 0 14px var(--w-accent);
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--rh-c), var(--rh-c2), var(--rh-c));
+  box-shadow: 0 0 18px var(--rh-c);
 }
 .rh-burst {
   position: absolute;
-  width: 80px;
-  height: 80px;
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
-  background: radial-gradient(circle, #fff 0%, var(--w-accent) 35%, transparent 70%);
+  background: radial-gradient(circle, #fff 0%, var(--rh-c2) 22%, var(--rh-c) 42%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+.rh-ring {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 3px solid var(--rh-c2);
+  box-shadow: 0 0 16px var(--rh-c), inset 0 0 12px var(--rh-c);
   opacity: 0;
   pointer-events: none;
 }
 .rh-key {
   text-align: center;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 800;
   color: var(--w-sub);
 }
 
+/* 音符：发光的胶囊 + 中间一道白芯 + 上面拖一条光尾。颜色跟着主题色，但调亮调艳（见 vividPair） */
 .rh-note {
-  height: 18px;
-  border-radius: 9px;
-  background: var(--w-accent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--w-accent) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  --c: var(--rh-c);
+  height: 30px;
+  border-radius: 12px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--c) 45%, #fff) 0%,
+    var(--c) 45%,
+    color-mix(in srgb, var(--c) 75%, #000) 100%
+  );
+  border: 2px solid color-mix(in srgb, var(--c) 35%, #fff);
+  box-shadow:
+    0 0 14px 2px color-mix(in srgb, var(--c) 85%, transparent),
+    0 0 36px 6px color-mix(in srgb, var(--c) 40%, transparent);
   will-change: transform;
 }
-/* 中间两条轨道换个颜色，好分辨 */
+.rh-note::before {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 100%;
+  height: 64px;
+  border-radius: 8px 8px 0 0;
+  background: linear-gradient(to top, color-mix(in srgb, var(--c) 55%, transparent), transparent);
+}
+.rh-note::after {
+  content: "";
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 8px #fff;
+}
+/* 中间两条轨道用同色系的亮色，好分辨 */
 .rh-note[data-lane="1"],
 .rh-note[data-lane="2"] {
-  background: #fff;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+  --c: var(--rh-c2);
 }
 
 .rh-hud {
