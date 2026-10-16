@@ -12,7 +12,7 @@ import type { Frame, Kind, Pt, Skin, View } from "./skins/types";
 import { gridOf, type Cell } from "./grid";
 import { FALLBACK } from "./views";
 import { initTheme } from "./theme";
-import { SIZES, settingsWithDefaults, type Model, type Settings, type SizeKey, type WidgetModule } from "./types";
+import { SIZES, settingsWithDefaults, type Model, type SettingDef, type Settings, type SizeKey, type WidgetModule } from "./types";
 
 interface Item {
   id: string;
@@ -129,11 +129,28 @@ const GEAR =
   '<svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zm8.6 2.3l-1.9-.4a7 7 0 0 0-.7-1.6l1.1-1.6-1.6-1.6-1.6 1.1a7 7 0 0 0-1.6-.7l-.4-1.9h-2.2l-.4 1.9a7 7 0 0 0-1.6.7L6.1 5.6 4.5 7.2l1.1 1.6a7 7 0 0 0-.7 1.6l-1.9.4v2.2l1.9.4c.2.6.4 1.1.7 1.6l-1.1 1.6 1.6 1.6 1.6-1.1c.5.3 1 .5 1.6.7l.4 1.9h2.2l.4-1.9a7 7 0 0 0 1.6-.7l1.6 1.1 1.6-1.6-1.1-1.6c.3-.5.5-1 .7-1.6l1.9-.4z"/></svg>';
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** 所有组件都有的设置（放在各组件自己的设置前面） */
+const COMMON: SettingDef[] = [
+  {
+    key: "bgAlpha",
+    label: "背景",
+    default: "100",
+    options: ["100", "75", "50", "25", "0"].map((v) => ({ value: v, label: `${v}%` })),
+  },
+];
+const allSettings = (mod: WidgetModule) => [...COMMON, ...(mod.settings ?? [])];
+
+/** 通用设置落到组件上：背景透明度只调淡底色（--w-bg），文字、图形、描边不变 */
+function applyCommon(l: Live) {
+  const a = Number(l.item.settings.bgAlpha ?? 100);
+  l.el.style.setProperty("--bg-alpha", String((Number.isFinite(a) ? a : 100) / 100));
+}
+
 function mount(item: Item): Live | null {
   const mod = moduleOf(item.kind);
   if (!mod) return null;
   if (!mod.sizes.includes(item.size)) item.size = mod.defaultSize;
-  item.settings = settingsWithDefaults(mod, item.settings ?? {});
+  item.settings = settingsWithDefaults({ ...mod, settings: allSettings(mod) }, item.settings ?? {});
 
   const el = document.createElement("div");
   el.className = "widget";
@@ -173,6 +190,7 @@ function mount(item: Item): Live | null {
     s: animator.add(new Spring(1, SPRING.shape)),
   };
   buildSkin(l);
+  applyCommon(l);
   // 数据来了交给当前的界面；界面换了（换主题 / 换尺寸）也不用重新订阅
   l.model.subscribe((d) => {
     l.data = d;
@@ -228,7 +246,8 @@ function buildChips(l: Live) {
     b.addEventListener("click", () => resize(l, size));
     l.chips.appendChild(b);
   }
-  if (l.mod.settings?.length) {
+  // 每个组件都有设置（至少有"背景"），齿轮一直显示
+  {
     const g = document.createElement("button");
     g.className = "chip";
     g.title = "设置";
@@ -249,9 +268,10 @@ function toggleSettings(l: Live) {
   p.className = "w-settings";
   const change = (key: string, value: unknown) => {
     l.item.settings = { ...l.item.settings, [key]: value };
-    l.model.setSettings?.(l.item.settings);
+    if (COMMON.some((c) => c.key === key)) applyCommon(l);
+    else l.model.setSettings?.(l.item.settings);
   };
-  for (const d of l.mod.settings ?? []) {
+  for (const d of allSettings(l.mod)) {
     if (d.options) {
       // "选一个"：一排小按钮
       const row = document.createElement("div");

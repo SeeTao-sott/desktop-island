@@ -2,7 +2,8 @@
 
 /* 小组件自己的颜色变量。阶段 2 会根据壁纸自动改写这几个值 */
 :root {
-  --w-bg: var(--bg);
+  --w-bg-base: var(--bg);
+  --w-bg: var(--w-bg-base);
   --w-text: var(--text);
   --w-sub: var(--sub);
   --w-stroke: var(--stroke);
@@ -18,6 +19,8 @@
 
 /* ---------- 一个组件 ---------- */
 .widget {
+  /* 背景透明度：每个组件自己设（设置里的「背景」），只调淡底色，文字和图形不变 */
+  --w-bg: color-mix(in srgb, var(--w-bg-base) calc(var(--bg-alpha, 1) * 100%), transparent);
   position: absolute;
   left: 0;
   top: 0;

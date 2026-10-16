@@ -21,7 +21,8 @@ interface Theme {
 const KEYS = ["bg", "text", "sub", "stroke", "accent", "onAccent"] as const;
 type Key = (typeof KEYS)[number];
 const CSS_VAR: Record<Key, string> = {
-  bg: "--w-bg",
+  // 底色写到 --w-bg-base；每个组件再按自己的"背景透明度"调淡成 --w-bg（见 widgets.css）
+  bg: "--w-bg-base",
   text: "--w-text",
   sub: "--w-sub",
   stroke: "--w-stroke",
