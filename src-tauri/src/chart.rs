@@ -37,6 +37,8 @@ pub struct SongInfo {
     /// 老格式的整体偏移（秒），一般是 0
     pub offset: f64,
     pub difficulties: Vec<Difficulty>,
+    /// 歌曲音频文件名（一般是 song.egg，其实就是 ogg）；空 = 没有
+    pub song_file: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq)]
@@ -87,6 +89,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         bpm: 120.0,
         offset: 0.0,
         difficulties: Vec::new(),
+        song_file: String::new(),
     };
     if let Some(song) = v.get("song") {
         // v4
@@ -95,6 +98,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         info.artist = s(song, "author");
         if let Some(audio) = v.get("audio") {
             info.bpm = f(audio, "bpm").unwrap_or(120.0);
+            info.song_file = s(audio, "songFilename");
         }
         for d in arr(v, "difficultyBeatmaps") {
             info.difficulties.push(Difficulty {
@@ -115,6 +119,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         info.mapper = s(v, "_levelAuthorName");
         info.bpm = f(v, "_beatsPerMinute").unwrap_or(120.0);
         info.offset = f(v, "_songTimeOffset").unwrap_or(0.0);
+        info.song_file = s(v, "_songFilename");
         for set in arr(v, "_difficultyBeatmapSets") {
             let ch = s(set, "_beatmapCharacteristicName");
             for d in arr(set, "_difficultyBeatmaps") {
@@ -140,6 +145,16 @@ pub fn load_info(dir: &Path) -> Result<SongInfo, String> {
     let id = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
     let path = find_file(dir, "Info.dat").ok_or_else(|| format!("{} 里没有 Info.dat", dir.display()))?;
     Ok(parse_info(&id, &read_json(&path)?))
+}
+
+/// 读这首歌的音频文件。文件名来自 Info.dat，只认这首歌文件夹里直接放着的文件（不跟着 ..、子路径跑出去）
+pub fn load_audio(dir: &Path, info: &SongInfo) -> Result<Vec<u8>, String> {
+    let name = info.song_file.as_str();
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
+        return Err("这首歌没有能用的音频文件".into());
+    }
+    let path = find_file(dir, name).ok_or_else(|| format!("找不到音频文件 {name}"))?;
+    fs::read(&path).map_err(|e| format!("读不了 {}：{e}", path.display()))
 }
 
 /// 列出 charts/ 里所有能读的歌（读不了的跳过并说明原因）

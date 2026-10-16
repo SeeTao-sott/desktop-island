@@ -229,6 +229,14 @@ fn rhythm_chart(id: String, characteristic: String, difficulty: String) -> Resul
     chart::load_notes(&root.join(&song.id), &song, diff)
 }
 
+/// 这首歌的音频文件原始字节（ogg），页面自己解码播放。用二进制直接传，不转 base64
+#[tauri::command]
+fn rhythm_audio(id: String) -> Result<tauri::ipc::Response, String> {
+    let root = chart::charts_dir().ok_or("找不到 charts 文件夹")?;
+    let song = chart::list_songs(&root).into_iter().find(|s| s.id == id).ok_or("找不到这首歌")?;
+    chart::load_audio(&root.join(&song.id), &song).map(tauri::ipc::Response::new)
+}
+
 #[tauri::command]
 fn rhythm_offset_set(app: AppHandle, id: String, ms: i32) -> Result<(), String> {
     let path = offsets_path(&app).ok_or("找不到配置文件夹")?;
@@ -476,6 +484,7 @@ fn main() {
             widgets_rhythm,
             rhythm_songs,
             rhythm_chart,
+            rhythm_audio,
             rhythm_offset_set,
             widgets_layout_get,
             widgets_layout_save,

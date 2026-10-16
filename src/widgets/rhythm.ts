@@ -1,6 +1,8 @@
 // 音游原型：双击律动（音频可视化）组件 → 选歌 → 下落式 4 键音游。
 //
-// 歌由你自己在浏览器里放，按空格那一刻开始计时；符号从灵动岛下面往下掉，
+// 谱文件夹里带着歌（song.egg，其实是 ogg）时，游戏自己放：按空格后先留 1.5 秒让最早的音符落下来，
+// 然后开始放歌，计时直接用"声音此刻真正从扬声器出来的位置"，和歌完全对齐。
+// 没带歌的谱才退回老办法：你自己在浏览器里放，按空格那一刻开始计时。符号从灵动岛下面往下掉，
 // 判定线就在律动组件的位置。按键靠窗口自己的键盘焦点收到（进音游时 Rust 让窗口拿焦点），
 // 不用全局键盘钩子。所有移动都只用 transform，每帧只改位置不改布局。
 import "./rhythm.css";
@@ -19,6 +21,7 @@ interface Song {
   mapper: string;
   bpm: number;
   difficulties: Difficulty[];
+  song_file: string;
   offset_ms: number;
 }
 interface Note {
@@ -52,6 +55,10 @@ const DIFF_LABEL: Record<string, string> = {
 };
 
 let root: HTMLElement | null = null;
+/** 放歌用的音频环境，整个程序只建一个 */
+let actx: AudioContext | null = null;
+/** 解码过的歌，按歌缓存（再来一次、换难度不用重新解码） */
+const decoded = new Map<string, AudioBuffer>();
 let cleanup: (() => void) | null = null;
 
 /** 现在是不是在音游里（选歌菜单也算） */
@@ -151,11 +158,31 @@ function showMenu(anchor: Rect) {
 }
 
 async function loadAndPlay(song: Song, diff: Difficulty, anchor: Rect) {
+  const menu = root?.querySelector<HTMLElement>(".rh-menu-title");
+  if (menu) menu.textContent = "正在载入歌曲…";
   try {
     const notes = await invoke<Note[]>("rhythm_chart", { id: song.id, characteristic: diff.characteristic, difficulty: diff.name });
-    startGame(song, diff, notes, anchor);
+    let audio: AudioBuffer | null = null;
+    if (song.song_file) {
+      try {
+        audio = decoded.get(song.id) ?? null;
+        if (!audio) {
+          const bytes = await invoke<ArrayBuffer>("rhythm_audio", { id: song.id });
+          actx ??= new AudioContext({ latencyHint: "interactive" });
+          audio = await actx.decodeAudioData(bytes);
+          decoded.set(song.id, audio);
+        }
+      } catch (e) {
+        // 歌读不了就退回"自己在浏览器里放"
+        console.error(e);
+        audio = null;
+      }
+    }
+    if (!root) return; // 载入途中已经退出了
+    startGame(song, diff, notes, anchor, audio);
   } catch (e) {
     console.error(e);
+    if (menu) menu.textContent = "这个难度读不了";
   }
 }
 
@@ -164,7 +191,7 @@ async function loadAndPlay(song: Song, diff: Difficulty, anchor: Rect) {
 type Judge = "perfect" | "great" | "miss";
 const JUDGE_TEXT: Record<Judge, string> = { perfect: "Perfect", great: "Great", miss: "Miss" };
 
-function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
+function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, audio: AudioBuffer | null) {
   swap(() => {
     const W = window.innerWidth;
     const cx = Math.round(anchor.x + anchor.w / 2);
@@ -220,12 +247,17 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
     // 开始前的提示
     const prompt = el("div", "rh-prompt", stage);
     prompt.style.transform = `translate(${W / 2}px, ${Math.round((SPAWN_Y + judgeY) / 2)}px)`;
-    el("div", "rh-prompt-big", prompt, "播放歌曲后按空格开始");
-    el("div", "rh-prompt-small", prompt, "可以按键盘的播放键，或点下面的按钮让浏览器开始放");
-    const playBtn = el("button", "rh-play", prompt, "▶ 播放 / 暂停");
-    playBtn.addEventListener("click", () => {
-      invoke("media_cmd", { action: "toggle" }).catch(() => {});
-    });
+    if (audio) {
+      el("div", "rh-prompt-big", prompt, "按空格开始");
+      el("div", "rh-prompt-small", prompt, "歌会自己放，先把浏览器里正在放的歌暂停");
+    } else {
+      el("div", "rh-prompt-big", prompt, "播放歌曲后按空格开始");
+      el("div", "rh-prompt-small", prompt, "这首谱没带歌：可以按键盘的播放键，或点下面的按钮让浏览器开始放");
+      const playBtn = el("button", "rh-play", prompt, "▶ 播放 / 暂停");
+      playBtn.addEventListener("click", () => {
+        invoke("media_cmd", { action: "toggle" }).catch(() => {});
+      });
+    }
 
     // 窗口失去焦点（点到了别的程序）：按键收不到了，提示点回来
     const lost = el("div", "rh-lost", stage, "点一下这里继续（键盘焦点在别的窗口）");
@@ -256,6 +288,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
     let first = 0; // 最早一个还没判定的音符
     let t0 = 0; // 按空格的时刻（performance.now）
     let running = false;
+    let starting = false; // 按了空格、歌还在准备
     let finished = false;
     let combo = 0;
     let maxCombo = 0;
@@ -263,8 +296,42 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
     const lastT = notes.length ? notes[notes.length - 1].t : 0;
     let judgeAnim: Animation | null = null;
 
+    // 自己放歌时：歌在音频时钟的 startAt 秒开始
+    let source: AudioBufferSourceNode | null = null;
+    let startAt = 0;
+    /** 音频时钟此刻"正从扬声器出来"的位置（秒）。getOutputTimestamp 已经算上输出延迟，再用 performance.now 补到这一帧 */
+    const audioNow = () => {
+      const ts = actx!.getOutputTimestamp();
+      if (ts.contextTime !== undefined && ts.performanceTime) {
+        return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+      }
+      return actx!.currentTime - (actx!.outputLatency || actx!.baseLatency || 0);
+    };
     /** 歌放到第几秒了（扣掉偏移：偏移为正，音符整体晚一点） */
-    const songTime = () => (performance.now() - t0) / 1000 - offsetMs / 1000;
+    const songTime = () =>
+      (audio ? audioNow() - startAt : (performance.now() - t0) / 1000) - offsetMs / 1000;
+
+    const startMusic = async () => {
+      if (!audio || !actx) return;
+      await actx.resume();
+      const gain = actx.createGain();
+      gain.gain.value = 0.85;
+      gain.connect(actx.destination);
+      source = actx.createBufferSource();
+      source.buffer = audio;
+      source.connect(gain);
+      // 先留 LEAD 秒：歌开头就有的音符也能从上面完整落下来
+      startAt = actx.currentTime + LEAD;
+      source.start(startAt);
+    };
+    const stopMusic = () => {
+      try {
+        source?.stop();
+      } catch {
+        // 还没开始放就停，忽略
+      }
+      source = null;
+    };
 
     const judge = (j: Judge, lane: number) => {
       count[j]++;
@@ -378,7 +445,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
     };
 
     const restart = () => {
-      startGame({ ...song, offset_ms: offsetMs }, diff, notes, anchor);
+      startGame({ ...song, offset_ms: offsetMs }, diff, notes, anchor, audio);
     };
 
     const onKey = (e: KeyboardEvent) => {
@@ -391,11 +458,19 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
         e.preventDefault();
         if (e.repeat) return;
         if (finished) restart();
-        else if (!running) {
-          t0 = performance.now();
-          running = true;
+        else if (!running && !starting) {
           prompt.remove();
-          raf = requestAnimationFrame(frame);
+          if (audio) {
+            starting = true;
+            startMusic().then(() => {
+              running = true;
+              raf = requestAnimationFrame(frame);
+            });
+          } else {
+            t0 = performance.now();
+            running = true;
+            raf = requestAnimationFrame(frame);
+          }
         }
         return;
       }
@@ -429,6 +504,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect) {
     return () => {
       running = false;
       cancelAnimationFrame(raf);
+      stopMusic();
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onUp);
       window.removeEventListener("focus", onFocus);
