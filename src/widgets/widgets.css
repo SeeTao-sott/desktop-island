@@ -21,21 +21,14 @@
   position: absolute;
   left: 0;
   top: 0;
-  border-radius: var(--w-radius);
   color: var(--w-text);
   transform-origin: center;
   will-change: transform;
 }
-.widget-body {
+/* 主题画外框的地方：外框和内容都在这里面 */
+.skin-host {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  background: var(--w-bg);
-  box-shadow:
-    inset 0 0 0 1px var(--w-stroke),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
 /* ---------- 编辑模式 ---------- */
@@ -59,17 +52,30 @@ body.editing .widget.dragging {
   cursor: grabbing;
   z-index: 10;
 }
+/* 六边形主题按蜂巢吸附，方形的网格点就不画了 */
+body[data-skin="hex"] .backdrop {
+  background-image: none;
+}
 /* 编辑时组件内容不接收鼠标，整块都能拖 */
-body.editing .widget-body > * {
+body.editing .skin-host {
   pointer-events: none;
 }
+/* 编辑时的虚线轮廓：和组件同一个形状 */
 .edit-ring {
   position: absolute;
-  inset: -5px;
-  border-radius: calc(var(--w-radius) + 5px);
-  border: 1.5px dashed rgba(255, 255, 255, 0.55);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   opacity: 0;
   pointer-events: none;
+}
+.edit-ring polygon {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
 }
 body.editing .edit-ring {
   opacity: var(--edit, 0);
@@ -154,7 +160,7 @@ body.editing .widget.active {
   justify-content: center;
   gap: 4px;
   padding: 14px;
-  border-radius: inherit;
+  border-radius: 18px;
   background: rgba(16, 16, 22, 0.94);
   color: var(--text);
   pointer-events: auto !important;
@@ -184,9 +190,8 @@ body.editing .widget.active {
   position: absolute;
   left: 0;
   top: 0;
-  border-radius: var(--w-radius);
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.35);
+  /* 形状由 clip-path 给出（和组件同一个轮廓） */
+  background: rgba(255, 255, 255, 0.16);
   pointer-events: none;
 }
 
@@ -330,4 +335,35 @@ body.editing .widget.dragging .remove-btn {
   left: 50%;
   bottom: 8px;
   transform: translateX(-50%);
+}
+
+/* 编辑栏里的主题切换 */
+.skins {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.skin-btn {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  font-size: 12.5px;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.skin-btn:hover {
+  color: var(--text);
+}
+.skin-btn:active {
+  transform: scale(0.92);
+}
+.skin-btn.on {
+  background: rgba(255, 255, 255, 0.9);
+  color: #111;
+  font-weight: 600;
 }

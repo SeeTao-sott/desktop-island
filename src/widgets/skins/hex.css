@@ -1,6 +1,11 @@
-/* 六边形主题：平顶六边形玻璃 + 细描边 + 一圈很淡的内六边形 */
+/* 六边形主题：平顶六边形玻璃 + 细描边 */
 .sk-hex {
   --hx-glow: color-mix(in srgb, var(--w-accent) 50%, transparent);
+  --hx-c2: color-mix(in srgb, var(--w-accent) 62%, white);
+  --hx-c3: color-mix(in srgb, var(--w-accent) 55%, var(--w-text));
+}
+:root[data-theme="light"] .sk-hex {
+  --hx-c2: color-mix(in srgb, var(--w-accent) 62%, black);
 }
 .hx-body {
   position: absolute;
@@ -12,6 +17,8 @@
 .hx-lines {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
   pointer-events: none;
 }
@@ -20,6 +27,7 @@
   stroke: color-mix(in srgb, var(--w-accent) 60%, transparent);
   stroke-width: 1.2;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
   filter: drop-shadow(0 0 3px var(--hx-glow));
 }
 .hx-inner {
@@ -29,22 +37,23 @@
 }
 
 .hx-clock,
-.hx-pomo {
+.hx-pomo,
+.hx-music,
+.hx-status {
   position: relative;
   height: 100%;
   font-variant-numeric: tabular-nums;
 }
-.hx-dots,
-.hx-prog {
+.hx-fill {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
-.hx-dots circle {
+.hx-clock circle {
   fill: color-mix(in srgb, var(--w-text) 22%, transparent);
 }
-.hx-dots circle.on {
+.hx-clock circle.on {
   fill: var(--w-accent);
   filter: drop-shadow(0 0 3px var(--hx-glow));
 }
@@ -57,20 +66,32 @@
   justify-content: center;
 }
 .hx-hm {
-  font-size: 36px;
+  font-size: 34px;
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1;
 }
-.size-medium .hx-hm {
+.hx-clock.size-medium .hx-hm {
   font-size: 50px;
 }
-.hx-sub {
+.hx-clock.size-large .hx-hm {
+  font-size: 68px;
+}
+.hx-sub,
+.hx-sub2 {
   margin-top: 6px;
   font-size: 12.5px;
   color: var(--w-sub);
 }
+.size-large .hx-sub {
+  font-size: 15px;
+}
+.hx-sub:empty,
+.hx-sub2:empty {
+  display: none;
+}
 
+/* 沿边走的进度 */
 .hx-track,
 .hx-arc {
   fill: none;
@@ -89,13 +110,18 @@
   stroke: rgb(var(--c-done));
 }
 .hx-pomo .hx-hm {
-  font-size: 30px;
+  font-size: 28px;
 }
 .hx-pomo.size-medium .hx-hm {
   font-size: 40px;
 }
-.hx-btns {
+.hx-pomo.size-large .hx-hm {
+  font-size: 60px;
+}
+.hx-btns,
+.hx-ctrl {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
 }
@@ -115,6 +141,210 @@
   color: var(--w-on-accent);
   font-weight: 600;
 }
+.size-large .hx-btn {
+  height: 32px;
+  padding: 0 20px;
+  font-size: 14px;
+}
 .hx-pomo.size-small .hx-sub {
   display: none;
+}
+
+/* 音乐 */
+.hx-music {
+  display: flex;
+  align-items: center;
+}
+.hx-art {
+  position: relative;
+  flex: none;
+}
+.hx-disc {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--w-text) 10%, transparent);
+}
+.hx-disc img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hx-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--w-sub);
+}
+.hx-ph svg {
+  width: 30%;
+  fill: currentColor;
+}
+.hx-disc img:not([hidden]) + .hx-ph {
+  display: none;
+}
+.hx-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-right: 40px;
+}
+.hx-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hx-artist,
+.hx-pos {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--w-sub);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hx-mbtn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--w-text);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.hx-mbtn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.hx-mbtn.main {
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+}
+.hx-mbtn:disabled {
+  opacity: 0.35;
+}
+.hx-idle {
+  display: none;
+  font-size: 13px;
+  color: var(--w-sub);
+}
+.hx-music:not(.active) .hx-idle {
+  display: block;
+}
+.hx-music:not(.active) .hx-title,
+.hx-music:not(.active) .hx-artist,
+.hx-music:not(.active) .hx-pos,
+.hx-music:not(.active) .hx-ctrl {
+  display: none;
+}
+/* 小：封面占满，播放键在正中 */
+.hx-music.size-small .hx-info {
+  display: none;
+}
+.hx-music.size-small .hx-ctrl {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  margin: 0;
+}
+.hx-music.size-small .hx-mbtn.main {
+  width: 44px;
+  height: 38px;
+}
+/* 中：左边六边形封面，右边信息 */
+.hx-music.size-medium .hx-info {
+  padding-left: 4px;
+}
+/* 大：封面在上，信息在下 */
+.hx-music.size-large {
+  flex-direction: column;
+  justify-content: center;
+}
+.hx-music.size-large .hx-info {
+  flex: none;
+  align-items: center;
+  width: 62%;
+  padding: 6px 0 0;
+  text-align: center;
+}
+
+/* 系统状态：三层同心六边形 */
+.hx-status {
+  display: flex;
+  align-items: center;
+}
+.hx-track.st,
+.hx-arc.st {
+  stroke-width: 5;
+}
+.hx-arc.gpu {
+  stroke: var(--hx-c2);
+}
+.hx-arc.bat {
+  stroke: var(--hx-c3);
+}
+.hx-arc.warn {
+  stroke: rgb(var(--c-gpu));
+}
+.hx-status .hx-hm {
+  font-size: 20px;
+}
+.hx-status.size-small .hx-sub {
+  margin-top: 2px;
+  font-size: 11px;
+}
+.hx-legend {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  padding-right: 44px;
+}
+.size-medium .hx-legend,
+.hx-legend.in {
+  display: flex;
+}
+.hx-legend.in {
+  flex: none;
+  gap: 5px;
+  padding: 0;
+}
+.hx-lrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.hx-lrow i {
+  width: 8px;
+  height: 8px;
+  background: var(--w-accent);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.hx-lrow.gpu i {
+  background: var(--hx-c2);
+}
+.hx-lrow.bat i {
+  background: var(--hx-c3);
+}
+.hx-lrow.warn i {
+  background: rgb(var(--c-gpu));
+}
+.hx-lname {
+  flex: 1;
+  color: var(--w-sub);
+  white-space: nowrap;
+}
+.hx-lval {
+  font-weight: 600;
+}
+.hx-legend.in .hx-lname {
+  flex: none;
+  width: 88px;
 }

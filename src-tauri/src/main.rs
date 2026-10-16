@@ -110,7 +110,7 @@ fn shelf_cmd(shelf: State<'_, Arc<Shelf>>, action: String) -> ShelfState {
 }
 
 #[tauri::command]
-fn widgets_set_hits(w: State<'_, Arc<Widgets>>, rects: Vec<HitRect>) {
+fn widgets_set_hits(w: State<'_, Arc<Widgets>>, rects: Vec<widgets::HitShape>) {
     w.set_hits(rects);
 }
 
@@ -249,6 +249,7 @@ fn build_tray(
         format!("编辑桌面小组件\t{widgets_hotkey}")
     };
     let widgets_item = MenuItem::with_id(app, "widgets_edit", widgets_label, widgets.is_some(), None::<&str>)?;
+    let skin_item = MenuItem::with_id(app, "widgets_skin", "切换小组件主题", widgets.is_some(), None::<&str>)?;
     let preview_item = MenuItem::with_id(app, "theme_preview", "小组件主题预览", widgets.is_some(), None::<&str>)?;
     let has_shelf = shelf.is_some();
     let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, has_shelf, None::<&str>)?;
@@ -268,6 +269,7 @@ fn build_tray(
             &icons,
             &PredefinedMenuItem::separator(app)?,
             &widgets_item,
+            &skin_item,
             &preview_item,
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
@@ -306,6 +308,10 @@ fn build_tray(
                 }
             }
             "theme_preview" => open_theme_preview(app),
+            // 所有组件一起换到下一个主题（方形 → 圆环 → 科幻 HUD → 六边形 → …）
+            "widgets_skin" => {
+                let _ = app.emit("widgets-skin-next", ());
+            }
             "desktop_icons" => {
                 let want = icons_item.is_checked().unwrap_or(false);
                 let item = icons_item.clone();

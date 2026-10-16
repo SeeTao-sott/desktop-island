@@ -1,46 +1,51 @@
-// 桌面小组件的主页面：摆放、编辑模式（拖动 + 吸附网格 + 换尺寸）、保存布局、点击区域上报。
-// 所有位置、尺寸、编辑模式的出现消失都走灵动岛同一套弹簧；静止时不跑动画循环。
+// 桌面小组件的主页面：摆放、编辑模式（拖动 + 吸附网格 + 换尺寸）、换主题、保存布局、点击区域上报。
+// 所有位置、尺寸、主题切换、编辑模式的出现消失都走灵动岛同一套弹簧；静止时不跑动画循环。
+//
+// 组件（kinds/）只给数据，主题（skins/）决定外观；这里把两者接起来，自己不关心任何一种组件长什么样。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Animator, Spring } from "../spring";
 import { SPRING, fpsReporter } from "../motion";
 import { MODULES, moduleOf } from "./registry";
+import { SKINS, skinOf } from "./skins/registry";
+import type { Frame, Kind, Pt, Skin, View } from "./skins/types";
+import { gridOf, type Cell } from "./grid";
 import { initTheme } from "./theme";
-import {
-  MARGIN,
-  SIZES,
-  STEP,
-  settingsWithDefaults,
-  spanPx,
-  type Settings,
-  type SizeKey,
-  type WidgetInstance,
-  type WidgetModule,
-} from "./types";
+import { SIZES, settingsWithDefaults, type Model, type Settings, type SizeKey, type WidgetModule } from "./types";
 
 interface Item {
   id: string;
   kind: string;
   size: SizeKey;
+  /** 方形网格里的位置 */
   col: number;
   row: number;
+  /** 蜂巢网格里的位置（第一次切到六边形主题时才有） */
+  hex?: Cell;
   settings: Settings;
 }
 
 interface Layout {
   version: 1;
+  /** 现在用的主题 */
+  skin?: string;
   items: Item[];
 }
 
 interface Live {
   item: Item;
   mod: WidgetModule;
+  model: Model<unknown>;
+  /** 最近一次数据，换主题 / 换尺寸后立刻用它画 */
+  data: unknown;
   el: HTMLElement;
-  body: HTMLElement;
-  content: HTMLElement;
+  host: HTMLElement;
+  ring: SVGSVGElement;
   chips: HTMLElement;
+  remove: HTMLElement;
   panel: HTMLElement | null;
-  inst: WidgetInstance;
+  frame: Frame | null;
+  view: View<unknown> | null;
   x: Spring;
   y: Spring;
   w: Spring;
@@ -55,11 +60,16 @@ const backdrop = document.getElementById("backdrop")!;
 const slot = document.getElementById("slot")!;
 const editBar = document.getElementById("edit-bar")!;
 const library = document.getElementById("library")!;
+const skinBar = document.getElementById("skins")!;
 const fpsEl = document.getElementById("fps")!;
 
 const live: Live[] = [];
 let editing = false;
 let paused = false;
+let skin: Skin = SKINS[0];
+/** 换主题过渡：1 = 正常显示，0 = 缩小淡出的最低点（在这一刻换外观） */
+const morph = new Spring(1, SPRING.fade);
+let pendingSkin: Skin | null = null;
 
 const editFade = new Spring(0, SPRING.fade);
 const animator = new Animator(applyFrame, (frames) => {
@@ -67,43 +77,56 @@ const animator = new Animator(applyFrame, (frames) => {
   if (!editing) reportHits();
 });
 animator.add(editFade);
+animator.add(morph);
 
 // ---------------- 网格 ----------------
 
-const cols = () => Math.max(2, Math.floor((window.innerWidth - 2 * MARGIN + (STEP - spanPx(1))) / STEP));
-const rows = () => Math.max(2, Math.floor((window.innerHeight - 2 * MARGIN + (STEP - spanPx(1))) / STEP));
-const colPx = (c: number) => MARGIN + c * STEP;
+const grid = () => gridOf(skin.grid);
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
 
-function fits(size: SizeKey, col: number, row: number, exceptId: string | null) {
-  const { cols: w, rows: h } = SIZES[size];
-  if (col < 0 || row < 0 || col + w > cols() || row + h > rows()) return false;
-  return live.every(({ item: o, removing }) => {
-    if (o.id === exceptId || removing) return true;
-    const os = SIZES[o.size];
-    return col + w <= o.col || o.col + os.cols <= col || row + h <= o.row || o.row + os.rows <= row;
-  });
+function cellOf(item: Item): Cell | undefined {
+  return grid().id === "hex" ? item.hex : { col: item.col, row: item.row };
+}
+function setCell(item: Item, c: Cell) {
+  if (grid().id === "hex") item.hex = { ...c };
+  else Object.assign(item, { col: c.col, row: c.row });
 }
 
-/** 离 (col,row) 最近的空位；整块屏幕都放不下就返回 null */
-function nearestFree(size: SizeKey, col: number, row: number, exceptId: string | null) {
-  let best: { col: number; row: number } | null = null;
+function fits(size: SizeKey, cell: Cell, exceptId: string | null) {
+  const g = grid();
+  if (!g.inBounds(size, cell, W(), H())) return false;
+  const mine = new Set(g.cells(size, cell));
+  for (const l of live) {
+    if (l.item.id === exceptId || l.removing) continue;
+    const c = cellOf(l.item);
+    if (!c) continue;
+    if (g.cells(l.item.size, c).some((k) => mine.has(k))) return false;
+  }
+  return true;
+}
+
+/** 离某个位置（外框左上角像素）最近的空位；整块屏幕都放不下就返回 null */
+function nearestFree(size: SizeKey, x: number, y: number, exceptId: string | null): Cell | null {
+  const g = grid();
+  let best: Cell | null = null;
   let bestD = Infinity;
-  for (let r = 0; r < rows(); r++) {
-    for (let c = 0; c < cols(); c++) {
-      const d = (c - col) ** 2 + (r - row) ** 2;
-      if (d < bestD && fits(size, c, r, exceptId)) {
-        bestD = d;
-        best = { col: c, row: r };
-      }
+  for (const c of g.all(W(), H())) {
+    const o = g.origin(size, c);
+    const d = (o.x - x) ** 2 + (o.y - y) ** 2;
+    if (d < bestD && fits(size, c, exceptId)) {
+      bestD = d;
+      best = c;
     }
   }
   return best;
 }
 
-// ---------------- 组件的创建和动画 ----------------
+// ---------------- 组件的创建、外观和动画 ----------------
 
 const GEAR =
   '<svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zm8.6 2.3l-1.9-.4a7 7 0 0 0-.7-1.6l1.1-1.6-1.6-1.6-1.6 1.1a7 7 0 0 0-1.6-.7l-.4-1.9h-2.2l-.4 1.9a7 7 0 0 0-1.6.7L6.1 5.6 4.5 7.2l1.1 1.6a7 7 0 0 0-.7 1.6l-1.9.4v2.2l1.9.4c.2.6.4 1.1.7 1.6l-1.1 1.6 1.6 1.6 1.6-1.1c.5.3 1 .5 1.6.7l.4 1.9h2.2l.4-1.9a7 7 0 0 0 1.6-.7l1.6 1.1 1.6-1.6-1.1-1.6c.3-.5.5-1 .7-1.6l1.9-.4z"/></svg>';
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function mount(item: Item): Live | null {
   const mod = moduleOf(item.kind);
@@ -114,43 +137,46 @@ function mount(item: Item): Live | null {
   const el = document.createElement("div");
   el.className = "widget";
   el.dataset.kind = mod.kind;
-  const body = document.createElement("div");
-  body.className = "widget-body";
-  const content = document.createElement("div");
-  content.className = "widget-content";
-  content.style.height = "100%";
-  body.appendChild(content);
-  const ring = document.createElement("div");
-  ring.className = "edit-ring";
+  const host = document.createElement("div");
+  host.className = "skin-host";
+  const ring = document.createElementNS(SVG_NS, "svg");
+  ring.setAttribute("class", "edit-ring");
   const chips = document.createElement("div");
   chips.className = "edit-chips glass";
   const remove = document.createElement("button");
   remove.className = "remove-btn";
   remove.title = "移除";
   remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></svg>';
-  el.append(body, ring, chips, remove);
+  el.append(host, ring, chips, remove);
   board.appendChild(el);
 
-  const inst = mod.create(content, { size: item.size, settings: item.settings });
-  const x = colPx(item.col);
-  const y = colPx(item.row);
-  const w = spanPx(SIZES[item.size].cols);
-  const h = spanPx(SIZES[item.size].rows);
+  const box = grid().box(item.size);
+  const pos = grid().origin(item.size, cellOf(item) ?? { col: 0, row: 0 });
   const l: Live = {
     item,
     mod,
+    model: mod.model(item.settings),
+    data: undefined,
     el,
-    body,
-    content,
+    host,
+    ring,
     chips,
+    remove,
     panel: null,
-    inst,
-    x: animator.add(new Spring(x, SPRING.shape)),
-    y: animator.add(new Spring(y, SPRING.shape)),
-    w: animator.add(new Spring(w, SPRING.shape)),
-    h: animator.add(new Spring(h, SPRING.shape)),
+    frame: null,
+    view: null,
+    x: animator.add(new Spring(pos.x, SPRING.shape)),
+    y: animator.add(new Spring(pos.y, SPRING.shape)),
+    w: animator.add(new Spring(box.w, SPRING.shape)),
+    h: animator.add(new Spring(box.h, SPRING.shape)),
     s: animator.add(new Spring(1, SPRING.shape)),
   };
+  buildSkin(l);
+  // 数据来了交给当前的界面；界面换了（换主题 / 换尺寸）也不用重新订阅
+  l.model.subscribe((d) => {
+    l.data = d;
+    l.view?.update(d);
+  });
   buildChips(l);
   bindDrag(l);
   remove.addEventListener("click", () => removeWidget(l));
@@ -159,8 +185,34 @@ function mount(item: Item): Live | null {
     if (editing && !l.removing) setActive(l);
   });
   live.push(l);
-  if (paused) inst.setPaused(true);
+  if (paused) l.model.setPaused(true);
   return l;
+}
+
+/** 按当前主题和尺寸重新画这个组件的外框和界面 */
+function buildSkin(l: Live) {
+  l.view?.destroy();
+  l.frame?.destroy();
+  l.host.replaceChildren();
+  l.host.className = "skin-host";
+  const { w, h } = grid().box(l.item.size);
+  const { frame, content } = skin.frame(l.host, l.item.size, w, h);
+  const view = skin.views[l.item.kind as Kind] as unknown as ((root: HTMLElement, ctx: object) => View<unknown>) | undefined;
+  l.frame = frame;
+  l.view = view
+    ? view(content, { size: l.item.size, w, h, act: (a: string) => l.model.act?.(a) })
+    : null;
+  if (l.data !== undefined) l.view?.update(l.data);
+  frame.setPaused(paused);
+
+  // 编辑模式的虚线轮廓 + 移除按钮放在形状的左上角
+  const pts = skin.outline(l.item.size, w, h);
+  l.ring.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  l.ring.setAttribute("preserveAspectRatio", "none");
+  l.ring.innerHTML = `<polygon points="${pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}" />`;
+  const corner = pts.reduce((a, b) => (b[0] + b[1] < a[0] + a[1] ? b : a));
+  l.remove.style.left = `${corner[0] - 12}px`;
+  l.remove.style.top = `${corner[1] - 12}px`;
 }
 
 function buildChips(l: Live) {
@@ -200,14 +252,14 @@ function toggleSettings(l: Live) {
     input.checked = l.item.settings[d.key] === true;
     input.addEventListener("change", () => {
       l.item.settings = { ...l.item.settings, [d.key]: input.checked };
-      l.inst.setSettings?.(l.item.settings);
+      l.model.setSettings?.(l.item.settings);
     });
     lab.appendChild(input);
     p.appendChild(lab);
   }
   // 设置面板里的点击不当作拖动
   p.addEventListener("pointerdown", (e) => e.stopPropagation());
-  l.body.appendChild(p);
+  l.el.appendChild(p);
   l.panel = p;
 }
 
@@ -224,25 +276,31 @@ function closeAllSettings() {
 
 function resize(l: Live, size: SizeKey) {
   if (size === l.item.size) return;
+  const cur = cellOf(l.item)!;
   // 原位放得下就原位，放不下找最近的空位；哪里都放不下就不换
-  const spot = fits(size, l.item.col, l.item.row, l.item.id)
-    ? { col: l.item.col, row: l.item.row }
-    : nearestFree(size, l.item.col, l.item.row, l.item.id);
+  let spot: Cell | null = cur;
+  if (!fits(size, cur, l.item.id)) {
+    const o = grid().origin(size, cur);
+    spot = nearestFree(size, o.x, o.y, l.item.id);
+  }
   if (!spot) return;
   l.item.size = size;
-  l.item.col = spot.col;
-  l.item.row = spot.row;
-  l.inst.setSize(size);
+  setCell(l.item, spot);
+  buildSkin(l);
   buildChips(l);
   settle(l);
 }
 
 /** 弹回网格上的位置 */
 function settle(l: Live) {
-  l.x.target = colPx(l.item.col);
-  l.y.target = colPx(l.item.row);
-  l.w.target = spanPx(SIZES[l.item.size].cols);
-  l.h.target = spanPx(SIZES[l.item.size].rows);
+  const g = grid();
+  const c = cellOf(l.item)!;
+  const o = g.origin(l.item.size, c);
+  const b = g.box(l.item.size);
+  l.x.target = o.x;
+  l.y.target = o.y;
+  l.w.target = b.w;
+  l.h.target = b.h;
   l.s.target = 1;
   animator.kick();
 }
@@ -253,15 +311,70 @@ function applyFrame() {
   document.body.style.setProperty("--edit", String(e));
   editBar.style.opacity = String(e);
   editBar.style.transform = `translate(-50%, ${(1 - e) * -12}px)`;
+
+  // 换主题：缩到最低点时换外观，再弹回来
+  if (pendingSkin && morph.value < 0.08) applySkin();
+  const m = Math.max(0, Math.min(1, morph.value));
   for (const l of [...live]) {
     l.el.style.width = `${l.w.value}px`;
     l.el.style.height = `${l.h.value}px`;
-    l.el.style.transform = `translate(${l.x.value}px, ${l.y.value}px) scale(${Math.max(0, l.s.value)})`;
-    if (l.removing) {
-      l.el.style.opacity = String(Math.max(0, Math.min(1, l.s.value)));
-      if (l.s.value < 0.05) finishRemove(l);
+    const s = Math.max(0, l.s.value) * (0.82 + 0.18 * m);
+    l.el.style.transform = `translate(${l.x.value}px, ${l.y.value}px) scale(${s})`;
+    const fade = l.removing ? Math.max(0, Math.min(1, l.s.value)) : 1;
+    l.el.style.opacity = String(fade * m);
+    if (l.removing && l.s.value < 0.05) finishRemove(l);
+  }
+}
+
+// ---------------- 主题 ----------------
+
+function renderSkinBar() {
+  skinBar.replaceChildren();
+  for (const s of SKINS) {
+    const b = document.createElement("button");
+    b.className = "skin-btn" + (s.id === (pendingSkin ?? skin).id ? " on" : "");
+    b.textContent = s.name;
+    b.addEventListener("click", () => setSkin(s.id));
+    skinBar.appendChild(b);
+  }
+}
+
+/** 一键换主题（所有组件一起换） */
+function setSkin(id: string) {
+  const next = skinOf(id);
+  if (next.id === (pendingSkin ?? skin).id) return;
+  pendingSkin = next;
+  morph.target = 0;
+  renderSkinBar();
+  animator.kick();
+}
+
+function applySkin() {
+  const next = pendingSkin!;
+  pendingSkin = null;
+  const from = grid();
+  skin = next;
+  document.body.dataset.skin = skin.id;
+  // 第一次到这种网格：从现在的位置找最近的空位（从左上往右下依次放）
+  if (from.id !== grid().id) {
+    const order = [...live].filter((l) => !l.removing).sort((a, b) => a.y.target - b.y.target || a.x.target - b.x.target);
+    for (const l of order) if (!cellOf(l.item)) setCell(l.item, { col: -99, row: -99 });
+    for (const l of order) {
+      const c = cellOf(l.item)!;
+      if (c.col >= 0 && fits(l.item.size, c, l.item.id)) continue;
+      setCell(l.item, { col: -99, row: -99 });
+      // 往左上角拉近一些找空位：大家挤在一起，才像蜂巢一样拼好
+      const spot = nearestFree(l.item.size, l.x.target * 0.5, l.y.target * 0.5, l.item.id);
+      if (spot) setCell(l.item, spot);
     }
   }
+  for (const l of live) {
+    if (l.removing) continue;
+    buildSkin(l);
+    settle(l);
+  }
+  morph.target = 1;
+  save();
 }
 
 // ---------------- 组件库：添加和移除 ----------------
@@ -278,7 +391,9 @@ function finishRemove(l: Live) {
   const i = live.indexOf(l);
   if (i < 0) return;
   live.splice(i, 1);
-  l.inst.destroy();
+  l.view?.destroy();
+  l.frame?.destroy();
+  l.model.destroy();
   l.el.remove();
   animator.remove(l.x, l.y, l.w, l.h, l.s);
   renderLibrary();
@@ -290,25 +405,27 @@ function addWidget(mod: WidgetModule) {
   for (const size of order) {
     const spot = nearestFree(size, 0, 0, null);
     if (!spot) continue;
-    const item: Item = {
-      id: `${mod.kind}-${Date.now().toString(36)}`,
-      kind: mod.kind,
-      size,
-      col: spot.col,
-      row: spot.row,
-      settings: {},
-    };
+    const item: Item = { id: `${mod.kind}-${Date.now().toString(36)}`, kind: mod.kind, size, col: 0, row: 0, settings: {} };
+    setCell(item, spot);
+    // 另一种网格的位置等切过去时再找
+    if (grid().id === "hex") Object.assign(item, nearestRect(size, spot));
     const l = mount(item);
     if (!l) return;
     // 从小一点弹出来
     l.s.value = 0.6;
-    l.el.style.opacity = "1";
     settle(l);
     applyFrame();
     showLibrary(false);
     return;
   }
   libraryMessage("屏幕上放不下了，先移除或缩小别的组件");
+}
+
+/** 在蜂巢网格里加组件时，顺便给它一个方形网格里的位置 */
+function nearestRect(size: SizeKey, hexCell: Cell): Cell {
+  const o = gridOf("hex").origin(size, hexCell);
+  const r = gridOf("rect").nearest(size, o.x, o.y, W(), H());
+  return { col: Math.max(0, r.col), row: Math.max(0, r.row) };
 }
 
 function renderLibrary(msg = "") {
@@ -349,7 +466,7 @@ document.querySelector(".js-library")!.addEventListener("click", () => showLibra
 
 function bindDrag(l: Live) {
   l.el.addEventListener("pointerdown", (e) => {
-    if (!editing || l.removing || e.button !== 0 || (e.target as HTMLElement).closest(".edit-chips, .remove-btn")) return;
+    if (!editing || l.removing || e.button !== 0 || (e.target as HTMLElement).closest(".edit-chips, .remove-btn, .w-settings")) return;
     showLibrary(false);
     e.preventDefault();
     closeAllSettings();
@@ -358,16 +475,16 @@ function bindDrag(l: Live) {
     const offX = e.clientX - l.x.value;
     const offY = e.clientY - l.y.value;
     l.s.target = 1.04;
-    let spot = { col: l.item.col, row: l.item.row };
+    let spot = cellOf(l.item)!;
     showSlot(l.item.size, spot);
 
     const move = (ev: PointerEvent) => {
       l.x.target = ev.clientX - offX;
       l.y.target = ev.clientY - offY;
       // 松手会落在哪：最接近的格子；被占了就找附近的空位
-      const c = Math.round((l.x.target - MARGIN) / STEP);
-      const r = Math.round((l.y.target - MARGIN) / STEP);
-      const s = fits(l.item.size, c, r, l.item.id) ? { col: c, row: r } : nearestFree(l.item.size, c, r, l.item.id);
+      const g = grid();
+      const c = g.nearest(l.item.size, l.x.target, l.y.target, W(), H());
+      const s = fits(l.item.size, c, l.item.id) ? c : nearestFree(l.item.size, l.x.target, l.y.target, l.item.id);
       if (s && (s.col !== spot.col || s.row !== spot.row)) {
         spot = s;
         showSlot(l.item.size, spot);
@@ -380,8 +497,7 @@ function bindDrag(l: Live) {
       l.el.removeEventListener("pointercancel", up);
       l.el.classList.remove("dragging");
       slot.hidden = true;
-      l.item.col = spot.col;
-      l.item.row = spot.row;
+      setCell(l.item, spot);
       settle(l);
     };
     l.el.addEventListener("pointermove", move);
@@ -391,11 +507,17 @@ function bindDrag(l: Live) {
   });
 }
 
-function showSlot(size: SizeKey, spot: { col: number; row: number }) {
+/** 落点提示：和组件同样的形状 */
+function showSlot(size: SizeKey, spot: Cell) {
+  const g = grid();
+  const b = g.box(size);
+  const o = g.origin(size, spot);
+  const pts = skin.outline(size, b.w, b.h);
   slot.hidden = false;
-  slot.style.width = `${spanPx(SIZES[size].cols)}px`;
-  slot.style.height = `${spanPx(SIZES[size].rows)}px`;
-  slot.style.transform = `translate(${colPx(spot.col)}px, ${colPx(spot.row)}px)`;
+  slot.style.width = `${b.w}px`;
+  slot.style.height = `${b.h}px`;
+  slot.style.transform = `translate(${o.x}px, ${o.y}px)`;
+  slot.style.clipPath = `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(",")})`;
 }
 
 // ---------------- 编辑模式、保存、点击区域 ----------------
@@ -405,7 +527,8 @@ function setEditing(on: boolean) {
   editing = on;
   document.body.classList.toggle("editing", on);
   editFade.target = on ? 1 : 0;
-  if (!on) {
+  if (on) renderSkinBar();
+  else {
     closeAllSettings();
     setActive(null);
     showLibrary(false);
@@ -415,7 +538,7 @@ function setEditing(on: boolean) {
 }
 
 function layout(): Layout {
-  return { version: 1, items: live.filter((l) => !l.removing).map((l) => ({ ...l.item })) };
+  return { version: 1, skin: (pendingSkin ?? skin).id, items: live.filter((l) => !l.removing).map((l) => ({ ...l.item })) };
 }
 
 async function save() {
@@ -426,11 +549,18 @@ async function save() {
   }
 }
 
-/** 告诉 Rust 组件都在哪：鼠标在这些地方才接收点击，其余地方点击穿透 */
+/** 告诉 Rust 每个组件的形状轮廓：只有形状里面接收点击，其余地方（包括圆角、切角外面）点击穿透 */
 function reportHits() {
   const rects = live
     .filter((l) => !l.removing)
-    .map((l) => ({ x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target }));
+    .map((l) => {
+      const x = l.x.target;
+      const y = l.y.target;
+      const w = l.w.target;
+      const h = l.h.target;
+      const pts: Pt[] = skin.outline(l.item.size, w, h).map(([px, py]) => [x + px, y + py]);
+      return { x, y, w, h, pts };
+    });
   invoke("widgets_set_hits", { rects }).catch(() => {});
 }
 
@@ -441,15 +571,25 @@ document.querySelector(".js-done")!.addEventListener("click", () => {
 listen<boolean>("widgets-edit", (e) => setEditing(e.payload));
 listen<boolean>("widgets-paused", (e) => {
   paused = e.payload;
-  for (const l of live) l.inst.setPaused(paused);
+  for (const l of live) {
+    l.model.setPaused(paused);
+    l.frame?.setPaused(paused);
+  }
+});
+// 托盘里"切换小组件主题"：换到下一个
+listen("widgets-skin-next", () => {
+  const cur = (pendingSkin ?? skin).id;
+  const i = SKINS.findIndex((s) => s.id === cur);
+  setSkin(SKINS[(i + 1) % SKINS.length].id);
 });
 
 // 屏幕大小变了：放不下的组件挪到最近的空位
 window.addEventListener("resize", () => {
   for (const l of live) {
-    if (!fits(l.item.size, l.item.col, l.item.row, l.item.id)) {
-      const s = nearestFree(l.item.size, l.item.col, l.item.row, l.item.id);
-      if (s) Object.assign(l.item, s);
+    const c = cellOf(l.item);
+    if (!c || !fits(l.item.size, c, l.item.id)) {
+      const s = nearestFree(l.item.size, l.x.target, l.y.target, l.item.id);
+      if (s) setCell(l.item, s);
     }
     settle(l);
   }
@@ -458,11 +598,7 @@ window.addEventListener("resize", () => {
 // ---------------- 启动 ----------------
 
 function defaultLayout(): Layout {
-  const clock = MODULES.find((m) => m.kind === "clock");
-  return {
-    version: 1,
-    items: clock ? [{ id: "clock-1", kind: "clock", size: "medium", col: 0, row: 0, settings: {} }] : [],
-  };
+  return { version: 1, skin: "square", items: [{ id: "clock-1", kind: "clock", size: "medium", col: 0, row: 0, settings: {} }] };
 }
 
 async function start() {
@@ -473,20 +609,27 @@ async function start() {
     saved = null;
   }
   const lay = saved && Array.isArray(saved.items) ? saved : defaultLayout();
+  skin = skinOf(lay.skin ?? "square");
+  document.body.dataset.skin = skin.id;
+  // 这种网格里还没有位置的组件（比如第一次用六边形主题），先占个位，下面统一找空位
+  for (const item of lay.items) if (!cellOf(item)) setCell(item, { col: -99, row: -99 });
   for (const item of lay.items) {
     const l = mount(item);
     if (!l) continue;
-    // 布局文件里的位置在这块屏幕上放不下（比如换了分辨率）：挪到最近的空位
-    if (!fits(item.size, item.col, item.row, item.id)) {
-      const s = nearestFree(item.size, item.col, item.row, item.id);
-      if (s) Object.assign(item, s);
+    // 位置在这块屏幕上放不下（比如换了分辨率）：挪到最近的空位
+    const c = cellOf(item)!;
+    if (!fits(item.size, c, item.id)) {
+      const o = c.col < 0 ? { x: 0, y: 0 } : grid().origin(item.size, c);
+      setCell(item, { col: -99, row: -99 });
+      const s = nearestFree(item.size, o.x, o.y, item.id);
+      if (s) setCell(item, s);
       else {
-        l.inst.destroy();
-        l.el.remove();
-        live.splice(live.indexOf(l), 1);
+        removeWidget(l);
         continue;
       }
-      settle(l);
+      const p = grid().origin(item.size, s);
+      l.x.value = l.x.target = p.x;
+      l.y.value = l.y.target = p.y;
     }
   }
   applyFrame();

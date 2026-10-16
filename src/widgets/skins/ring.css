@@ -2,6 +2,8 @@
 .sk-ring {
   --rg-glow: color-mix(in srgb, var(--w-accent) 55%, transparent);
   --rg-shade: rgba(0, 0, 0, 0.42);
+  --rg-c2: color-mix(in srgb, var(--w-accent) 62%, white);
+  --rg-c3: color-mix(in srgb, var(--w-accent) 55%, var(--w-text));
   border-radius: 50%;
 }
 .sk-ring.rg-medium {
@@ -9,6 +11,7 @@
 }
 :root[data-theme="light"] .sk-ring {
   --rg-shade: rgba(0, 0, 0, 0.14);
+  --rg-c2: color-mix(in srgb, var(--w-accent) 62%, black);
 }
 .rg-body {
   position: absolute;
@@ -25,7 +28,9 @@
 }
 
 .rg-clock,
-.rg-pomo {
+.rg-pomo,
+.rg-music,
+.rg-status {
   position: relative;
   display: flex;
   align-items: center;
@@ -58,17 +63,29 @@
   letter-spacing: -0.02em;
   line-height: 1;
 }
-.rg-small {
+.size-large .rg-hm {
+  font-size: 64px;
+}
+.rg-small,
+.rg-small2 {
   margin-top: 4px;
   font-size: 12px;
   color: var(--w-sub);
+}
+.size-large .rg-small,
+.size-large .rg-small2 {
+  font-size: 15px;
+}
+.rg-small:empty,
+.rg-small2:empty {
+  display: none;
 }
 .rg-side {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 6px;
-  padding: 0 28px 0 8px;
+  padding: 0 30px 0 6px;
   min-width: 0;
 }
 .size-small .rg-side,
@@ -102,7 +119,7 @@
   filter: drop-shadow(0 0 1.6px var(--rg-glow));
 }
 
-/* 番茄钟：外圈细进度 + 冷却圆盘 */
+/* 进度环 */
 .rg-outer {
   transform: rotate(-90deg);
 }
@@ -119,6 +136,8 @@
   stroke-linecap: round;
   filter: drop-shadow(0 0 2px var(--rg-glow));
 }
+
+/* 番茄钟：冷却圆盘 */
 .rg-cd {
   --passed: 0deg;
   position: absolute;
@@ -172,7 +191,6 @@
   padding: 0 10px;
   font-size: 11.5px;
 }
-.size-small .rg-pomo .rg-small,
 .rg-pomo.size-small .rg-small {
   display: none;
 }
@@ -180,6 +198,201 @@
 .rg-clock.size-small .rg-hm {
   font-size: 30px;
 }
-.size-medium .rg-dial {
-  margin-left: 0;
+.rg-pomo.size-large .rg-btn {
+  height: 34px;
+  padding: 0 20px;
+  font-size: 14px;
+}
+
+/* 音乐：圆形封面 + 外圈进度 */
+.rg-disc {
+  position: absolute;
+  inset: 12%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--w-text) 10%, transparent);
+}
+.rg-disc img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rg-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--w-sub);
+}
+.rg-ph svg {
+  width: 36%;
+  fill: currentColor;
+}
+.rg-disc img:not([hidden]) + .rg-ph {
+  display: none;
+}
+.rg-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rg-artist,
+.rg-pos {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--w-sub);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rg-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.rg-mbtn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--w-text);
+}
+.rg-mbtn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.rg-mbtn.main {
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+}
+.rg-mbtn:disabled {
+  opacity: 0.35;
+}
+.rg-idle {
+  display: none;
+  font-size: 13px;
+  color: var(--w-sub);
+}
+.rg-music:not(.active) .rg-idle {
+  display: block;
+}
+.rg-music:not(.active) .rg-title,
+.rg-music:not(.active) .rg-artist,
+.rg-music:not(.active) .rg-pos,
+.rg-music:not(.active) .rg-ctrl {
+  display: none;
+}
+/* 小：播放键在封面正中 */
+.rg-music.size-small .rg-ctrl {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  margin: 0;
+}
+.rg-music.size-small .rg-mbtn.main {
+  width: 40px;
+  height: 40px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+/* 大：封面在上，下面歌名、按钮（都在圆里） */
+.rg-music.size-large {
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.rg-music.size-large .rg-dial {
+  height: 56%;
+  margin-top: 9%;
+}
+.rg-music.size-large .rg-side {
+  display: flex;
+  flex: none;
+  align-items: center;
+  width: 62%;
+  padding: 10px 0 0;
+  text-align: center;
+}
+.rg-music.size-large .rg-title,
+.rg-music.size-large .rg-artist,
+.rg-music.size-large .rg-pos {
+  max-width: 100%;
+}
+
+/* 系统状态：三圈同心圆环 */
+.rg-track.st,
+.rg-arc.st {
+  stroke-width: 5.5;
+}
+.rg-arc.gpu {
+  stroke: var(--rg-c2);
+}
+.rg-arc.bat {
+  stroke: var(--rg-c3);
+}
+.rg-arc.warn {
+  stroke: rgb(var(--c-gpu));
+}
+.rg-status .rg-hm {
+  font-size: 22px;
+}
+.rg-status.size-medium .rg-hm {
+  font-size: 22px;
+}
+.rg-legend {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  padding-right: 30px;
+}
+.size-medium .rg-legend,
+.rg-legend.in {
+  display: flex;
+}
+.rg-legend.in {
+  flex: none;
+  gap: 5px;
+  padding: 0;
+}
+.rg-lrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.rg-lrow i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--w-accent);
+}
+.rg-lrow.gpu i {
+  background: var(--rg-c2);
+}
+.rg-lrow.bat i {
+  background: var(--rg-c3);
+}
+.rg-lrow.warn i {
+  background: rgb(var(--c-gpu));
+}
+.rg-lname {
+  flex: 1;
+  color: var(--w-sub);
+  white-space: nowrap;
+}
+.rg-lval {
+  font-weight: 600;
+}
+.rg-legend.in .rg-lrow {
+  font-size: 14px;
+}
+.rg-legend.in .rg-lname {
+  flex: none;
+  width: 92px;
 }

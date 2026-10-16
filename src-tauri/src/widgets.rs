@@ -28,7 +28,43 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
-use crate::HitRect;
+/// 一个组件的点击区域：外框（先粗判）+ 形状轮廓（圆、六边形、切角……），CSS 像素
+#[derive(Clone, Default, serde::Deserialize)]
+pub struct HitShape {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub pts: Vec<[f64; 2]>,
+}
+
+impl HitShape {
+    /// 点在形状里面（射线法）；没给轮廓就按外框算
+    pub fn contains(&self, px: f64, py: f64) -> bool {
+        if px < self.x || px > self.x + self.w || py < self.y || py > self.y + self.h {
+            return false;
+        }
+        if self.pts.len() < 3 {
+            return true;
+        }
+        let mut inside = false;
+        let n = self.pts.len();
+        let mut j = n - 1;
+        for i in 0..n {
+            let [xi, yi] = self.pts[i];
+            let [xj, yj] = self.pts[j];
+            if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
+
+    fn near(&self, px: f64, py: f64, margin: f64) -> bool {
+        px >= self.x - margin && px <= self.x + self.w + margin && py >= self.y - margin && py <= self.y + self.h + margin
+    }
+}
 
 const LABEL: &str = "widgets";
 /// 光标在组件附近时检测得勤一点，离得远就放慢
@@ -48,7 +84,7 @@ pub struct Widgets {
     win: Mutex<Option<WebviewWindow>>,
     hwnd: AtomicIsize,
     /// 各组件在窗口里的位置（CSS 像素），鼠标在这些地方才接收点击
-    hits: Mutex<Vec<HitRect>>,
+    hits: Mutex<Vec<HitShape>>,
     editing: AtomicBool,
     layout_path: PathBuf,
 }
@@ -200,7 +236,7 @@ impl Widgets {
         }
     }
 
-    pub fn set_hits(&self, rects: Vec<HitRect>) {
+    pub fn set_hits(&self, rects: Vec<HitShape>) {
         *self.hits.lock().unwrap() = rects;
     }
 
@@ -316,9 +352,7 @@ impl Widgets {
                 interactive = inside;
                 let _ = win.set_ignore_cursor_events(!inside);
             }
-            let near = hits.iter().any(|r| {
-                lx >= r.x - NEAR_MARGIN && lx <= r.x + r.w + NEAR_MARGIN && ly >= r.y - NEAR_MARGIN && ly <= r.y + r.h + NEAR_MARGIN
-            });
+            let near = hits.iter().any(|r| r.near(lx, ly, NEAR_MARGIN));
             thread::sleep(if near { FAST } else { SLOW });
         }
     }

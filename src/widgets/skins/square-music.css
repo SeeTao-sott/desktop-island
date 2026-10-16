@@ -59,6 +59,7 @@
 }
 
 .mu-progress {
+  visibility: var(--vis, hidden);
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -120,13 +121,13 @@
 .mu-btn:disabled {
   opacity: 0.35;
 }
-.mu-main {
+.mu-btn.main {
   width: 44px;
   height: 44px;
   background: var(--w-accent);
   color: var(--w-on-accent);
 }
-.mu-main:hover {
+.mu-btn.main:hover {
   background: var(--w-accent);
   filter: brightness(1.08);
 }
@@ -174,12 +175,12 @@
   justify-self: start;
   padding: 0 0 10px 10px;
 }
-.size-small .js-prev,
-.size-small .js-next,
+.size-small .b-prev,
+.size-small .b-next,
 .size-small .mu-progress {
   display: none;
 }
-.size-small .mu-main {
+.size-small .mu-btn.main {
   width: 38px;
   height: 38px;
 }
