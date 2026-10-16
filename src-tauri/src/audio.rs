@@ -106,6 +106,9 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         let fmt_ptr = client.GetMixFormat()?;
         let fmt: WAVEFORMATEX = *fmt_ptr;
+        // 采样是浮点还是整数：格式标记 3 = 浮点；0xFFFE（扩展格式）时看 SubFormat 的第一段（3 = 浮点，1 = 整数）
+        let tag = fmt.wFormatTag;
+        let is_float = tag == 3 || (tag == 0xFFFE && fmt.cbSize >= 22 && *((fmt_ptr as *const u8).add(24) as *const u32) == 3);
         // 20 毫秒的缓冲；环回模式下系统把正在播放的混音复制一份给我们
         let r = client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 200_000, 0, fmt_ptr, None);
         CoTaskMemFree(Some(fmt_ptr as *const _));
@@ -115,12 +118,14 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
 
         let channels = fmt.nChannels.max(1) as usize;
         let bits = fmt.wBitsPerSample;
+        eprintln!("系统声音格式：{} 声道，{} Hz，{} 位，{}", channels, { fmt.nSamplesPerSec }, bits, if is_float { "浮点" } else { "整数" });
         let rate = fmt.nSamplesPerSec as f32;
         let mut an = Analyzer::new(rate);
         let mut ring = vec![0f32; N];
         let mut pos = 0usize;
         let mut quiet_since: Option<Instant> = None;
         let mut sent_silent = false;
+        let mut wave_agc = 0.05f32;
         let mut next = Instant::now();
 
         let result = loop {
@@ -144,7 +149,8 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                         for c in 0..channels {
                             let i = f * channels + c;
                             s += match bits {
-                                32 => *(data as *const f32).add(i),
+                                32 if is_float => *(data as *const f32).add(i),
+                                32 => *(data as *const i32).add(i) as f32 / 2_147_483_648.0,
                                 16 => *(data as *const i16).add(i) as f32 / 32768.0,
                                 24 => {
                                     let p = data.add(i * 3);
@@ -186,7 +192,7 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                 let want_wave = AUDIO.get().is_some_and(|a| a.want_wave.load(Ordering::SeqCst));
                 let frame = Frame {
                     bands: an.bands(&samples),
-                    wave: if want_wave { wave(&samples) } else { Vec::new() },
+                    wave: if want_wave { wave(&samples, &mut wave_agc) } else { Vec::new() },
                     level: (level * 4.0).min(1.0),
                     silent: false,
                 };
@@ -205,17 +211,21 @@ fn rms(s: &[f32]) -> f32 {
     (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt()
 }
 
-/// 最近 WAVE 个点的波形（取最后约 10 毫秒，平均降采样）
-fn wave(s: &[f32]) -> Vec<i8> {
-    let span = 512;
-    let tail = &s[s.len() - span..];
-    let step = span / WAVE;
-    (0..WAVE)
-        .map(|i| {
-            let v: f32 = tail[i * step..(i + 1) * step].iter().sum::<f32>() / step as f32;
-            (v * 2.5).clamp(-1.0, 1.0).mul_add(127.0, 0.0) as i8
-        })
-        .collect()
+/// 波形：整个窗口（约 43 毫秒）分成 WAVE 段，每段取绝对值最大的那个采样（保留正负）。
+/// 比平均降采样更像示波器：鼓点的尖峰不会被抹平
+///
+/// 自动增益：记住最近约 1 秒的最大振幅（agc），按它放大后再量化成 -127..127。
+/// 系统音量小、歌本身小声时也能占满组件；放大倍数有上限，安静时不会把底噪放大成满屏
+fn wave(s: &[f32], agc: &mut f32) -> Vec<i8> {
+    let step = s.len() / WAVE;
+    let peaks: Vec<f32> = (0..WAVE)
+        .map(|i| s[i * step..(i + 1) * step].iter().copied().fold(0f32, |m, x| if x.abs() > m.abs() { x } else { m }))
+        .collect();
+    let peak = peaks.iter().fold(0f32, |m, x| m.max(x.abs()));
+    // 约 1.5 秒衰减一半：鼓点之间不会一下子缩成一条线
+    *agc = peak.max(*agc * 0.992);
+    let gain = 0.95 / agc.max(0.003);
+    peaks.iter().map(|v| ((v * gain).clamp(-1.0, 1.0) * 127.0) as i8).collect()
 }
 
 // ---------------- 频谱 ----------------

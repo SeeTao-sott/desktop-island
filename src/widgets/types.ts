@@ -21,11 +21,12 @@ export const MARGIN = 24;
 
 export const spanPx = (n: number) => n * CELL + (n - 1) * GAP;
 
-/** 组件自己的设置项（目前只有开关） */
+/** 组件自己的设置项：开关（default 是 true/false），或者"选一个"（给 options） */
 export interface SettingDef {
   key: string;
   label: string;
-  default: boolean;
+  default: boolean | string;
+  options?: { value: string; label: string }[];
 }
 
 export type Settings = Record<string, unknown>;
@@ -56,6 +57,10 @@ export interface WidgetModule<D = unknown> {
 /** 某个组件的设置值：没设过的用默认值 */
 export function settingsWithDefaults(mod: WidgetModule, s: Settings): Settings {
   const out: Settings = {};
-  for (const d of mod.settings ?? []) out[d.key] = typeof s[d.key] === "boolean" ? s[d.key] : d.default;
+  for (const d of mod.settings ?? []) {
+    const v = s[d.key];
+    if (d.options) out[d.key] = d.options.some((o) => o.value === v) ? v : d.default;
+    else out[d.key] = typeof v === "boolean" ? v : d.default;
+  }
   return out;
 }

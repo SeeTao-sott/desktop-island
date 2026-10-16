@@ -58,6 +58,8 @@ export interface AudioData {
   silent: boolean;
   /** 设置的帧率（60 / 30） */
   fps: number;
+  /** 样式：频谱柱 / 波形 */
+  style: "bars" | "wave";
   /** 收到这一帧的时间（performance.now） */
   at: number;
 }

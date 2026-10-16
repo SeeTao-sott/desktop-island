@@ -367,3 +367,34 @@ body.editing .widget.dragging .remove-btn {
   color: #111;
   font-weight: 600;
 }
+/* 组件设置里的"选一个" */
+.set-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.set-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.set-seg button {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  font-size: 12px;
+}
+.set-seg button.on {
+  background: rgba(255, 255, 255, 0.9);
+  color: #111;
+  font-weight: 600;
+}

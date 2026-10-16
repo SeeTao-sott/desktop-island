@@ -247,16 +247,39 @@ function toggleSettings(l: Live) {
   }
   const p = document.createElement("div");
   p.className = "w-settings";
+  const change = (key: string, value: unknown) => {
+    l.item.settings = { ...l.item.settings, [key]: value };
+    l.model.setSettings?.(l.item.settings);
+  };
   for (const d of l.mod.settings ?? []) {
+    if (d.options) {
+      // "选一个"：一排小按钮
+      const row = document.createElement("div");
+      row.className = "set-choice";
+      const name = document.createElement("span");
+      name.textContent = d.label;
+      const seg = document.createElement("div");
+      seg.className = "set-seg";
+      for (const o of d.options) {
+        const b = document.createElement("button");
+        b.textContent = o.label;
+        b.className = l.item.settings[d.key] === o.value ? "on" : "";
+        b.addEventListener("click", () => {
+          change(d.key, o.value);
+          seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        });
+        seg.appendChild(b);
+      }
+      row.append(name, seg);
+      p.appendChild(row);
+      continue;
+    }
     const lab = document.createElement("label");
     lab.textContent = d.label;
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = l.item.settings[d.key] === true;
-    input.addEventListener("change", () => {
-      l.item.settings = { ...l.item.settings, [d.key]: input.checked };
-      l.model.setSettings?.(l.item.settings);
-    });
+    input.addEventListener("change", () => change(d.key, input.checked));
     lab.appendChild(input);
     p.appendChild(lab);
   }
