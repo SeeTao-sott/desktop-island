@@ -11,11 +11,12 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL,
     MONITOR_DEFAULTTOPRIMARY,
 };
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{
     SHQueryUserNotificationState, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect, IsZoomed, GWL_STYLE, WS_CAPTION,
+    GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId, GetWindowLongW, GetWindowRect, IsZoomed, GWL_STYLE, WS_CAPTION,
 };
 
 /// 每次检查只是几个系统查询，耗时微秒级
@@ -89,6 +90,12 @@ unsafe fn fullscreen_active(own: &[HWND]) -> bool {
     // 2) 前台窗口盖满主屏幕：无边框全屏游戏、浏览器全屏视频
     let fg = GetForegroundWindow();
     if fg.is_invalid() || own.contains(&fg) {
+        return false;
+    }
+    // 我们自己程序的任何窗口（比如音游、编辑模式时拿到焦点的小组件窗口）都不算全屏程序
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(fg, Some(&mut pid));
+    if pid == GetCurrentProcessId() {
         return false;
     }
     // 桌面本身也是盖满屏幕的窗口，要排除

@@ -277,6 +277,25 @@ pub fn charts_dir() -> Option<PathBuf> {
     None
 }
 
+/// 每首歌各自的判定偏移（毫秒），存在配置文件夹的 rhythm-offsets.json：{ "文件夹名": 毫秒 }
+pub fn load_offsets(path: &Path) -> serde_json::Map<String, Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+pub fn save_offset(path: &Path, id: &str, ms: i32) -> std::io::Result<()> {
+    let mut map = load_offsets(path);
+    map.insert(id.to_string(), Value::from(ms));
+    let text = serde_json::to_string_pretty(&map).map_err(std::io::Error::other)?;
+    // 先写临时文件再换名，写到一半断电也不会坏
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

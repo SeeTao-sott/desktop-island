@@ -1,0 +1,300 @@
+/* 音游：选歌菜单 + 下落式 4 键。会动的东西只改 transform / opacity */
+
+.rh-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  color: var(--w-text);
+  user-select: none;
+}
+
+/* 选歌时的底：几乎透明，只为接住"点外面" */
+.rh-shade {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.rh-menu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 380px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--w-bg-base) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--w-text) 12%, transparent);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.rh-menu-title {
+  font-size: 13px;
+  color: var(--w-sub);
+  margin: 0 4px 10px;
+}
+.rh-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rh-empty {
+  font-size: 13px;
+  color: var(--w-sub);
+  padding: 8px 4px;
+  line-height: 1.5;
+}
+.rh-song {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--w-text) 6%, transparent);
+}
+.rh-song-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.rh-song-artist {
+  font-size: 12px;
+  color: var(--w-sub);
+  margin-top: 2px;
+}
+.rh-diffs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.rh-diff,
+.rh-play {
+  font: inherit;
+  font-size: 12px;
+  color: var(--w-text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--w-text) 18%, transparent);
+  background: transparent;
+  cursor: pointer;
+}
+.rh-diff:hover,
+.rh-play:hover {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+  color: #fff;
+}
+
+/* ---------- 游戏 ---------- */
+
+.rh-stage {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
+.rh-stage > * {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.rh-road {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.45));
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  border-right: 1px solid rgba(255, 255, 255, 0.22);
+}
+.rh-sep {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.rh-lane-glow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(to bottom, transparent 40%, color-mix(in srgb, var(--w-accent) 35%, transparent));
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+.rh-lane-glow.on {
+  opacity: 1;
+}
+
+.rh-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--w-accent);
+  box-shadow: 0 0 14px var(--w-accent);
+}
+.rh-burst {
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, var(--w-accent) 35%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+.rh-key {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--w-sub);
+}
+
+.rh-note {
+  height: 18px;
+  border-radius: 9px;
+  background: var(--w-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--w-accent) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  will-change: transform;
+}
+/* 中间两条轨道换个颜色，好分辨 */
+.rh-note[data-lane="1"],
+.rh-note[data-lane="2"] {
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.6);
+}
+
+.rh-hud {
+  width: 0;
+  text-align: center;
+}
+.rh-judge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  opacity: 0;
+  transform: translateX(-50%);
+}
+.rh-judge[data-j="perfect"] {
+  color: #ffe27a;
+  text-shadow: 0 0 16px rgba(255, 210, 90, 0.7);
+}
+.rh-judge[data-j="great"] {
+  color: #8fd8ff;
+}
+.rh-judge[data-j="miss"] {
+  color: #ff6b6b;
+}
+.rh-combo {
+  position: absolute;
+  left: 0;
+  top: 40px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--w-text);
+}
+
+/* 右上角：左上角一般放着时钟组件 */
+.rh-corner {
+  left: auto !important;
+  right: 24px;
+  top: 24px !important;
+  text-align: right;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.rh-corner-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.rh-offset {
+  font-size: 13px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.rh-tip {
+  font-size: 12px;
+  color: var(--w-sub);
+  margin-top: 4px;
+}
+
+.rh-prompt,
+.rh-result {
+  width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+}
+.rh-prompt > *,
+.rh-result > * {
+  flex: none;
+}
+.rh-prompt-big {
+  font-size: 28px;
+  font-weight: 800;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+.rh-prompt-small {
+  font-size: 13px;
+  color: var(--w-sub);
+  margin: 8px 0 12px;
+}
+
+.rh-lost {
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%);
+  padding: 14px 22px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 15px;
+  cursor: pointer;
+}
+.rh-lost[hidden] {
+  display: none;
+}
+
+.rh-result-title {
+  font-size: 15px;
+  color: var(--w-sub);
+}
+.rh-score {
+  font-size: 48px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.rh-acc {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.rh-rows {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 28px;
+  padding: 12px 20px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.45);
+  margin-bottom: 8px;
+}
+.rh-row {
+  display: contents;
+  font-size: 15px;
+}
+.rh-row b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rh-row.perfect span {
+  color: #ffe27a;
+}
+.rh-row.great span {
+  color: #8fd8ff;
+}
+.rh-row.miss span {
+  color: #ff6b6b;
+}

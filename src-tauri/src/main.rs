@@ -4,7 +4,6 @@
 mod alerts;
 mod audio;
 mod autostart;
-#[allow(dead_code)] // 阶段 2 才接到界面上
 mod chart;
 mod config;
 mod desktop;
@@ -187,6 +186,59 @@ fn widgets_layout_get(w: State<'_, Arc<Widgets>>) -> Option<serde_json::Value> {
 #[tauri::command]
 fn widgets_layout_save(w: State<'_, Arc<Widgets>>, layout: serde_json::Value) -> Result<(), String> {
     w.save_layout(&layout).map_err(|e| format!("布局没保存成功：{e}"))
+}
+
+// ---------------- 音游 ----------------
+
+#[derive(serde::Serialize)]
+struct SongEntry {
+    #[serde(flatten)]
+    info: chart::SongInfo,
+    /// 这首歌保存过的判定偏移（毫秒）
+    offset_ms: i64,
+}
+
+fn offsets_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("rhythm-offsets.json"))
+}
+
+/// charts/ 里所有歌
+#[tauri::command]
+fn rhythm_songs(app: AppHandle) -> Vec<SongEntry> {
+    let Some(root) = chart::charts_dir() else { return Vec::new() };
+    let offsets = offsets_path(&app).map(|p| chart::load_offsets(&p)).unwrap_or_default();
+    chart::list_songs(&root)
+        .into_iter()
+        .map(|info| {
+            let offset_ms = offsets.get(&info.id).and_then(|v| v.as_i64()).unwrap_or(0);
+            SongEntry { info, offset_ms }
+        })
+        .collect()
+}
+
+/// 某首歌某个难度的音符（时间、轨道）。只认 charts/ 里列得出来的歌，不接受任意路径
+#[tauri::command]
+fn rhythm_chart(id: String, characteristic: String, difficulty: String) -> Result<Vec<chart::Note>, String> {
+    let root = chart::charts_dir().ok_or("找不到 charts 文件夹")?;
+    let song = chart::list_songs(&root).into_iter().find(|s| s.id == id).ok_or("找不到这首歌")?;
+    let diff = song
+        .difficulties
+        .iter()
+        .find(|d| d.characteristic == characteristic && d.name == difficulty)
+        .ok_or("找不到这个难度")?;
+    chart::load_notes(&root.join(&song.id), &song, diff)
+}
+
+#[tauri::command]
+fn rhythm_offset_set(app: AppHandle, id: String, ms: i32) -> Result<(), String> {
+    let path = offsets_path(&app).ok_or("找不到配置文件夹")?;
+    chart::save_offset(&path, &id, ms.clamp(-2000, 2000)).map_err(|e| format!("偏移没保存成功：{e}"))
+}
+
+/// 进入 / 退出音游模式；返回现在是不是在音游模式（编辑模式下进不去）
+#[tauri::command]
+fn widgets_rhythm(w: State<'_, Arc<Widgets>>, on: bool) -> bool {
+    w.set_rhythm(on)
 }
 
 /// 灵动岛被双击：按设置回到桌面 / 全部最小化
@@ -421,6 +473,10 @@ fn main() {
             shelf_cmds::shelf_icon,
             widgets_set_hits,
             widgets_cmd,
+            widgets_rhythm,
+            rhythm_songs,
+            rhythm_chart,
+            rhythm_offset_set,
             widgets_layout_get,
             widgets_layout_save,
             widgets_theme_get,

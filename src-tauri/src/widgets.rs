@@ -7,6 +7,8 @@
 //!
 //! 组件以外的地方点击穿透（按鼠标位置判断在不在组件形状里）；编辑模式下整个窗口接收鼠标，
 //! 并临时浮到程序窗口上面，方便摆放，退出编辑就沉回最底。
+//! 音游模式和编辑模式一样浮上来，另外拿键盘焦点（按键靠窗口自己的焦点收到，不用全局键盘钩子），
+//! 退出时把焦点还给原来的程序、沉回最底、恢复点击穿透。
 //!
 //! 点击穿透不用 Tauri 的 set_ignore_cursor_events 来回切：它每次都会把"分层窗口"样式加上又去掉，
 //! 再强制刷新边框，透明窗口的整块画面会被系统重建一次——所有组件一起闪。
@@ -86,6 +88,8 @@ static LAST_FG: AtomicIsize = AtomicIsize::new(0);
 static PENDING_BACK: AtomicIsize = AtomicIsize::new(0);
 /// 现在窗口是否接收鼠标（false = 点击穿透）。子类按它锁住扩展样式里的穿透位
 static CLICKABLE: AtomicBool = AtomicBool::new(false);
+/// 音游模式：窗口可以被激活、拿键盘焦点
+static FOCUS: AtomicBool = AtomicBool::new(false);
 
 pub struct Widgets {
     app: AppHandle,
@@ -94,6 +98,7 @@ pub struct Widgets {
     /// 各组件在窗口里的位置（CSS 像素），鼠标在这些地方才接收点击
     hits: Mutex<Vec<HitShape>>,
     editing: AtomicBool,
+    rhythm: AtomicBool,
     layout_path: PathBuf,
 }
 
@@ -106,8 +111,8 @@ unsafe extern "system" fn subclass_proc(
     _data: usize,
 ) -> LRESULT {
     match msg {
-        // 点组件不激活窗口：不抢焦点，前台程序不变
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        // 点组件不激活窗口：不抢焦点，前台程序不变（音游模式除外：要收键盘）
+        WM_MOUSEACTIVATE if !FOCUS.load(Ordering::SeqCst) => LRESULT(MA_NOACTIVATE as isize),
         // 网页内核（WebView2）被点时会自己抢焦点；真被激活了就马上把前台还给原来的窗口。
         // 编辑模式除外：拖动途中失去焦点会把拖动取消，退出编辑时再统一还回去
         // 但不能在按下的那一刻就还：网页会因为失去焦点把这次点击丢掉。先记下来，等松开鼠标再还（见 run）
@@ -123,6 +128,9 @@ unsafe extern "system" fn subclass_proc(
         WM_STYLECHANGING if wp.0 as i32 == GWL_EXSTYLE.0 => {
             let ss = &mut *(lp.0 as *mut STYLESTRUCT);
             let mut ex = (ss.styleNew | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_LAYERED.0) & !WS_EX_APPWINDOW.0;
+            if FOCUS.load(Ordering::SeqCst) {
+                ex &= !WS_EX_NOACTIVATE.0;
+            }
             if CLICKABLE.load(Ordering::SeqCst) {
                 ex &= !WS_EX_TRANSPARENT.0;
             } else {
@@ -159,6 +167,7 @@ impl Widgets {
             hwnd: AtomicIsize::new(0),
             hits: Mutex::new(Vec::new()),
             editing: AtomicBool::new(false),
+            rhythm: AtomicBool::new(false),
             layout_path: config_dir.join("widgets-layout.json"),
         });
         if let Err(e) = w.create() {
@@ -264,15 +273,48 @@ impl Widgets {
 
     /// 进入 / 退出编辑模式；页面收到 widgets-edit 后切换界面，退出时保存布局
     pub fn set_editing(&self, on: bool) {
+        // 音游进行中不进编辑
+        if on && self.rhythm() {
+            return;
+        }
         if self.editing.swap(on, Ordering::SeqCst) == on {
             return;
         }
         let Some(win) = self.window() else { return };
+        self.overlay(&win, on, false);
+        let _ = win.emit("widgets-edit", on);
+    }
+
+    pub fn rhythm(&self) -> bool {
+        self.rhythm.load(Ordering::SeqCst)
+    }
+
+    /// 进入 / 退出音游模式（选歌菜单和游戏都算）：浮上来、整窗可点、拿键盘焦点。编辑模式下不进
+    pub fn set_rhythm(&self, on: bool) -> bool {
+        if on && self.editing() {
+            return false;
+        }
+        if self.rhythm.swap(on, Ordering::SeqCst) == on {
+            return on;
+        }
+        let Some(win) = self.window() else { return false };
+        self.overlay(&win, on, true);
+        on
+    }
+
+    /// 浮到程序窗口上面（on）/ 沉回桌面层（off）。focus：浮上来时要不要拿键盘焦点
+    fn overlay(&self, win: &WebviewWindow, on: bool, focus: bool) {
         let hwnd = HWND(self.hwnd.load(Ordering::SeqCst) as *mut _);
         RAISED.store(on, Ordering::SeqCst);
-        // 有属主的窗口不能单独升到别的程序上面：编辑时先暂时解开属主，退出时再挂回桌面、压回最底。
-        // 前台程序会压住普通窗口，所以编辑时临时"置顶"。置顶要用 Tauri 自己的开关：
-        // 它切换点击穿透时会按自己记的状态重写样式，自己改的置顶会被冲掉
+        if on && focus {
+            // 先放开"不激活"，Tauri 自己记的状态也跟着改，免得它以后重写样式又加回来
+            FOCUS.store(true, Ordering::SeqCst);
+            PENDING_BACK.store(0, Ordering::SeqCst);
+            let _ = win.set_focusable(true);
+        }
+        // 有属主的窗口不能单独升到别的程序上面：先暂时解开属主，退出时再挂回桌面、压回最底。
+        // 前台程序会压住普通窗口，所以临时"置顶"。置顶要用 Tauri 自己的开关：
+        // 它重写样式时会按自己记的状态来，自己改的置顶会被冲掉
         let _ = win.set_always_on_top(on);
         unsafe {
             // 换属主要在窗口藏着的时候做：窗口显示着时挂到桌面下面，系统会把它固定在桌面那一层，
@@ -282,12 +324,21 @@ impl Widgets {
                 SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
                 let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                if focus {
+                    // 刚被用户双击过，系统允许我们拿前台
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = win.set_focus();
+                }
             } else {
+                let had_focus = FOCUS.swap(false, Ordering::SeqCst);
+                if had_focus {
+                    let _ = win.set_focusable(false);
+                }
                 // 退出时 Tauri 取消置顶会把窗口放到普通窗口最上面，子类会把它改成压到最底
                 let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 attach_to_desktop(hwnd);
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-                if GetForegroundWindow() == hwnd {
+                if GetForegroundWindow() == hwnd || had_focus {
                     let back = HWND(LAST_FG.load(Ordering::SeqCst) as *mut _);
                     if !back.is_invalid() {
                         let _ = SetForegroundWindow(back);
@@ -296,7 +347,6 @@ impl Widgets {
             }
         }
         set_clickable(hwnd, on);
-        let _ = win.emit("widgets-edit", on);
     }
 
     pub fn toggle_editing(&self) {
@@ -341,9 +391,9 @@ impl Widgets {
             }
             // 编辑模式必须置顶、平时必须不置顶。Tauri 有时会按它自己记的状态把置顶冲掉，这里发现不对就纠正
             let topmost = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
-            let editing = self.editing();
-            if editing != topmost {
-                let after = if editing { HWND_TOPMOST } else { HWND_NOTOPMOST };
+            let raised = self.editing() || self.rhythm();
+            if raised != topmost {
+                let after = if raised { HWND_TOPMOST } else { HWND_NOTOPMOST };
                 unsafe {
                     let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 }
@@ -352,7 +402,7 @@ impl Widgets {
             let back = PENDING_BACK.load(Ordering::SeqCst);
             if back != 0 && unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 == 0 {
                 PENDING_BACK.store(0, Ordering::SeqCst);
-                if fg == hwnd && !self.editing() {
+                if fg == hwnd && !self.editing() && !self.rhythm() {
                     unsafe {
                         let _ = SetForegroundWindow(HWND(back as *mut _));
                     }
@@ -363,9 +413,10 @@ impl Widgets {
                     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
             }
-            if self.editing() || paused {
-                // 编辑时整个窗口可点；全屏暂停时穿透（状态没变时 set_clickable 什么都不做）
-                set_clickable(hwnd, self.editing());
+            let raised = self.editing() || self.rhythm();
+            if raised || paused {
+                // 编辑、音游时整个窗口可点；全屏暂停时穿透（状态没变时 set_clickable 什么都不做）
+                set_clickable(hwnd, raised);
                 last_inside = None;
                 thread::sleep(SLOW);
                 continue;

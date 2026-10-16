@@ -12,6 +12,7 @@ import type { Frame, Kind, Pt, Skin, View } from "./skins/types";
 import { gridOf, type Cell } from "./grid";
 import { FALLBACK } from "./views";
 import { initTheme } from "./theme";
+import { openRhythm } from "./rhythm";
 import { SIZES, settingsWithDefaults, type Model, type SettingDef, type Settings, type SizeKey, type WidgetModule } from "./types";
 
 interface Item {
@@ -203,6 +204,13 @@ function mount(item: Item): Live | null {
   el.addEventListener("pointerenter", () => {
     if (editing && !l.removing) setActive(l);
   });
+  // 双击律动（音频可视化）组件：弹出选歌，玩音游。编辑模式下双击不算（那是在拖动摆放）
+  if (mod.kind === "audio") {
+    el.addEventListener("dblclick", () => {
+      if (editing || l.removing) return;
+      openRhythm({ x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target });
+    });
+  }
   live.push(l);
   if (paused) l.model.setPaused(true);
   return l;
