@@ -36,11 +36,15 @@ const SLOW: Duration = Duration::from_millis(150);
 const NEAR_PX: i32 = 300;
 /// 报"失去焦点"后等多久再确认前台是不是真的换了
 const BLUR_CHECK: Duration = Duration::from_millis(150);
+/// 用快捷键/托盘叫出来、鼠标还没进过面板：多给一点时间把鼠标移过去或直接打字
+const SUMMON_GRACE: Duration = Duration::from_millis(3000);
+/// 点过架子（有焦点）后鼠标离开：比平时稍微多等一下再收回
+const FOCUSED_LEAVE: Duration = Duration::from_millis(1200);
 
 #[derive(Clone, Copy, Serialize)]
 pub struct ShelfState {
     pub open: bool,
-    /// 快捷键打开的：不跟着鼠标离开收回
+    /// 快捷键 / 托盘打开的：鼠标还没进过面板时多等一会再收回
     pub pinned: bool,
 }
 
@@ -52,6 +56,8 @@ pub struct Shelf {
     focused: AtomicBool,
     /// 页面上有"撤销"提示时先别自动收回，免得按钮还没点就跟着藏起来
     hold: AtomicBool,
+    /// 最近一次在架子里打字（搜索、改名）的时间：打字时鼠标不在面板上也先别收回
+    activity: Mutex<Instant>,
     /// 滑出前的前台窗口，用快捷键收回时把焦点还给它
     prev_fg: AtomicIsize,
     hit: Mutex<HitRect>,
@@ -106,6 +112,7 @@ impl Shelf {
             pinned: AtomicBool::new(false),
             focused: AtomicBool::new(false),
             hold: AtomicBool::new(false),
+            activity: Mutex::new(Instant::now()),
             prev_fg: AtomicIsize::new(0),
             hit: Mutex::new(HitRect::default()),
             zone: (cfg.shelf_zone_top, cfg.shelf_zone_bottom),
@@ -183,6 +190,7 @@ impl Shelf {
             return;
         }
         self.pinned.store(pinned, Ordering::SeqCst);
+        self.touch();
         // 平时窗口不可聚焦（显示时不会抢走别的程序的焦点）；滑出后才允许点进来打字
         let _ = self.win.set_focusable(true);
         let fg = unsafe { GetForegroundWindow() }.0 as isize;
@@ -213,6 +221,11 @@ impl Shelf {
             }
         }
         let _ = self.win.set_focusable(false);
+    }
+
+    /// 在架子里打字了：重新开始"鼠标离开多久收回"的计时
+    pub fn touch(&self) {
+        *self.activity.lock().unwrap() = Instant::now();
     }
 
     pub fn toggle(&self) {
@@ -251,6 +264,8 @@ impl Shelf {
         let mut dwell: Option<(Instant, i32)> = None;
         let mut outside_since: Option<Instant> = None;
         let mut interactive = false;
+        // 这次滑出后鼠标进过面板没有
+        let mut entered = false;
         // 隐形玻璃现在有没有盖在面板上
         let mut overlay_on = false;
 
@@ -268,6 +283,7 @@ impl Shelf {
                 // ---------- 藏着：看要不要滑出来 ----------
                 interactive = false;
                 outside_since = None;
+                entered = false;
                 overlay_on = false;
                 let h = (mon.bottom - mon.top) as f64;
                 let at_edge = pt.x >= mon.right - EDGE_PX && pt.x < mon.right;
@@ -328,16 +344,27 @@ impl Shelf {
             // 拖着文件离开了面板（比如从架子拖去别的程序）：不管有没有焦点都照常收回，
             // 免得架子挡住后面的目标；拖回边缘会再滑出来
             let dragging_away = file_drag && !inside;
-            let stay = inside
-                || (!dragging_away
-                    && (self.pinned.load(Ordering::SeqCst)
-                        || self.focused.load(Ordering::SeqCst)
-                        || self.hold.load(Ordering::SeqCst)));
+            if inside {
+                entered = true;
+            }
+            // 鼠标在面板上，或有"撤销"提示 / 搬家面板开着：不收回。
+            // 其余情况鼠标在面板外待一会就收回——不管是怎么叫出来的、有没有点过它
+            let stay = inside || (!dragging_away && self.hold.load(Ordering::SeqCst));
             if stay {
                 outside_since = None;
             } else {
                 let since = *outside_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= self.leave_delay {
+                let since = since.max(*self.activity.lock().unwrap());
+                let limit = if dragging_away {
+                    self.leave_delay
+                } else if !entered && self.pinned.load(Ordering::SeqCst) {
+                    SUMMON_GRACE
+                } else if self.focused.load(Ordering::SeqCst) {
+                    FOCUSED_LEAVE.max(self.leave_delay)
+                } else {
+                    self.leave_delay
+                };
+                if since.elapsed() >= limit {
                     outside_since = None;
                     self.hide();
                     continue;

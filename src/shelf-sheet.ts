@@ -2,7 +2,7 @@
 // 先列清单，用户点按钮才真正动文件。
 import { invoke } from "@tauri-apps/api/core";
 import { api, type OpResult } from "./shelf-api";
-import { reportOp, showError } from "./shelf-toast";
+import { hold, reportOp, showError } from "./shelf-toast";
 
 interface PlanItem {
   name: string;
@@ -25,6 +25,7 @@ interface MigrateResult {
 const ORDER = ["软件", "文档", "图片", "压缩包", "其他"];
 const sheet = document.getElementById("sheet")!;
 let afterChange: () => void = () => {};
+let holding = false;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", text = "") {
   const e = document.createElement(tag);
@@ -40,11 +41,16 @@ function open(title: string, desc: string, body: HTMLElement, foot: HTMLElement[
   const footer = el("div", "sheet-foot");
   footer.append(...foot);
   sheet.append(head, body, footer);
+  // 看清单时鼠标移开也别收回
+  if (!holding) hold(1);
+  holding = true;
   sheet.hidden = false;
   requestAnimationFrame(() => sheet.classList.add("open"));
 }
 
 export function closeSheet() {
+  if (holding) hold(-1);
+  holding = false;
   sheet.classList.remove("open");
   window.setTimeout(() => {
     if (!sheet.classList.contains("open")) sheet.hidden = true;

@@ -574,7 +574,13 @@ function startRename(path: string) {
 removedLink.addEventListener("click", () => api.openRemoved().catch((e) => showError(String(e))));
 
 // 键盘：回车打开、F2 改名、Delete 移到「已移除」、Esc 收回
+let lastActivity = 0;
 window.addEventListener("keydown", (e) => {
+  // 在打字（搜索、改名）：告诉 Rust 先别因为鼠标不在面板上而收回（最多 0.3 秒报一次）
+  if (e.key !== "Escape" && e.timeStamp - lastActivity > 300) {
+    lastActivity = e.timeStamp;
+    api.activity();
+  }
   if (e.target instanceof HTMLInputElement && e.target.classList.contains("rename")) return;
   if (e.key === "Escape") {
     if (menuOpen()) return closeMenu();

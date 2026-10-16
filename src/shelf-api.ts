@@ -48,6 +48,8 @@ export const api = {
   dragOut: (paths: string[]) => invoke<void>("shelf_drag_out", { paths }),
   /** 有撤销提示时让架子先别收回 */
   hold: (on: boolean) => invoke("shelf_cmd", { action: on ? "hold" : "release" }).catch(() => {}),
+  /** 在架子里打字了：鼠标不在面板上也先别收回 */
+  activity: () => invoke("shelf_cmd", { action: "activity" }).catch(() => {}),
 };
 
 /** 路径里的上一级文件夹名，比如 ...\架子\文档\a.pdf → 文档 */

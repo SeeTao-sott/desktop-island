@@ -7,7 +7,8 @@ const ERROR_MS = 8_000;
 const box = document.getElementById("toasts")!;
 let holding = 0;
 
-function hold(delta: number) {
+/** 有撤销提示、搬家面板开着时让架子先别收回（计数，几处可以同时要求） */
+export function hold(delta: number) {
   const before = holding > 0;
   holding = Math.max(0, holding + delta);
   if (before !== holding > 0) api.hold(holding > 0);

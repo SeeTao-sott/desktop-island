@@ -98,6 +98,7 @@ fn shelf_cmd(shelf: State<'_, Arc<Shelf>>, action: String) -> ShelfState {
         "hide" => shelf.hide(),
         "hold" => shelf.set_hold(true),
         "release" => shelf.set_hold(false),
+        "activity" => shelf.touch(),
         _ => {}
     }
     shelf.state()
