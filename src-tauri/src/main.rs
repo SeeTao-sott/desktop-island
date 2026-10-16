@@ -16,6 +16,8 @@ mod shelf;
 mod shelf_cmds;
 mod shelf_drop;
 mod shelf_fs;
+mod theme;
+mod wallpaper;
 mod widgets;
 
 use std::path::PathBuf;
@@ -121,6 +123,12 @@ fn widgets_cmd(w: State<'_, Arc<Widgets>>, action: String) -> bool {
         _ => {}
     }
     w.editing()
+}
+
+/// 页面刚打开时拿当前的一套颜色（之后的变化走 widgets-theme 事件）
+#[tauri::command]
+fn widgets_theme_get(hub: State<'_, Arc<theme::ThemeHub>>) -> Option<theme::Theme> {
+    hub.get()
 }
 
 #[tauri::command]
@@ -323,7 +331,8 @@ fn main() {
             widgets_set_hits,
             widgets_cmd,
             widgets_layout_get,
-            widgets_layout_save
+            widgets_layout_save,
+            widgets_theme_get
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -384,6 +393,8 @@ fn main() {
                     eprintln!("小组件编辑快捷键没有生效，可以从托盘菜单进入");
                 }
                 app.manage(w.clone());
+                // 跟着壁纸变色（或用手动指定的颜色）
+                app.manage(theme::spawn(app.handle().clone(), &cfg));
                 Some(w)
             } else {
                 None

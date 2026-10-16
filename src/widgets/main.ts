@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Animator, Spring } from "../spring";
 import { SPRING, fpsReporter } from "../motion";
 import { MODULES, moduleOf } from "./registry";
+import { initTheme } from "./theme";
 import {
   MARGIN,
   SIZES,
@@ -388,4 +389,5 @@ async function start() {
   if (editingNow) setEditing(true);
 }
 
+initTheme();
 start();

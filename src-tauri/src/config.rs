@@ -54,6 +54,12 @@ pub struct Config {
     pub widgets_enabled: bool,
     /// 进入 / 退出编辑模式的快捷键；留空表示不用快捷键（托盘里也能进）
     pub widgets_edit_hotkey: String,
+    /// 组件颜色："auto" 跟着壁纸变；"manual" 用下面指定的颜色
+    pub widgets_color_mode: String,
+    /// 手动颜色，比如 "#5b7bd5"（只在 widgets_color_mode 为 "manual" 时用）
+    pub widgets_manual_color: String,
+    /// Wallpaper Engine 在运行时，每隔多少秒向它确认一次当前壁纸（播放列表自动换图时靠这个发现）
+    pub widgets_wallpaper_check_seconds: u32,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -89,6 +95,9 @@ impl Default for Config {
             shelf_dir: default_shelf_dir(),
             widgets_enabled: true,
             widgets_edit_hotkey: "Ctrl+Alt+W".into(),
+            widgets_color_mode: "auto".into(),
+            widgets_manual_color: "#5b7bd5".into(),
+            widgets_wallpaper_check_seconds: 30,
         }
     }
 }
@@ -107,6 +116,10 @@ impl Config {
         self.shelf_dwell_ms = self.shelf_dwell_ms.clamp(50, 3000);
         self.shelf_leave_delay_ms = self.shelf_leave_delay_ms.clamp(0, 5000);
         self.shelf_width = self.shelf_width.clamp(240, 600);
+        self.widgets_wallpaper_check_seconds = self.widgets_wallpaper_check_seconds.clamp(10, 3600);
+        if self.widgets_color_mode != "manual" {
+            self.widgets_color_mode = "auto".into();
+        }
         if self.shelf_dir.trim().is_empty() {
             self.shelf_dir = default_shelf_dir();
         }
