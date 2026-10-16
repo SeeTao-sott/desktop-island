@@ -23,9 +23,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetForegroundWindow, SetForegroundWindow, WA_INACTIVE, WM_ACTIVATE, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_BOTTOM, MA_NOACTIVATE, STYLESTRUCT, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WINDOWPOS, WM_MOUSEACTIVATE, WM_STYLECHANGING,
-    WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, STYLESTRUCT, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WINDOWPOS, WM_MOUSEACTIVATE, WM_STYLECHANGING,
+    WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 /// 一个组件的点击区域：外框（先粗判）+ 形状轮廓（圆、六边形、切角……），CSS 像素
@@ -257,11 +257,18 @@ impl Widgets {
         // 它切换点击穿透时会按自己记的状态重写样式，自己改的置顶会被冲掉
         let _ = win.set_always_on_top(on);
         unsafe {
+            // 换属主要在窗口藏着的时候做：窗口显示着时挂到桌面下面，系统会把它固定在桌面那一层，
+            // 之后再也升不上来（实测：第一次编辑正常，第二次起就置顶不了）。藏一下再显示，和刚创建时的顺序一样
+            let _ = ShowWindow(hwnd, SW_HIDE);
             if on {
                 SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             } else {
                 // 退出时 Tauri 取消置顶会把窗口放到普通窗口最上面，子类会把它改成压到最底
+                let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 attach_to_desktop(hwnd);
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 if GetForegroundWindow() == hwnd {
                     let back = HWND(LAST_FG.load(Ordering::SeqCst) as *mut _);
                     if !back.is_invalid() {
@@ -313,6 +320,15 @@ impl Widgets {
             let fg = unsafe { GetForegroundWindow() };
             if !fg.is_invalid() && fg != hwnd {
                 LAST_FG.store(fg.0 as isize, Ordering::SeqCst);
+            }
+            // 编辑模式必须置顶、平时必须不置顶。Tauri 有时会按它自己记的状态把置顶冲掉，这里发现不对就纠正
+            let topmost = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+            let editing = self.editing();
+            if editing != topmost {
+                let after = if editing { HWND_TOPMOST } else { HWND_NOTOPMOST };
+                unsafe {
+                    let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
             }
             // 点组件时被激活了：松开鼠标后把前台还回去（只看鼠标左键是否按着，不读键盘）
             let back = PENDING_BACK.load(Ordering::SeqCst);

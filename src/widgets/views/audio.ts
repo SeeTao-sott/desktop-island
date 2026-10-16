@@ -33,19 +33,22 @@ function parseRgb(s: string): Rgb | null {
   return m ? [+m[1], +m[2], +m[3]] : null;
 }
 
-const RENDERERS: Record<AudioData["style"], () => Renderer> = {
+/** 排布：一排横着（方形、HUD、六边形主题）或者绕成一圈（圆环主题） */
+export type Layout = "line" | "ring";
+
+const RENDERERS: Record<AudioData["style"], (layout: Layout) => Renderer> = {
   bars: barsRenderer,
   wave: waveRenderer,
 };
 
-export function audioView(root: HTMLElement, ctx: ViewCtx): View<AudioData> {
-  root.className = `viz size-${ctx.size}`;
+export function audioView(root: HTMLElement, ctx: ViewCtx, layout: Layout = "line"): View<AudioData> {
+  root.className = `viz viz-${layout} size-${ctx.size}`;
   const canvas = document.createElement("canvas");
   root.appendChild(canvas);
   const g = canvas.getContext("2d")!;
 
   let style: AudioData["style"] = "bars";
-  let r = RENDERERS[style]();
+  let r = RENDERERS[style](layout);
   let data: AudioData | null = null;
   let fade = 0;
   let lastT = 0;
@@ -57,7 +60,18 @@ export function audioView(root: HTMLElement, ctx: ViewCtx): View<AudioData> {
   let colorKey = "";
   let colorAge = 99;
 
+  /** 指定了颜色（封面 / 手动）就用它；没指定才看壁纸的强调色 */
+  let explicit: Rgb | null = null;
+  let explicitKey = "";
   function refreshColor(force = false) {
+    if (explicit) {
+      const k = explicit.join(",");
+      if (k !== explicitKey || force) {
+        explicitKey = k;
+        r.setColor(explicit);
+      }
+      return;
+    }
     if (!force && ++colorAge < 30) return;
     colorAge = 0;
     const a = getComputedStyle(root).getPropertyValue("--w-accent").trim();
@@ -123,9 +137,18 @@ export function audioView(root: HTMLElement, ctx: ViewCtx): View<AudioData> {
       if (d.style !== style) {
         // 换样式：换一个画法，canvas 和淡入淡出接着用
         style = d.style;
-        r = RENDERERS[style]();
+        r = RENDERERS[style](layout);
+        explicitKey = "";
         r.resize(W, H);
         refreshColor(true);
+      }
+      // 颜色来源变了（壁纸 ↔ 封面 / 手动）：马上换色
+      const was = explicit;
+      explicit = d.color;
+      if (!!was !== !!explicit || (explicit && explicit.join() !== explicitKey)) {
+        explicitKey = "";
+        refreshColor(true);
+        if (!explicit) colorKey = "";
       }
       data = d;
       if (!d.silent) r.feed(d);

@@ -157,7 +157,9 @@ body.editing .widget.active {
   inset: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* 设置多、组件小的时候可以滚动 */
+  justify-content: safe center;
+  overflow-y: auto;
   gap: 4px;
   padding: 14px;
   border-radius: 18px;
@@ -397,4 +399,24 @@ body.editing .widget.dragging .remove-btn {
   background: rgba(255, 255, 255, 0.9);
   color: #111;
   font-weight: 600;
+}.set-seg button.swatch {
+  width: 20px;
+  min-width: 0;
+  height: 20px;
+  margin: 2px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--sw);
+}
+.set-seg button.swatch.on {
+  background: var(--sw);
+  box-shadow:
+    0 0 0 2px rgba(16, 16, 22, 0.94),
+    0 0 0 3.5px rgba(255, 255, 255, 0.9);
+}
+/* 色块多的时候换行 */
+.set-choice:has(.swatch) .set-seg {
+  flex-wrap: wrap;
+  max-width: 132px;
+  background: transparent;
 }

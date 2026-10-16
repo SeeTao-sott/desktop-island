@@ -4,6 +4,7 @@
 //   系统状态：三圈同心圆环（外 CPU、中显卡温度、内电量）
 //   音乐：圆形封面，外圈是播放进度
 import "./ring.css";
+import { audioView } from "../views/audio";
 import {
   POMO_LABEL,
   STATUS_KEYS,
@@ -56,6 +57,9 @@ const ring: Skin = {
   outline: (_size, w, h) => roundOutline(w, h),
 
   views: {
+    // 音频可视化：频谱柱绕成一圈，波形变成一圈"呼吸"的环
+    audio: (root, ctx) => audioView(root, ctx, "ring"),
+
     clock(root, ctx) {
       root.className = `rg-clock size-${ctx.size}`;
       const dial = el("div", "rg-dial", root);

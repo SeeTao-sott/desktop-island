@@ -262,8 +262,13 @@ function toggleSettings(l: Live) {
       seg.className = "set-seg";
       for (const o of d.options) {
         const b = document.createElement("button");
-        b.textContent = o.label;
         b.className = l.item.settings[d.key] === o.value ? "on" : "";
+        if (o.swatch) {
+          // 色块：按钮本身就是这个颜色
+          b.classList.add("swatch");
+          b.style.setProperty("--sw", o.value);
+          b.title = o.label;
+        } else b.textContent = o.label;
         b.addEventListener("click", () => {
           change(d.key, o.value);
           seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));

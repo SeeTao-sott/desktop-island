@@ -26,7 +26,8 @@ export interface SettingDef {
   key: string;
   label: string;
   default: boolean | string;
-  options?: { value: string; label: string }[];
+  /** 可选项；swatch 为 true 时按钮显示成这个颜色的色块（value 是颜色） */
+  options?: { value: string; label: string; swatch?: boolean }[];
 }
 
 export type Settings = Record<string, unknown>;
