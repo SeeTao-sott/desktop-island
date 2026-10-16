@@ -4,13 +4,15 @@
 // 长什么样由主题（skins/ 下每个文件）决定。两边都是自动发现的独立模块：
 // 加新组件、加新主题都不用改别的文件。
 
-/** 尺寸：小 2×2、中 4×2、大 4×4（格子数，和手机桌面组件一样） */
-export type SizeKey = "small" | "medium" | "large";
+/** 尺寸：小 2×2、中 4×2、大 4×4（格子数，和手机桌面组件一样）；通栏 = 从屏幕最左铺到最右、一格高 */
+export type SizeKey = "small" | "medium" | "large" | "full";
 
 export const SIZES: Record<SizeKey, { cols: number; rows: number; label: string }> = {
   small: { cols: 2, rows: 2, label: "小" },
   medium: { cols: 4, rows: 2, label: "中" },
   large: { cols: 4, rows: 4, label: "大" },
+  // cols 为 0：铺满整行，实际宽度按屏幕算（见 grid.ts）
+  full: { cols: 0, rows: 1, label: "通栏" },
 };
 
 /** 方形网格：一格 76px，格间距 12px，离屏幕边 24px（逻辑像素） */

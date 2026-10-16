@@ -1,12 +1,12 @@
 // 频谱柱：从低音到高音一排竖柱；圆环主题下绕成一圈（左右对称，低音在上，高音在下）。
-//   - 升起快（约 40 毫秒追上）、落下慢（从满到底约 0.9 秒），看起来顺滑不抖
+//   - 升起快（约 40 毫秒追上）、落下稍慢（从满到底约 0.7 秒），看起来顺滑不抖
 //   - 柔和发光：柱子后面先画一层更宽、半透明的同色柱（不用 shadowBlur，便宜得多）
 //   - 倒影：一排时在基线下方；一圈时朝圆心方向，渐渐淡掉
 import type { AudioData } from "../skins/types";
 import type { Layout, Renderer, Rgb } from "./audio";
 
 const RISE = 28;
-const FALL = 1.1;
+const FALL = 1.4;
 /** 一圈时每边的柱子数（两边对称，共 64 根） */
 const RING_HALF = 32;
 
@@ -36,8 +36,8 @@ export function barsRenderer(layout: Layout): Renderer {
     resize(w, h) {
       W = w;
       H = h;
-      // 柱子数量：一排时按宽度，每根约 7 像素；一圈时固定每边 32 根
-      const k = ring ? RING_HALF : Math.max(12, Math.min(64, Math.floor(w / 7)));
+      // 柱子数量：一排时按宽度，每根约 7 像素（通栏时最多 128 根）；一圈时固定每边 32 根
+      const k = ring ? RING_HALF : Math.max(12, Math.min(128, Math.floor(w / 7)));
       if (k !== n) {
         n = k;
         cur = new Float32Array(n);
@@ -50,15 +50,25 @@ export function barsRenderer(layout: Layout): Renderer {
       dirty = true;
     },
     feed(d: AudioData) {
-      // 64 个频段合成 n 根柱子（每根取段内最大值）
+      // 128 个频段（低音在前）对应到 n 根柱子
       const m = d.bands.length;
       if (!m) return;
       for (let i = 0; i < n; i++) {
-        const a = Math.floor((i * m) / n);
-        const z = Math.max(a + 1, Math.floor(((i + 1) * m) / n));
-        let v = 0;
-        for (let k = a; k < z; k++) v = Math.max(v, d.bands[k]);
-        target[i] = v / 255;
+        if (n <= m) {
+          // 柱子比频段少：每根取它覆盖的几段里最大的
+          const a = Math.floor((i * m) / n);
+          const z = Math.max(a + 1, Math.floor(((i + 1) * m) / n));
+          let v = 0;
+          for (let k = a; k < z; k++) v = Math.max(v, d.bands[k]);
+          target[i] = v / 255;
+        } else {
+          // 柱子比频段多（比如通栏）：在相邻两段之间插值，不会好几根一模一样
+          const x = ((i + 0.5) * m) / n - 0.5;
+          const k0 = Math.max(0, Math.min(m - 1, Math.floor(x)));
+          const k1 = Math.min(m - 1, k0 + 1);
+          const t = Math.max(0, Math.min(1, x - k0));
+          target[i] = (d.bands[k0] * (1 - t) + d.bands[k1] * t) / 255;
+        }
       }
     },
     quiet() {
@@ -81,10 +91,11 @@ export function barsRenderer(layout: Layout): Renderer {
   };
 
   function drawLine(g: CanvasRenderingContext2D) {
-    const base = H * 0.7; // 基线：上面是柱子，下面是倒影
+    // 基线：上面是柱子，下面是倒影。矮的组件（比如通栏）倒影留少一点，柱子高一点
+    const base = H * (H < 120 ? 0.8 : 0.7);
     if (dirty) {
       dirty = false;
-      const b = g.createLinearGradient(0, H * 0.1, 0, base);
+      const b = g.createLinearGradient(0, H * 0.08, 0, base);
       b.addColorStop(0, rgba(color, 1));
       b.addColorStop(1, rgba(color, 0.55));
       body = b;
@@ -95,7 +106,7 @@ export function barsRenderer(layout: Layout): Renderer {
       glow = rgba(color, 0.22);
     }
     const padX = Math.max(10, W * 0.05);
-    const maxH = base - H * 0.1;
+    const maxH = base - H * 0.08;
     const slot = (W - padX * 2) / n;
     const bw = Math.max(2, slot * 0.62);
     const rad = Math.min(2, bw / 2);

@@ -76,7 +76,8 @@ function coverColor(url: string): Promise<Rgb | null> {
 const audio: WidgetModule<AudioData> = {
   kind: "audio",
   name: "音频可视化",
-  sizes: ["small", "medium", "large"],
+  // 通栏：从屏幕最左铺到最右，适合放在最底下
+  sizes: ["small", "medium", "large", "full"],
   defaultSize: "medium",
   settings: [
     {

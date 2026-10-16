@@ -423,3 +423,29 @@ body.editing .widget.dragging .remove-btn {
   max-width: 132px;
   background: transparent;
 }
+/* 靠近屏幕底部的组件（比如放在最底下的通栏）：尺寸按钮放到组件上方 */
+.widget.near-bottom .edit-chips {
+  top: -40px;
+  bottom: auto;
+}
+.widget.near-bottom .edit-chips::before {
+  top: auto;
+  bottom: -14px;
+}
+/* 矮的组件放不下设置：浮在组件上方或下方的一张卡片 */
+.w-settings.float-up,
+.w-settings.float-down {
+  inset: auto;
+  left: 50%;
+  width: 300px;
+  max-height: 320px;
+  justify-content: flex-start;
+  transform: translateX(-50%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.w-settings.float-up {
+  bottom: calc(100% + 48px);
+}
+.w-settings.float-down {
+  top: calc(100% + 48px);
+}

@@ -1,4 +1,4 @@
-//! 音频可视化的数据：录取"系统正在播放的声音"（WASAPI 环回，不是麦克风），分成 64 个频段发给小组件页面。
+//! 音频可视化的数据：录取"系统正在播放的声音"（WASAPI 环回，不是麦克风），分成 128 个频段发给小组件页面。
 //!
 //! - 只是读系统混音的副本做分析，不保存、不上传，也不碰任何别的程序。
 //! - 只有桌面上有音频组件、而且没在全屏时才录；没人看就把录音关掉，线程睡着。
@@ -19,10 +19,12 @@ use windows::Win32::Media::Audio::{
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED};
 
-/// FFT 窗口（2048 点 ≈ 43 毫秒，低音也分得开）
-const N: usize = 2048;
+/// 环形缓冲和低音 FFT 的长度（4096 点 ≈ 85 毫秒，低音分得细）
+const N: usize = 4096;
+/// 中高音 FFT 的长度（2048 点 ≈ 43 毫秒，反应快）
+const N_SHORT: usize = 2048;
 /// 发给页面的频段数
-pub const BANDS: usize = 64;
+pub const BANDS: usize = 128;
 /// 安静多久算"没声音"
 const SILENT_AFTER: Duration = Duration::from_millis(2500);
 /// 低于这个电平算安静（约 -70 dB）
@@ -197,54 +199,108 @@ fn rms(s: &[f32]) -> f32 {
 }
 
 // ---------------- 频谱 ----------------
+//
+// 两个窗口一起用：
+//   - 低音（500 Hz 以下）用长窗口 4096 点（≈85 毫秒）：每格 ≈11.7 Hz，低音分得开，不会一个低音带动一大片柱子
+//   - 中高音用短窗口 2048 点（≈43 毫秒）：反应快，鼓点、镲片跟得紧
+// 每个频段：覆盖两格以上就取平均能量；比一格还窄（很低的低音）就按它的中心频率在相邻两格之间插值，
+// 这样左边那些很窄的频段各有各的值，不会好几根柱子看同一格数据、一阶一阶地跳。
+
+/// 低于这个频率的频段用长窗口
+const SPLIT_HZ: f32 = 500.0;
+
+struct Band {
+    /// 用长窗口（低音）还是短窗口
+    long: bool,
+    /// 覆盖的 FFT 格（[a, z)）；不到两格时用 center 插值
+    a: usize,
+    z: usize,
+    center: f32,
+    /// 高频补偿（dB）
+    tilt: f32,
+    #[cfg(test)]
+    range: (f32, f32),
+}
 
 struct Analyzer {
-    window: Vec<f32>,
-    /// 每个频段对应的 FFT 下标范围
-    edges: Vec<(usize, usize)>,
-    /// 每个频段的加权（高频补一点，音乐的高频天生弱）
-    tilt: Vec<f32>,
+    win_long: Vec<f32>,
+    win_short: Vec<f32>,
+    bands: Vec<Band>,
+    /// 自动增益：最近一两秒里最响那段的 dB（慢慢回落），当作柱子的顶
+    peak_db: f32,
+}
+
+fn hann(n: usize) -> Vec<f32> {
+    (0..n).map(|i| 0.5 - 0.5 * (2.0 * PI * i as f32 / (n - 1) as f32).cos()).collect()
 }
 
 impl Analyzer {
     fn new(rate: f32) -> Self {
-        let window = (0..N).map(|i| 0.5 - 0.5 * (2.0 * PI * i as f32 / (N - 1) as f32).cos()).collect();
-        // 30 Hz ~ 16 kHz 按对数分成 BANDS 段
-        let (lo, hi) = (30f32, 16_000f32.min(rate / 2.0 - 1.0));
-        let bin = |f: f32| ((f / rate) * N as f32).round() as usize;
-        let mut edges = Vec::with_capacity(BANDS);
-        let mut tilt = Vec::with_capacity(BANDS);
-        for b in 0..BANDS {
-            let f0 = lo * (hi / lo).powf(b as f32 / BANDS as f32);
-            let f1 = lo * (hi / lo).powf((b + 1) as f32 / BANDS as f32);
-            let (a, mut z) = (bin(f0).max(1), bin(f1));
-            if z <= a {
-                z = a + 1;
-            }
-            edges.push((a, z.min(N / 2)));
-            // 每倍频程 +3 dB
-            // 每倍频程 +2 dB（补偿音乐高频天生弱；补太多高音会翘起来，变成两边高中间低）
-            tilt.push(((f0 * f1).sqrt() / 1000.0).log2() * 2.0);
-        }
-        Self { window, edges, tilt }
+        // 40 Hz ~ 16 kHz 按对数分成 BANDS 段
+        let (lo, hi) = (40f32, 16_000f32.min(rate / 2.0 - 1.0));
+        let bands = (0..BANDS)
+            .map(|b| {
+                let f0 = lo * (hi / lo).powf(b as f32 / BANDS as f32);
+                let f1 = lo * (hi / lo).powf((b + 1) as f32 / BANDS as f32);
+                let fc = (f0 * f1).sqrt();
+                let long = fc < SPLIT_HZ;
+                let n = if long { N } else { N_SHORT };
+                let bin = |f: f32| f / rate * n as f32;
+                // 中心频率落在 [f0, f1) 里的那些格
+                let a = (bin(f0).ceil() as usize).max(1);
+                let z = (bin(f1).ceil() as usize).clamp(a, n / 2);
+                Band {
+                    long,
+                    a,
+                    z,
+                    center: bin(fc),
+                    // 每倍频程 +2 dB（补偿音乐高频天生弱；补太多高音会翘起来，变成两边高中间低）
+                    tilt: (fc / 1000.0).log2() * 2.0,
+                    #[cfg(test)]
+                    range: (f0, f1),
+                }
+            })
+            .collect();
+        Self { win_long: hann(N), win_short: hann(N_SHORT), bands, peak_db: -20.0 }
     }
 
+    /// samples：按时间顺序的最近 N 个采样
     fn bands(&mut self, samples: &[f32]) -> Vec<u8> {
-        let mut re: Vec<f32> = samples.iter().zip(&self.window).map(|(s, w)| s * w).collect();
-        let mut im = vec![0f32; N];
-        fft(&mut re, &mut im);
-        self.edges
+        let spectrum = |s: &[f32], w: &[f32]| {
+            let mut re: Vec<f32> = s.iter().zip(w).map(|(x, w)| x * w).collect();
+            let mut im = vec![0f32; s.len()];
+            fft(&mut re, &mut im);
+            // 只要前一半；顺手换成"相对振幅"（正弦波振幅 A 的峰值是 A·n/4）
+            let norm = s.len() as f32 / 4.0;
+            (0..s.len() / 2).map(|k| (re[k] * re[k] + im[k] * im[k]).sqrt() / norm).collect::<Vec<f32>>()
+        };
+        let long = spectrum(samples, &self.win_long);
+        let short = spectrum(&samples[N - N_SHORT..], &self.win_short);
+        let dbs: Vec<f32> = self
+            .bands
             .iter()
-            .zip(&self.tilt)
-            .map(|(&(a, z), &t)| {
-                // 段内取平均能量：高音的段很宽，取最大值会被个别尖峰顶得太高
-                let p = (a..z).map(|k| re[k] * re[k] + im[k] * im[k]).sum::<f32>() / (z - a) as f32;
-                let m = p.sqrt() / (N as f32 / 4.0);
-                let db = 20.0 * m.max(1e-9).log10() + t;
-                // -62 dB ~ -8 dB 映射到 0..255
-                (((db + 62.0) / 54.0).clamp(0.0, 1.0) * 255.0) as u8
+            .map(|b| {
+                let mag = if b.long { &long } else { &short };
+                let m = if b.z >= b.a + 2 {
+                    // 段内平均能量
+                    ((b.a..b.z).map(|k| mag[k] * mag[k]).sum::<f32>() / (b.z - b.a) as f32).sqrt()
+                } else {
+                    // 比一格还窄：在相邻两格之间按中心频率插值
+                    let k0 = (b.center.floor() as usize).min(mag.len() - 2);
+                    let t = (b.center - k0 as f32).clamp(0.0, 1.0);
+                    mag[k0] * (1.0 - t) + mag[k0 + 1] * t
+                };
+                20.0 * m.max(1e-9).log10() + b.tilt
             })
-            .collect()
+            .collect();
+        // 自动增益：以最近最响的一段为顶、往下 48 dB 为底。各段之间的高低关系不变，
+        // 只是整体挪到合适的高度——系统音量小、歌本身小声，柱子也能占满组件。
+        // 顶每帧最多回落 0.15 dB（每秒约 9 dB），最低不低于 -40 dB，免得安静时把底噪放大
+        let frame_max = dbs.iter().copied().fold(f32::MIN, f32::max);
+        self.peak_db = frame_max.max(self.peak_db - 0.15);
+        let top = self.peak_db.max(-40.0);
+        const RANGE: f32 = 48.0;
+        dbs.iter().map(|db| (((db - (top - RANGE)) / RANGE).clamp(0.0, 1.0) * 255.0) as u8).collect()
     }
 }
 
@@ -291,6 +347,14 @@ fn fft(re: &mut [f32], im: &mut [f32]) {
 mod tests {
     use super::*;
 
+    fn tone(freq: f32, rate: f32) -> Vec<f32> {
+        (0..N).map(|i| (2.0 * PI * freq * i as f32 / rate).sin() * 0.5).collect()
+    }
+
+    fn bar(b: &[u8]) -> String {
+        b.iter().map(|v| if *v > 200 { '█' } else if *v > 120 { '▆' } else if *v > 40 { '▂' } else { '·' }).collect()
+    }
+
     /// 单音测试（和在线测试音一样）：100 Hz 时只有左边（低音）那几根动；5000 Hz 时只有右边（高音）那几根动。
     /// 打印出每个频段的值，方便肉眼核对
     #[test]
@@ -298,34 +362,33 @@ mod tests {
         let rate = 48_000.0;
         for (freq, low_side) in [(100.0f32, true), (5000.0, false)] {
             let mut an = Analyzer::new(rate);
-            let s: Vec<f32> = (0..N).map(|i| (2.0 * PI * freq * i as f32 / rate).sin() * 0.5).collect();
-            let b = an.bands(&s);
-            let line: String = b.iter().map(|v| if *v > 200 { '█' } else if *v > 120 { '▆' } else if *v > 40 { '▂' } else { '·' }).collect();
-            println!("{freq:>6} Hz  {line}");
+            let b = an.bands(&tone(freq, rate));
+            let lit = b.iter().filter(|v| **v > 120).count();
+            println!("{freq:>6} Hz  {}  （明显亮起 {lit} 段）", bar(&b));
             let peak = b.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
             let half = BANDS / 2;
             if low_side {
                 assert!(peak < half / 2, "100 Hz 的峰在第 {peak} 段，应该在左边");
-                // 右半边（中高音）都要很低
                 assert!(b[half..].iter().all(|v| *v < 40), "100 Hz 时右半边也有柱子动了：{:?}", &b[half..]);
             } else {
                 assert!(peak > half + half / 2, "5000 Hz 的峰在第 {peak} 段，应该在右边");
-                // 左半边（低音、中低音）都要很低
                 assert!(b[..half].iter().all(|v| *v < 40), "5000 Hz 时左半边也有柱子动了：{:?}", &b[..half]);
             }
+            // 一个单音只该点亮很窄的一片（不到十分之一的柱子）
+            assert!(lit <= BANDS / 10, "{freq} Hz 一下亮了 {lit} 段，太散");
         }
     }
 
-    /// 1 kHz 的正弦波：能量应该集中在 1 kHz 附近的频段
+    /// 几个频率的峰都要落在包含这个频率的频段（或紧挨着的一段）
     #[test]
-    fn sine_lands_in_right_band() {
+    fn peaks_land_in_right_band() {
         let rate = 48_000.0;
-        let mut an = Analyzer::new(rate);
-        let s: Vec<f32> = (0..N).map(|i| (2.0 * PI * 1000.0 * i as f32 / rate).sin() * 0.5).collect();
-        let b = an.bands(&s);
-        let peak = b.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
-        let (a, z) = an.edges[peak];
-        let (f0, f1) = (a as f32 * rate / N as f32, z as f32 * rate / N as f32);
-        assert!(f0 <= 1030.0 && f1 >= 970.0, "峰值落在 {f0}~{f1} Hz");
+        for freq in [60.0f32, 100.0, 250.0, 1000.0, 5000.0, 12_000.0] {
+            let mut an = Analyzer::new(rate);
+            let b = an.bands(&tone(freq, rate));
+            let peak = b.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
+            let want = an.bands.iter().position(|band| band.range.0 <= freq && freq < band.range.1).unwrap();
+            assert!(peak.abs_diff(want) <= 1, "{freq} Hz 的峰在第 {peak} 段，应该在第 {want} 段附近");
+        }
     }
 }

@@ -57,8 +57,8 @@ const ring: Skin = {
   outline: (_size, w, h) => roundOutline(w, h),
 
   views: {
-    // 音频可视化：频谱柱绕成一圈
-    audio: (root, ctx) => audioView(root, ctx, "ring"),
+    // 音频可视化：频谱柱绕成一圈；通栏太扁画不了圆，用横排
+    audio: (root, ctx) => audioView(root, ctx, ctx.size === "full" ? "line" : "ring"),
 
     clock(root, ctx) {
       root.className = `rg-clock size-${ctx.size}`;

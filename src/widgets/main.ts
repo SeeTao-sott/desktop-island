@@ -242,7 +242,7 @@ function buildChips(l: Live) {
     const b = document.createElement("button");
     b.className = "chip" + (size === l.item.size ? " on" : "");
     b.textContent = SIZES[size].label;
-    b.title = `${SIZES[size].cols}×${SIZES[size].rows}`;
+    b.title = size === "full" ? "从屏幕最左边铺到最右边" : `${SIZES[size].cols}×${SIZES[size].rows}`;
     b.addEventListener("click", () => resize(l, size));
     l.chips.appendChild(b);
   }
@@ -266,6 +266,8 @@ function toggleSettings(l: Live) {
   }
   const p = document.createElement("div");
   p.className = "w-settings";
+  // 矮的组件（比如通栏）放不下设置：改成浮在组件上方（靠近屏幕顶时浮在下方）
+  if (l.h.target < 150) p.classList.add(l.y.target > 340 ? "float-up" : "float-down");
   const change = (key: string, value: unknown) => {
     l.item.settings = { ...l.item.settings, [key]: value };
     if (COMMON.some((c) => c.key === key)) applyCommon(l);
@@ -353,6 +355,8 @@ function settle(l: Live) {
   l.w.target = b.w;
   l.h.target = b.h;
   l.s.target = 1;
+  // 靠近屏幕底部：尺寸按钮放到组件上方，免得跑出屏幕
+  l.el.classList.toggle("near-bottom", o.y + b.h + 56 > window.innerHeight);
   animator.kick();
 }
 
