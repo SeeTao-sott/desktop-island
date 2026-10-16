@@ -1,4 +1,4 @@
-// 音频可视化：Rust 录取系统正在播放的声音（不是麦克风），每帧推 64 个频段（波形样式时再加波形）。
+// 音频可视化：Rust 录取系统正在播放的声音（不是麦克风），每帧推 64 个频段，画成频谱柱。
 // 只有这个组件显示着、不在全屏时才录；没声音一阵后 Rust 停止发送，界面淡出、停止绘制。
 //
 // 颜色：默认用壁纸的强调色；可以改成跟着当前歌曲的封面颜色，或者手动选一个颜色。
@@ -9,7 +9,6 @@ import type { AudioData } from "../skins/types";
 
 interface Frame {
   bands: number[];
-  wave: number[];
   level: number;
   silent: boolean;
 }
@@ -27,7 +26,6 @@ const SWATCHES = [
   ["#3fd7e8", "青"],
 ] as const;
 
-const styleOf = (s: Settings): AudioData["style"] => (s.style === "wave" || s.style === "sym" ? s.style : "bars");
 const fpsOf = (s: Settings) => (s.fps30 === true ? 30 : 60);
 const hexRgb = (h: string): Rgb => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 
@@ -82,16 +80,6 @@ const audio: WidgetModule<AudioData> = {
   defaultSize: "medium",
   settings: [
     {
-      key: "style",
-      label: "样式",
-      default: "bars",
-      options: [
-        { value: "bars", label: "频谱柱" },
-        { value: "sym", label: "对称频谱" },
-        { value: "wave", label: "波形" },
-      ],
-    },
-    {
       key: "color",
       label: "颜色",
       default: "wallpaper",
@@ -112,19 +100,18 @@ const audio: WidgetModule<AudioData> = {
 
   model(settings) {
     let fps = fpsOf(settings);
-    let style = styleOf(settings);
     let s = settings;
     let cover: Rgb | null = null;
     let watching = false;
     const color = (): Rgb | null =>
       s.color === "manual" ? hexRgb(String(s.manual ?? SWATCHES[0][0])) : s.color === "cover" ? cover : null;
-    let last: AudioData = { bands: [], wave: [], level: 0, silent: true, fps, style, color: color(), at: 0 };
+    let last: AudioData = { bands: [], level: 0, silent: true, fps, color: color(), at: 0 };
     const subs: ((d: AudioData) => void)[] = [];
     const push = () => subs.forEach((cb) => cb(last));
 
     const unlisten = [
       listen<Frame>("audio-frame", (e) => {
-        last = { ...e.payload, fps, style, color: color(), at: performance.now() };
+        last = { ...e.payload, fps, color: color(), at: performance.now() };
         push();
       }),
       // 封面换了就重新取色（只在"封面"模式下用得上，取色本身很便宜）
@@ -137,11 +124,11 @@ const audio: WidgetModule<AudioData> = {
       }),
     ];
 
-    // 告诉 Rust：要不要录、帧率多少、要不要波形
+    // 告诉 Rust：要不要录、帧率多少
     function watch(on: boolean) {
       if (on === watching) return;
       watching = on;
-      invoke("audio_watch", { on, fps, wave: style === "wave" }).catch(() => {});
+      invoke("audio_watch", { on, fps }).catch(() => {});
     }
     Promise.all(unlisten).then(() => {
       watch(true);
@@ -157,12 +144,11 @@ const audio: WidgetModule<AudioData> = {
       setSettings(next) {
         s = next;
         fps = fpsOf(next);
-        style = styleOf(next);
         if (watching) {
           watch(false);
           watch(true);
         }
-        last = { ...last, fps, style, color: color() };
+        last = { ...last, fps, color: color() };
         push();
       },
       setPaused(p) {

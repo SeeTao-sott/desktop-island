@@ -129,8 +129,8 @@ fn widgets_cmd(w: State<'_, Arc<Widgets>>, action: String) -> bool {
 
 /// 音频可视化组件出现 / 消失时调用：有人看才录取系统声音
 #[tauri::command]
-fn audio_watch(a: State<'_, Arc<audio::Audio>>, on: bool, fps: u32, wave: Option<bool>) {
-    a.watch(on, fps, wave.unwrap_or(false));
+fn audio_watch(a: State<'_, Arc<audio::Audio>>, on: bool, fps: u32) {
+    a.watch(on, fps);
 }
 
 /// "系统状态"组件出现 / 消失时调用：有人看才去读 CPU

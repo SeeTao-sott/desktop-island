@@ -57,7 +57,7 @@ const ring: Skin = {
   outline: (_size, w, h) => roundOutline(w, h),
 
   views: {
-    // 音频可视化：频谱柱绕成一圈，波形变成一圈"呼吸"的环
+    // 音频可视化：频谱柱绕成一圈
     audio: (root, ctx) => audioView(root, ctx, "ring"),
 
     clock(root, ctx) {

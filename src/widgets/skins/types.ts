@@ -50,16 +50,12 @@ export interface StatusData {
 export interface AudioData {
   /** 64 个频段，0..255，低音在前 */
   bands: number[];
-  /** 最近的波形，-127..127 */
-  wave: number[];
   /** 整体响度 0..1 */
   level: number;
   /** 安静了一阵：淡出、停止绘制 */
   silent: boolean;
   /** 设置的帧率（60 / 30） */
   fps: number;
-  /** 样式：频谱柱 / 对称频谱 / 波形 */
-  style: "bars" | "sym" | "wave";
   /** 指定的颜色（封面色 / 手动色）；为空就用壁纸的强调色 */
   color: [number, number, number] | null;
   /** 收到这一帧的时间（performance.now） */

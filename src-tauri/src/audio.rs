@@ -6,7 +6,7 @@
 //! - 默认输出设备换了（比如插上耳机），录取出错后 1 秒自动重新连接。
 
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,8 +23,6 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFre
 const N: usize = 2048;
 /// 发给页面的频段数
 pub const BANDS: usize = 64;
-/// 波形点数（阶段 2 用）
-const WAVE: usize = 128;
 /// 安静多久算"没声音"
 const SILENT_AFTER: Duration = Duration::from_millis(2500);
 /// 低于这个电平算安静（约 -70 dB）
@@ -35,8 +33,6 @@ const SILENT_LEVEL: f32 = 3e-4;
 pub struct Frame {
     /// 每个频段 0..255（低音在前）
     pub bands: Vec<u8>,
-    /// 最近一段的波形 -127..127（左右声道平均）
-    pub wave: Vec<i8>,
     /// 整体响度 0..1
     pub level: f32,
     /// 已经安静了一阵：页面淡出、停止绘制
@@ -46,8 +42,6 @@ pub struct Frame {
 pub struct Audio {
     demand: AtomicUsize,
     fps: AtomicU32,
-    /// 有组件用波形样式时才算、才发波形（省掉没人用的数据）
-    want_wave: AtomicBool,
     worker: thread::Thread,
 }
 
@@ -72,17 +66,15 @@ impl Audio {
         let a = Arc::new(Self {
             demand: AtomicUsize::new(0),
             fps: AtomicU32::new(60),
-            want_wave: AtomicBool::new(false),
             worker: handle.thread().clone(),
         });
         let _ = AUDIO.set(a.clone());
         a
     }
 
-    /// 音频组件出现 / 消失（或暂停）时调用；fps 是组件设置的帧率，wave 表示要不要波形
-    pub fn watch(&self, on: bool, fps: u32, wave: bool) {
+    /// 音频组件出现 / 消失（或暂停）时调用；fps 是组件设置的帧率
+    pub fn watch(&self, on: bool, fps: u32) {
         self.fps.store(fps.clamp(15, 60), Ordering::SeqCst);
-        self.want_wave.store(wave, Ordering::SeqCst);
         if on {
             self.demand.fetch_add(1, Ordering::SeqCst);
             self.worker.unpark();
@@ -125,7 +117,6 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
         let mut pos = 0usize;
         let mut quiet_since: Option<Instant> = None;
         let mut sent_silent = false;
-        let mut wave_agc = 0.05f32;
         let mut next = Instant::now();
 
         let result = loop {
@@ -179,7 +170,7 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                     if now - since >= SILENT_AFTER {
                         if !sent_silent {
                             sent_silent = true;
-                            let _ = app.emit_to("widgets", "audio-frame", Frame { bands: vec![0; BANDS], wave: vec![0; WAVE], level: 0.0, silent: true });
+                            let _ = app.emit_to("widgets", "audio-frame", Frame { bands: vec![0; BANDS], level: 0.0, silent: true });
                         }
                         // 没声音：慢一点检查，不发数据
                         thread::sleep(Duration::from_millis(50));
@@ -189,13 +180,7 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                     quiet_since = None;
                     sent_silent = false;
                 }
-                let want_wave = AUDIO.get().is_some_and(|a| a.want_wave.load(Ordering::SeqCst));
-                let frame = Frame {
-                    bands: an.bands(&samples),
-                    wave: if want_wave { wave(&samples, &mut wave_agc) } else { Vec::new() },
-                    level: (level * 4.0).min(1.0),
-                    silent: false,
-                };
+                let frame = Frame { bands: an.bands(&samples), level: (level * 4.0).min(1.0), silent: false };
                 let _ = app.emit_to("widgets", "audio-frame", frame);
             }
             // 睡到下一帧（最多 10 毫秒，系统大约每 10 毫秒给一包数据）
@@ -209,23 +194,6 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
 
 fn rms(s: &[f32]) -> f32 {
     (s.iter().map(|x| x * x).sum::<f32>() / s.len().max(1) as f32).sqrt()
-}
-
-/// 波形：最近一小段声音的真实起伏，分成 WAVE 个点。
-///
-/// 自动增益：记住最近约 1 秒的最大振幅（agc），按它放大后再量化成 -127..127。
-/// 系统音量小、歌本身小声时也能占满组件；放大倍数有上限，安静时不会把底噪放大成满屏
-fn wave(s: &[f32], agc: &mut f32) -> Vec<i8> {
-    // 取最近约 21 毫秒（1024 个采样），每 8 个取平均（带正负）：这是声音真实的起伏，
-    // 相邻的柱子高低错落；取峰值的话声音一满每段都差不多大，看起来像一个死板的菱形
-    let tail = &s[s.len() - 1024..];
-    let step = tail.len() / WAVE;
-    let peaks: Vec<f32> = (0..WAVE).map(|i| tail[i * step..(i + 1) * step].iter().sum::<f32>() / step as f32).collect();
-    let peak = peaks.iter().fold(0f32, |m, x| m.max(x.abs()));
-    // 约 1.5 秒衰减一半：鼓点之间不会一下子缩成一条线
-    *agc = peak.max(*agc * 0.992);
-    let gain = 0.95 / agc.max(0.003);
-    peaks.iter().map(|v| ((v * gain).clamp(-1.0, 1.0) * 127.0) as i8).collect()
 }
 
 // ---------------- 频谱 ----------------

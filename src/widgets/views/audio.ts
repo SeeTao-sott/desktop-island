@@ -1,15 +1,13 @@
-// 音频可视化的通用部分：一个 canvas + 一个"画法"（频谱柱 / 波形）。
+// 音频可视化（频谱柱）的驱动部分：一个 canvas + 频谱柱的画法。
 //   - 每收到一帧数据画一次（最多 60 / 30 帧，不跟着 144Hz 屏幕空转）
 //   - 没声音后只把画面落完、淡出完，然后完全停下，不再重绘
 //   - 主题颜色缓存起来，每隔一阵才检查一次有没有变
-//   - 换样式时只换"画法"，canvas 和淡入淡出状态都留着
 import type { AudioData, View, ViewCtx } from "../skins/types";
 import { barsRenderer } from "./bars";
-import { symRenderer, waveRenderer } from "./wave";
 
 export type Rgb = [number, number, number];
 
-/** 一种画法：自己管状态和颜色，驱动部分负责什么时候画 */
+/** 画法：自己管状态和颜色，驱动部分负责什么时候画 */
 export interface Renderer {
   resize(w: number, h: number): void;
   setColor(c: Rgb): void;
@@ -36,20 +34,13 @@ function parseRgb(s: string): Rgb | null {
 /** 排布：一排横着（方形、HUD、六边形主题）或者绕成一圈（圆环主题） */
 export type Layout = "line" | "ring";
 
-const RENDERERS: Record<AudioData["style"], (layout: Layout) => Renderer> = {
-  bars: barsRenderer,
-  sym: symRenderer,
-  wave: waveRenderer,
-};
-
 export function audioView(root: HTMLElement, ctx: ViewCtx, layout: Layout = "line"): View<AudioData> {
   root.className = `viz viz-${layout} size-${ctx.size}`;
   const canvas = document.createElement("canvas");
   root.appendChild(canvas);
   const g = canvas.getContext("2d")!;
 
-  let style: AudioData["style"] = "bars";
-  let r = RENDERERS[style](layout);
+  const r = barsRenderer(layout);
   let data: AudioData | null = null;
   let fade = 0;
   let lastT = 0;
@@ -135,14 +126,6 @@ export function audioView(root: HTMLElement, ctx: ViewCtx, layout: Layout = "lin
 
   return {
     update(d) {
-      if (d.style !== style) {
-        // 换样式：换一个画法，canvas 和淡入淡出接着用
-        style = d.style;
-        r = RENDERERS[style](layout);
-        explicitKey = "";
-        r.resize(W, H);
-        refreshColor(true);
-      }
       // 颜色来源变了（壁纸 ↔ 封面 / 手动）：马上换色
       const was = explicit;
       explicit = d.color;
