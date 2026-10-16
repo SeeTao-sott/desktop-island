@@ -46,12 +46,15 @@ interface Live {
   w: Spring;
   h: Spring;
   s: Spring;
+  /** 正在缩小消失（被移除） */
+  removing?: boolean;
 }
 
 const board = document.getElementById("board")!;
 const backdrop = document.getElementById("backdrop")!;
 const slot = document.getElementById("slot")!;
 const editBar = document.getElementById("edit-bar")!;
+const library = document.getElementById("library")!;
 const fpsEl = document.getElementById("fps")!;
 
 const live: Live[] = [];
@@ -74,8 +77,8 @@ const colPx = (c: number) => MARGIN + c * STEP;
 function fits(size: SizeKey, col: number, row: number, exceptId: string | null) {
   const { cols: w, rows: h } = SIZES[size];
   if (col < 0 || row < 0 || col + w > cols() || row + h > rows()) return false;
-  return live.every(({ item: o }) => {
-    if (o.id === exceptId) return true;
+  return live.every(({ item: o, removing }) => {
+    if (o.id === exceptId || removing) return true;
     const os = SIZES[o.size];
     return col + w <= o.col || o.col + os.cols <= col || row + h <= o.row || o.row + os.rows <= row;
   });
@@ -121,7 +124,11 @@ function mount(item: Item): Live | null {
   ring.className = "edit-ring";
   const chips = document.createElement("div");
   chips.className = "edit-chips glass";
-  el.append(body, ring, chips);
+  const remove = document.createElement("button");
+  remove.className = "remove-btn";
+  remove.title = "移除";
+  remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></svg>';
+  el.append(body, ring, chips, remove);
   board.appendChild(el);
 
   const inst = mod.create(content, { size: item.size, settings: item.settings });
@@ -146,6 +153,7 @@ function mount(item: Item): Live | null {
   };
   buildChips(l);
   bindDrag(l);
+  remove.addEventListener("click", () => removeWidget(l));
   live.push(l);
   if (paused) inst.setPaused(true);
   return l;
@@ -176,8 +184,10 @@ function toggleSettings(l: Live) {
   if (l.panel) {
     l.panel.remove();
     l.panel = null;
+    l.el.classList.remove("has-settings");
     return;
   }
+  l.el.classList.add("has-settings");
   const p = document.createElement("div");
   p.className = "w-settings";
   for (const d of l.mod.settings ?? []) {
@@ -203,6 +213,7 @@ function closeAllSettings() {
   for (const l of live) {
     l.panel?.remove();
     l.panel = null;
+    l.el.classList.remove("has-settings");
   }
 }
 
@@ -237,18 +248,104 @@ function applyFrame() {
   document.body.style.setProperty("--edit", String(e));
   editBar.style.opacity = String(e);
   editBar.style.transform = `translate(-50%, ${(1 - e) * -12}px)`;
-  for (const l of live) {
+  for (const l of [...live]) {
     l.el.style.width = `${l.w.value}px`;
     l.el.style.height = `${l.h.value}px`;
-    l.el.style.transform = `translate(${l.x.value}px, ${l.y.value}px) scale(${l.s.value})`;
+    l.el.style.transform = `translate(${l.x.value}px, ${l.y.value}px) scale(${Math.max(0, l.s.value)})`;
+    if (l.removing) {
+      l.el.style.opacity = String(Math.max(0, Math.min(1, l.s.value)));
+      if (l.s.value < 0.05) finishRemove(l);
+    }
   }
 }
+
+// ---------------- 组件库：添加和移除 ----------------
+
+function removeWidget(l: Live) {
+  if (l.removing) return;
+  l.removing = true;
+  l.panel?.remove();
+  l.s.target = 0;
+  animator.kick();
+}
+
+function finishRemove(l: Live) {
+  const i = live.indexOf(l);
+  if (i < 0) return;
+  live.splice(i, 1);
+  l.inst.destroy();
+  l.el.remove();
+  animator.remove(l.x, l.y, l.w, l.h, l.s);
+  renderLibrary();
+}
+
+function addWidget(mod: WidgetModule) {
+  // 先找默认尺寸的空位（离左上角最近），放不下就试更小的尺寸
+  const order: SizeKey[] = [mod.defaultSize, ...mod.sizes.filter((s) => s !== mod.defaultSize).reverse()];
+  for (const size of order) {
+    const spot = nearestFree(size, 0, 0, null);
+    if (!spot) continue;
+    const item: Item = {
+      id: `${mod.kind}-${Date.now().toString(36)}`,
+      kind: mod.kind,
+      size,
+      col: spot.col,
+      row: spot.row,
+      settings: {},
+    };
+    const l = mount(item);
+    if (!l) return;
+    // 从小一点弹出来
+    l.s.value = 0.6;
+    l.el.style.opacity = "1";
+    settle(l);
+    applyFrame();
+    showLibrary(false);
+    return;
+  }
+  libraryMessage("屏幕上放不下了，先移除或缩小别的组件");
+}
+
+function renderLibrary(msg = "") {
+  library.replaceChildren();
+  const title = document.createElement("div");
+  title.className = "lib-title";
+  title.textContent = "添加组件";
+  library.appendChild(title);
+  for (const mod of MODULES) {
+    const row = document.createElement("button");
+    row.className = "lib-row";
+    const count = live.filter((l) => l.item.kind === mod.kind && !l.removing).length;
+    row.innerHTML = `<span class="lib-name"></span><span class="lib-count">${count ? `已有 ${count} 个` : ""}</span><span class="lib-add">＋</span>`;
+    row.querySelector(".lib-name")!.textContent = mod.name;
+    row.addEventListener("click", () => addWidget(mod));
+    library.appendChild(row);
+  }
+  if (msg) {
+    const m = document.createElement("div");
+    m.className = "lib-msg";
+    m.textContent = msg;
+    library.appendChild(m);
+  }
+}
+
+function libraryMessage(msg: string) {
+  renderLibrary(msg);
+}
+
+function showLibrary(on: boolean) {
+  if (on) renderLibrary();
+  library.hidden = !on;
+}
+
+document.querySelector(".js-library")!.addEventListener("click", () => showLibrary(!!library.hidden));
 
 // ---------------- 拖动 ----------------
 
 function bindDrag(l: Live) {
   l.el.addEventListener("pointerdown", (e) => {
-    if (!editing || e.button !== 0 || (e.target as HTMLElement).closest(".edit-chips")) return;
+    if (!editing || l.removing || e.button !== 0 || (e.target as HTMLElement).closest(".edit-chips, .remove-btn")) return;
+    showLibrary(false);
     e.preventDefault();
     closeAllSettings();
     l.el.setPointerCapture(e.pointerId);
@@ -305,13 +402,14 @@ function setEditing(on: boolean) {
   editFade.target = on ? 1 : 0;
   if (!on) {
     closeAllSettings();
+    showLibrary(false);
     save();
   }
   animator.kick();
 }
 
 function layout(): Layout {
-  return { version: 1, items: live.map((l) => ({ ...l.item })) };
+  return { version: 1, items: live.filter((l) => !l.removing).map((l) => ({ ...l.item })) };
 }
 
 async function save() {
@@ -324,7 +422,9 @@ async function save() {
 
 /** 告诉 Rust 组件都在哪：鼠标在这些地方才接收点击，其余地方点击穿透 */
 function reportHits() {
-  const rects = live.map((l) => ({ x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target }));
+  const rects = live
+    .filter((l) => !l.removing)
+    .map((l) => ({ x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target }));
   invoke("widgets_set_hits", { rects }).catch(() => {});
 }
 

@@ -56,6 +56,11 @@ export class Animator {
     return s;
   }
 
+  /** 不再需要的弹簧（比如组件被移除了）从循环里拿掉 */
+  remove(...list: Spring[]) {
+    this.springs = this.springs.filter((s) => !list.includes(s));
+  }
+
   kick() {
     if (this.running) return;
     this.running = true;

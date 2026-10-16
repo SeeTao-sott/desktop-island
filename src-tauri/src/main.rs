@@ -16,6 +16,7 @@ mod shelf;
 mod shelf_cmds;
 mod shelf_drop;
 mod shelf_fs;
+mod sysstat;
 mod theme;
 mod wallpaper;
 mod widgets;
@@ -123,6 +124,12 @@ fn widgets_cmd(w: State<'_, Arc<Widgets>>, action: String) -> bool {
         _ => {}
     }
     w.editing()
+}
+
+/// "系统状态"组件出现 / 消失时调用：有人看才去读 CPU
+#[tauri::command]
+fn sysstat_watch(s: State<'_, Arc<sysstat::SysStat>>, on: bool) -> sysstat::Stat {
+    s.watch(on)
 }
 
 /// 页面刚打开时拿当前的一套颜色（之后的变化走 widgets-theme 事件）
@@ -332,7 +339,8 @@ fn main() {
             widgets_cmd,
             widgets_layout_get,
             widgets_layout_save,
-            widgets_theme_get
+            widgets_theme_get,
+            sysstat_watch
         ])
         .setup(move |app| {
             let dir = app.path().app_config_dir()?;
@@ -420,7 +428,11 @@ fn main() {
             let handle = app.handle().clone();
             app.manage(media::MediaTx(media::spawn(handle.clone())));
             app.manage(Pomodoro::new(handle.clone(), cfg.pomodoro_minutes));
-            app.manage(alerts::spawn(handle, cfg.clone()));
+            let alert_hub = alerts::spawn(handle.clone(), cfg.clone());
+            // 桌面"系统状态"组件：没有这个组件时线程一直睡着
+            let every = std::time::Duration::from_secs(cfg.widgets_status_seconds as u64);
+            app.manage(sysstat::SysStat::spawn(handle, alert_hub.clone(), every));
+            app.manage(alert_hub);
             let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
             let widgets_hotkey = if widgets.is_some() { cfg.widgets_edit_hotkey.clone() } else { String::new() };
             app.manage(cfg);

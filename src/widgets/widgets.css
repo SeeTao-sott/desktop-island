@@ -96,6 +96,15 @@ body.editing .edit-chips {
 body.editing .widget.dragging .edit-chips {
   opacity: 0;
 }
+/* 尺寸按钮挂在组件下面，会盖到下一行的组件：只给鼠标所在的那个显示，并把它提到上面 */
+body.editing .widget:not(:hover):not(.has-settings) .edit-chips {
+  opacity: 0;
+  pointer-events: none;
+}
+body.editing .widget:hover,
+body.editing .widget.has-settings {
+  z-index: 5;
+}
 .chip {
   height: 26px;
   min-width: 30px;
@@ -191,6 +200,101 @@ body.editing .widget.dragging .edit-chips {
 }
 body.editing .edit-bar {
   pointer-events: auto;
+}
+
+/* 编辑模式里每个组件左上角的"移除" */
+.remove-btn {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(30, 30, 36, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.remove-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+body.editing .remove-btn {
+  opacity: var(--edit, 0);
+  pointer-events: auto;
+}
+.remove-btn:hover {
+  background: rgb(var(--c-gpu));
+}
+.remove-btn:active {
+  transform: scale(0.85);
+}
+body.editing .widget.dragging .remove-btn {
+  opacity: 0;
+}
+
+/* 组件库：编辑栏下面的一张卡片 */
+.library {
+  position: absolute;
+  left: 50%;
+  top: 116px;
+  width: 300px;
+  padding: 8px;
+  border-radius: 18px;
+  transform: translateX(-50%);
+  transform-origin: top center;
+}
+.library[hidden] {
+  display: none;
+}
+.lib-title {
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: var(--sub);
+}
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+.lib-row:hover {
+  background: var(--hover);
+}
+.lib-row .lib-name {
+  flex: 1;
+}
+.lib-row .lib-count {
+  font-size: 12px;
+  color: var(--sub);
+}
+.lib-row .lib-add {
+  font-size: 18px;
+  line-height: 1;
+  color: rgb(140, 170, 255);
+}
+.lib-msg {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgb(var(--c-battery));
 }
 
 .pill {

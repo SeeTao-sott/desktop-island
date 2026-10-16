@@ -43,11 +43,22 @@ pub struct Alerts {
 pub struct AlertHub {
     state: Mutex<Alerts>,
     app: AppHandle,
+    /// 最近一次读到的显卡温度（不管热不热），给桌面"系统状态"组件用；用电池或没有 N 卡时为空
+    gpu_temp: Mutex<Option<u32>>,
 }
 
 impl AlertHub {
     pub fn get(&self) -> Alerts {
         self.state.lock().unwrap().clone()
+    }
+
+    pub fn gpu_temp(&self) -> Option<u32> {
+        *self.gpu_temp.lock().unwrap()
+    }
+
+    /// 电池现状（不管低不低）
+    pub fn battery(&self) -> Option<Battery> {
+        self.state.lock().unwrap().battery.clone()
     }
 
     /// 有变化才推给页面
@@ -68,7 +79,7 @@ const GPU_HYSTERESIS: u32 = 3;
 const NVSMI_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn spawn(app: AppHandle, cfg: Config) -> Arc<AlertHub> {
-    let hub = Arc::new(AlertHub { state: Mutex::new(Alerts::default()), app });
+    let hub = Arc::new(AlertHub { state: Mutex::new(Alerts::default()), app, gpu_temp: Mutex::new(None) });
     let worker = hub.clone();
     thread::spawn(move || {
         unsafe {
@@ -181,19 +192,24 @@ fn gpu_loop(hub: &Arc<AlertHub>, cfg: &Config) {
     loop {
         if cfg.gpu_poll_on_battery || on_ac_power() {
             match read_gpu_temp() {
-                GpuRead::Temp(t) => hub.update(|a| {
-                    let was_hot = a.gpu_hot.is_some();
-                    let hot = if was_hot { t + GPU_HYSTERESIS > limit } else { t >= limit };
-                    a.gpu_hot = hot.then_some(GpuHot { temp: t });
-                }),
+                GpuRead::Temp(t) => {
+                    *hub.gpu_temp.lock().unwrap() = Some(t);
+                    hub.update(|a| {
+                        let was_hot = a.gpu_hot.is_some();
+                        let hot = if was_hot { t + GPU_HYSTERESIS > limit } else { t >= limit };
+                        a.gpu_hot = hot.then_some(GpuHot { temp: t });
+                    })
+                }
                 GpuRead::Failed => {}
                 GpuRead::NoTool => {
                     // 没装 N 卡驱动：以后都不再尝试
+                    *hub.gpu_temp.lock().unwrap() = None;
                     hub.update(|a| a.gpu_hot = None);
                     return;
                 }
             }
         } else {
+            *hub.gpu_temp.lock().unwrap() = None;
             hub.update(|a| a.gpu_hot = None);
         }
         thread::sleep(interval);

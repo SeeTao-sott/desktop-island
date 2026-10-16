@@ -1,0 +1,238 @@
+/* 音乐组件 */
+.w-music {
+  position: relative;
+  display: grid;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  gap: 10px 14px;
+}
+
+.mu-cover {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  aspect-ratio: 1;
+}
+.mu-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mu-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--w-sub);
+}
+.mu-ph svg {
+  width: 40%;
+  height: 40%;
+  fill: currentColor;
+}
+.mu-cover img:not([hidden]) + .mu-ph {
+  display: none;
+}
+
+.mu-meta {
+  min-width: 0;
+  align-self: center;
+}
+.mu-title,
+.mu-artist {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mu-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.mu-artist {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--w-sub);
+}
+
+.mu-progress {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--w-sub);
+  font-variant-numeric: tabular-nums;
+}
+.mu-bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--w-text) 18%, transparent);
+  overflow: hidden;
+}
+.mu-bar i {
+  display: block;
+  height: 100%;
+  background: var(--w-accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+.mu-el {
+  grid-column: 1;
+}
+.mu-tot {
+  grid-column: 3;
+}
+
+.mu-ctrl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.mu-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--w-text);
+  transition: transform 0.28s var(--ease-bounce);
+}
+.mu-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+.mu-btn:hover {
+  background: color-mix(in srgb, var(--w-text) 12%, transparent);
+}
+.mu-btn:active {
+  transform: scale(0.88);
+}
+.mu-btn:disabled {
+  opacity: 0.35;
+}
+.mu-main {
+  width: 44px;
+  height: 44px;
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+}
+.mu-main:hover {
+  background: var(--w-accent);
+  filter: brightness(1.08);
+}
+
+/* 没在播放：只显示提示 */
+.mu-idle {
+  display: none;
+  place-self: center;
+  color: var(--w-sub);
+  font-size: 13px;
+}
+.w-music:not(.active) > :not(.mu-idle):not(.mu-cover) {
+  visibility: hidden;
+}
+.w-music:not(.active) .mu-idle {
+  display: block;
+}
+
+/* ---------- 小：封面铺满，左下角一个播放键 ---------- */
+.w-music.size-small {
+  padding: 0;
+  grid-template: 1fr / 1fr;
+}
+.size-small .mu-cover {
+  grid-area: 1 / 1;
+  border-radius: 0;
+  aspect-ratio: auto;
+}
+.size-small .mu-meta {
+  grid-area: 1 / 1;
+  align-self: end;
+  padding: 26px 12px 12px 56px;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--w-bg) 92%, black));
+  /* 叠在封面上，单独设定颜色保证对比度 */
+}
+.size-small .mu-title {
+  font-size: 13px;
+}
+.size-small .mu-artist {
+  font-size: 11px;
+}
+.size-small .mu-ctrl {
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: start;
+  padding: 0 0 10px 10px;
+}
+.size-small .js-prev,
+.size-small .js-next,
+.size-small .mu-progress {
+  display: none;
+}
+.size-small .mu-main {
+  width: 38px;
+  height: 38px;
+}
+.size-small .mu-idle {
+  grid-area: 1 / 1;
+  align-self: end;
+  padding-bottom: 14px;
+}
+
+/* ---------- 中：左封面，右边信息 + 进度 + 按钮 ---------- */
+.w-music.size-medium {
+  grid-template: auto auto 1fr / 132px 1fr;
+}
+.size-medium .mu-cover {
+  grid-row: 1 / 4;
+  align-self: center;
+  width: 132px;
+}
+.size-medium .mu-meta {
+  grid-column: 2;
+  align-self: end;
+}
+.size-medium .mu-progress {
+  grid-column: 2;
+}
+.size-medium .mu-ctrl {
+  grid-column: 2;
+  align-self: start;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-left: -6px;
+}
+.size-medium .mu-idle {
+  grid-column: 2;
+  grid-row: 1 / 4;
+}
+
+/* ---------- 大：上面大封面，下面信息、进度、按钮 ---------- */
+.w-music.size-large {
+  grid-template: 1fr auto auto auto / 1fr;
+  padding: 20px;
+}
+.size-large .mu-cover {
+  justify-self: center;
+  height: 100%;
+  max-height: 168px;
+}
+.size-large .mu-meta {
+  text-align: center;
+}
+.size-large .mu-title {
+  font-size: 17px;
+}
+.size-large .mu-idle {
+  grid-row: 2 / 5;
+}

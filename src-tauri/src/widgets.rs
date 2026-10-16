@@ -19,10 +19,11 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetForegroundWindow, SetForegroundWindow, WA_INACTIVE, WM_ACTIVATE, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, STYLESTRUCT, SWP_NOACTIVATE,
+    ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE, HWND_BOTTOM, MA_NOACTIVATE, STYLESTRUCT, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WINDOWPOS, WM_MOUSEACTIVATE, WM_STYLECHANGING,
     WM_WINDOWPOSCHANGING, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
@@ -39,6 +40,8 @@ const NEAR_MARGIN: f64 = 80.0;
 static RAISED: AtomicBool = AtomicBool::new(false);
 /// 最近一个不是我们自己的前台窗口：万一被激活，把焦点还给它
 static LAST_FG: AtomicIsize = AtomicIsize::new(0);
+/// 被激活了、等松开鼠标后要把前台还给的窗口
+static PENDING_BACK: AtomicIsize = AtomicIsize::new(0);
 
 pub struct Widgets {
     app: AppHandle,
@@ -63,12 +66,11 @@ unsafe extern "system" fn subclass_proc(
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         // 网页内核（WebView2）被点时会自己抢焦点；真被激活了就马上把前台还给原来的窗口。
         // 编辑模式除外：拖动途中失去焦点会把拖动取消，退出编辑时再统一还回去
+        // 但不能在按下的那一刻就还：网页会因为失去焦点把这次点击丢掉。先记下来，等松开鼠标再还（见 run）
         WM_ACTIVATE if (wp.0 & 0xFFFF) as u32 != WA_INACTIVE && !RAISED.load(Ordering::SeqCst) => {
             let prev = HWND(lp.0 as *mut _);
             let back = if !prev.is_invalid() && prev != hwnd { prev } else { HWND(LAST_FG.load(Ordering::SeqCst) as *mut _) };
-            if !back.is_invalid() {
-                let _ = SetForegroundWindow(back);
-            }
+            PENDING_BACK.store(back.0 as isize, Ordering::SeqCst);
             DefSubclassProc(hwnd, msg, wp, lp)
         }
         // Tauri 切换点击穿透等状态时会整个重写扩展样式；在这里把我们要的几位锁住：
@@ -214,15 +216,15 @@ impl Widgets {
         let Some(win) = self.window() else { return };
         let hwnd = HWND(self.hwnd.load(Ordering::SeqCst) as *mut _);
         RAISED.store(on, Ordering::SeqCst);
+        // 有属主的窗口不能单独升到别的程序上面：编辑时先暂时解开属主，退出时再挂回桌面、压回最底。
+        // 前台程序会压住普通窗口，所以编辑时临时"置顶"。置顶要用 Tauri 自己的开关：
+        // 它切换点击穿透时会按自己记的状态重写样式，自己改的置顶会被冲掉
+        let _ = win.set_always_on_top(on);
         unsafe {
-            // 有属主的窗口不能单独升到别的程序上面：编辑时先暂时解开属主，退出时再挂回桌面、压回最底
-            // 前台程序会压住普通窗口，所以编辑时临时"置顶"
-            let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
             if on {
                 SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
-                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
             } else {
-                let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+                // 退出时 Tauri 取消置顶会把窗口放到普通窗口最上面，子类会把它改成压到最底
                 attach_to_desktop(hwnd);
                 if GetForegroundWindow() == hwnd {
                     let back = HWND(LAST_FG.load(Ordering::SeqCst) as *mut _);
@@ -275,6 +277,16 @@ impl Widgets {
             let fg = unsafe { GetForegroundWindow() };
             if !fg.is_invalid() && fg != hwnd {
                 LAST_FG.store(fg.0 as isize, Ordering::SeqCst);
+            }
+            // 点组件时被激活了：松开鼠标后把前台还回去（只看鼠标左键是否按着，不读键盘）
+            let back = PENDING_BACK.load(Ordering::SeqCst);
+            if back != 0 && unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } as u16 & 0x8000 == 0 {
+                PENDING_BACK.store(0, Ordering::SeqCst);
+                if fg == hwnd && !self.editing() {
+                    unsafe {
+                        let _ = SetForegroundWindow(HWND(back as *mut _));
+                    }
+                }
             }
             if unsafe { !IsWindowVisible(hwnd).as_bool() } {
                 unsafe {

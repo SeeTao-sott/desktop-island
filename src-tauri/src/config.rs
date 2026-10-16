@@ -60,6 +60,8 @@ pub struct Config {
     pub widgets_manual_color: String,
     /// Wallpaper Engine 在运行时，每隔多少秒向它确认一次当前壁纸（播放列表自动换图时靠这个发现）
     pub widgets_wallpaper_check_seconds: u32,
+    /// "系统状态"组件多少秒更新一次
+    pub widgets_status_seconds: u32,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -98,6 +100,7 @@ impl Default for Config {
             widgets_color_mode: "auto".into(),
             widgets_manual_color: "#5b7bd5".into(),
             widgets_wallpaper_check_seconds: 30,
+            widgets_status_seconds: 3,
         }
     }
 }
@@ -117,6 +120,7 @@ impl Config {
         self.shelf_leave_delay_ms = self.shelf_leave_delay_ms.clamp(0, 5000);
         self.shelf_width = self.shelf_width.clamp(240, 600);
         self.widgets_wallpaper_check_seconds = self.widgets_wallpaper_check_seconds.clamp(10, 3600);
+        self.widgets_status_seconds = self.widgets_status_seconds.clamp(1, 60);
         if self.widgets_color_mode != "manual" {
             self.widgets_color_mode = "auto".into();
         }

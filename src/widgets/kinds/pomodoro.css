@@ -1,0 +1,148 @@
+/* 番茄钟组件：圆环 + 时间 + 按钮。完成时用灵动岛同一个"完成"绿色 */
+.w-pomo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.po-ring {
+  position: relative;
+  flex: none;
+  aspect-ratio: 1;
+  height: 100%;
+}
+.po-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.po-track,
+.po-arc {
+  fill: none;
+  stroke-width: 7;
+}
+.po-track {
+  stroke: color-mix(in srgb, var(--w-text) 14%, transparent);
+}
+.po-arc {
+  stroke: var(--w-accent);
+  stroke-linecap: round;
+  /* 一秒走一格，不加过渡：每秒只画一次 */
+}
+.w-pomo[data-phase="done"] .po-arc {
+  stroke: rgb(var(--c-done));
+}
+.w-pomo[data-phase="paused"] .po-arc {
+  opacity: 0.5;
+}
+
+.po-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.po-time {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.po-label {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--w-sub);
+}
+
+.po-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.po-state {
+  font-size: 15px;
+  font-weight: 600;
+}
+.po-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.po-btn {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--w-text) 14%, transparent);
+  color: var(--w-text);
+  font: inherit;
+  font-size: 13px;
+  transition: transform 0.28s var(--ease-bounce);
+}
+.po-btn.primary {
+  background: var(--w-accent);
+  color: var(--w-on-accent);
+  font-weight: 600;
+}
+.po-btn:active {
+  transform: scale(0.92);
+}
+
+/* 小：只有圆环，按钮叠在圆环下半 */
+.w-pomo.size-small {
+  justify-content: center;
+  padding: 12px;
+}
+.size-small .po-side {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  align-items: center;
+}
+.size-small .po-state {
+  display: none;
+}
+.size-small .po-time {
+  font-size: 24px;
+  margin-top: -14px;
+}
+.size-small .po-btn {
+  height: 26px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.size-small .po-label {
+  display: none;
+}
+
+/* 大：圆环在上，下面状态和按钮 */
+.w-pomo.size-large {
+  flex-direction: column;
+  padding: 24px;
+}
+.size-large .po-ring {
+  height: auto;
+  width: 70%;
+}
+.size-large .po-time {
+  font-size: 44px;
+}
+.size-large .po-label {
+  font-size: 13px;
+}
+.size-large .po-side {
+  align-items: center;
+  flex: none;
+}
+.size-large .po-state {
+  display: none;
+}
