@@ -21,6 +21,9 @@ const HIT_PAD = 4;
 const COLLAPSE_DELAY = 120;
 // 新警告出现时，收起状态下先显示几秒文字
 const ALERT_TOAST_MS = 5000;
+// 小球保持多久、多大（长按 2 秒的判断在 Rust 的 hover.rs）
+const BALL_MS = 3000;
+const BALL = 8;
 
 type CompactKey = keyof typeof COMPACT_W;
 type MainKey = keyof typeof MAIN;
@@ -65,6 +68,8 @@ const stripLayers = (["sPomo", "sWarn"] as StripKey[]).map((k) => ({
 }));
 
 let expanded = false;
+// 小球状态：胶囊缩成一粒小点，不能点（鼠标穿过去），过几秒自己变回来
+let ball = false;
 let alertToast = false;
 let collapseTimer: number | undefined;
 let toastTimer: number | undefined;
@@ -82,6 +87,7 @@ const mainKey = (): MainKey => (musicActive() ? "eMusic" : "eTime");
 const strips = (): StripKey[] => (alertLevel() === "none" ? ["sPomo"] : ["sPomo", "sWarn"]);
 
 function targetShape(): Shape {
+  if (ball) return { w: BALL, h: BALL, r: BALL / 2 };
   if (!expanded) return { w: COMPACT_W[compactKey()], h: COMPACT_H, r: COMPACT_H / 2 };
   const m = MAIN[mainKey()];
   return { w: m.w, h: m.h + strips().length * STRIP_H, r: EXPANDED_R };
@@ -93,10 +99,11 @@ function retarget() {
   w.target = s.w;
   h.target = s.h;
   r.target = s.r;
-  pExpand.target = expanded ? 1 : 0;
+  pExpand.target = expanded && !ball ? 1 : 0;
   pWarn.target = alertLevel() === "none" ? 0 : 1;
 
-  const ck = compactKey();
+  // 小球时所有内容都淡出，只剩一个点
+  const ck = ball ? null : compactKey();
   compactLayers.forEach((l) => (l.p.target = l.key === ck ? 1 : 0));
   const mk = mainKey();
   mainLayers.forEach((l) => (l.p.target = l.key === mk ? 1 : 0));
@@ -112,6 +119,7 @@ function retarget() {
     }
   });
 
+  island.classList.toggle("ball", ball);
   sendHitRect(s);
   animator.kick();
 }
@@ -183,6 +191,7 @@ function onAlertRaised(level: Level) {
 
 // ---------- 鼠标悬停 ----------
 function setExpanded(next: boolean) {
+  if (ball) next = false;
   if (next === expanded) return;
   expanded = next;
   musicExpand(next);
@@ -192,7 +201,8 @@ function setExpanded(next: boolean) {
 
 // 告诉 Rust 哪一块区域算"在胶囊上"，用目标形态而不是动画中途的形态
 function sendHitRect(s: Shape) {
-  const rect = {
+  // 小球不能点：给一个空区域，Rust 那边就让整个窗口点击穿透
+  const rect = ball ? { x: -100, y: -100, w: 0, h: 0 } : {
     x: (window.innerWidth - s.w) / 2 - HIT_PAD,
     y: TOP - HIT_PAD,
     w: s.w + HIT_PAD * 2,
@@ -214,6 +224,47 @@ island.addEventListener("dblclick", (e) => {
   window.getSelection()?.removeAllRanges();
   invoke("island_double_click").catch(() => {});
 });
+
+// ---------- 长按 2 秒：缩成小球让开下面的东西，3 秒后恢复 ----------
+// 长按由 Rust 判断（网页内核偶尔吃掉第一下按下，网页里判断不可靠），这里只管变形
+let ballTimer: number | undefined;
+// 长按触发后松手时的那一下 click 不算（不然会按到松手位置的按钮）
+let swallowClick = false;
+
+listen<string>("island-hold", (e) => {
+  if (ball) return;
+  if (e.payload === "start") {
+    // 按住一会儿后胶囊轻轻缩一点，告诉你"在计时了"
+    w.target = targetShape().w * 0.9;
+    animator.kick();
+  } else if (e.payload === "cancel") {
+    retarget();
+  } else if (e.payload === "fire") {
+    swallowClick = true;
+    ball = true;
+    expanded = false;
+    musicExpand(false);
+    pomoExpand(false);
+    retarget();
+    window.clearTimeout(ballTimer);
+    ballTimer = window.setTimeout(() => {
+      ball = false;
+      // 松手时窗口已经穿透、那一下 click 可能根本没来：别留到以后吞掉正常的点击
+      swallowClick = false;
+      retarget();
+    }, BALL_MS);
+  }
+});
+island.addEventListener(
+  "click",
+  (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  },
+  true,
+);
 
 // ---------- 时钟：只在整分钟时更新一次 ----------
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
