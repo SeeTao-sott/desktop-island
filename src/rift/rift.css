@@ -175,6 +175,76 @@ body {
   display: none;
 }
 
+/* 游戏中左上：准确率、连击 */
+.live {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.live[hidden],
+.result[hidden] {
+  display: none;
+}
+/* 结算 */
+.result {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 380px;
+  padding: 20px 26px;
+  border-radius: 18px;
+  background: rgba(10, 10, 16, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  text-align: center;
+}
+.r-title {
+  font-size: 14px;
+  opacity: 0.7;
+}
+.r-score {
+  font-size: 46px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.r-record {
+  color: #35ff7a;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.r-best {
+  font-size: 13px;
+  opacity: 0.65;
+  margin-bottom: 10px;
+}
+.r-rows {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 5px 26px;
+  text-align: left;
+  font-size: 14px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.r-rows b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.r-tip {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-top: 10px;
+}
+
 /* 提示（按空格开始 / 结束）：在裂缝上方 */
 .prompt {
   position: fixed;

@@ -18,9 +18,17 @@ export interface AimSettings {
   rows: number;
   /** 镜头离靶墙多远（1 = 默认，越大靶墙在屏幕上越小、越集中） */
   zoom: number;
+  /** 靶子大小倍数 */
+  size: number;
+  /** 靶子提前多少秒出现 */
+  lead: number;
+  /** 裂缝最大时占屏幕高度的比例 */
+  maxFrac: number;
+  /** 水平视野（度） */
+  fov: number;
 }
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1 };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103 };
 const KEY = "rift-aim";
 
 export function loadSettings(): AimSettings {
@@ -30,6 +38,10 @@ export function loadSettings(): AimSettings {
     s.cols = Math.min(9, Math.max(4, Math.round(Number(s.cols) || DEFAULTS.cols)));
     s.rows = Math.min(4, Math.max(1, Math.round(Number(s.rows) || DEFAULTS.rows)));
     s.zoom = Math.min(2.5, Math.max(1, Number(s.zoom) || DEFAULTS.zoom));
+    s.size = Math.min(1.6, Math.max(0.5, Number(s.size) || DEFAULTS.size));
+    s.lead = Math.min(2, Math.max(0.5, Number(s.lead) || DEFAULTS.lead));
+    s.maxFrac = Math.min(0.8, Math.max(0.3, Number(s.maxFrac) || DEFAULTS.maxFrac));
+    s.fov = Math.min(120, Math.max(70, Number(s.fov) || DEFAULTS.fov));
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -79,7 +91,12 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     }
     panel.appendChild(r);
   };
-  const num = (key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom", min: number, max: number, step: number) => {
+  const num = (
+    key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov",
+    min: number,
+    max: number,
+    step: number,
+  ) => {
     const i = document.createElement("input");
     i.type = "number";
     i.min = String(min);
@@ -115,6 +132,10 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
   row("靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
   row("最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");
   row("镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
+  row("靶子大小", num("size", 0.5, 1.6, 0.1), "0.5~1.6 倍");
+  row("出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
+  row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
+  row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));

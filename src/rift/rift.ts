@@ -15,7 +15,7 @@ import { capSteps, densitySchedule, nAt, planTargets, type NStep, type Shot, typ
 
 // ---------------- 可调的参数 ----------------
 /** N = 4 时裂缝占屏幕高度的比例（以后放进设置） */
-const MAX_FRAC = 0.6;
+const MAX_FRAC = loadSettings().maxFrac;
 /** 裂缝上下各留多少像素（格子到裂缝边） */
 const MARGIN = 26;
 /** 裂缝边缘参差的幅度（像素） */
@@ -23,7 +23,7 @@ const JAG = 16;
 /** 发光带的宽度（像素） */
 const GLOW = 30;
 /** 水平视野（度），和 Valorant 默认一样 */
-const HFOV = 103;
+const HFOV = loadSettings().fov;
 /** 靶墙离眼睛多远（米） */
 const WALL_Z = 14;
 /** 房间按最多 9 列的宽度建；实际列数在设置里（默认 6） */
@@ -237,6 +237,9 @@ interface LiveTarget {
   ringMat: THREE.MeshBasicMaterial;
   /** 打中或错过之后淡出的起点（ms），0 = 还活着 */
   gone: number;
+  /** 出现的时刻、准星第一次落到它上面的时刻（歌曲秒） */
+  spawnAt: number;
+  seenAt: number | null;
 }
 const targetLayer = new THREE.Group();
 scene.add(targetLayer);
@@ -257,10 +260,11 @@ function takeTarget(tg: Target): LiveTarget {
     core.renderOrder = 11;
     ring.renderOrder = 12;
     group.add(disc, core, ring);
-    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0 };
+    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null };
   }
   lt.tg = tg;
   lt.gone = 0;
+  lt.seenAt = null;
   lt.discMat.color.copy(accent);
   lt.ringMat.color.copy(accent);
   lt.group.scale.setScalar(1);
@@ -422,6 +426,19 @@ buildSettings(document.getElementById("settings")!, settings, (st) => {
     ZOOM = st.zoom;
     applyZoom();
   }
+  LEAD = st.lead;
+  if (st.maxFrac !== MAX_FRAC || st.fov !== HFOV) {
+    // 裂缝最大高度、视野决定了整个画面的尺寸：停一下手再重新载入（这首歌记在 sessionStorage 里）
+    window.clearTimeout(reloadTimer);
+    reloadTimer = window.setTimeout(() => {
+      try {
+        if (song.pick) sessionStorage.setItem("rift-pick", JSON.stringify(song.pick));
+      } catch {
+        // 记不住就回到测试模式
+      }
+      location.reload();
+    }, 900);
+  }
   // 最多行数改了：按新上限重排时间表（还没开始时裂缝马上跟着变）
   if (song.on && !song.running) {
     song.steps = capSteps(song.rawSteps, st.rows);
@@ -431,6 +448,7 @@ buildSettings(document.getElementById("settings")!, settings, (st) => {
   showInfo();
 });
 
+let reloadTimer = 0;
 /** 准星指向（弧度）：yaw 左右、pitch 上下（往上为正） */
 let aimYaw = 0;
 let aimPitch = 0;
@@ -560,8 +578,8 @@ interface Pick {
   characteristic: string;
   difficulty: string;
 }
-/** 靶子提前多久出现（秒），以后放进设置 */
-const LEAD = 1.0;
+/** 靶子提前多久出现（秒），设置里可调 */
+let LEAD = settings.lead;
 const PERFECT = 0.05;
 const GREAT = 0.1;
 const song = {
@@ -583,6 +601,11 @@ const song = {
   count: { perfect: 0, great: 0, miss: 0 },
   combo: 0,
   maxCombo: 0,
+  /** 打中时的时间偏差（秒，负 = 偏早）、甩枪时间（秒） */
+  devs: [] as number[],
+  flicks: [] as number[],
+  /** 上一枪的时刻（歌曲秒），算"从上一枪到准星落上下一个靶子"用 */
+  lastShot: -Infinity,
 };
 let actx: AudioContext | null = null;
 let source: AudioBufferSourceNode | null = null;
@@ -683,8 +706,21 @@ async function startSong() {
     positionMs: Math.round((actx.currentTime - song.startAt) * 1000),
     durationMs: Math.round(song.audio.duration * 1000),
   }).catch(() => {});
-  Object.assign(song, { running: true, starting: false, finished: false, next: 0, combo: 0, maxCombo: 0, count: { perfect: 0, great: 0, miss: 0 } });
+  Object.assign(song, {
+    running: true,
+    starting: false,
+    finished: false,
+    next: 0,
+    combo: 0,
+    maxCombo: 0,
+    count: { perfect: 0, great: 0, miss: 0 },
+    devs: [],
+    flicks: [],
+    lastShot: -Infinity,
+  });
   showPrompt("");
+  resultEl.hidden = true;
+  showLive();
 }
 
 function stopSong() {
@@ -721,6 +757,96 @@ function judge(j: Judge) {
     { duration: 600, easing: "ease-out", fill: "forwards" },
   );
   comboEl.textContent = song.combo >= 2 ? `${song.combo} combo` : "";
+  showLive();
+}
+
+// ---------------- 实时数据、结算、最高分 ----------------
+const liveEl = document.createElement("div");
+liveEl.className = "live";
+liveEl.hidden = true;
+document.body.appendChild(liveEl);
+const resultEl = document.createElement("div");
+resultEl.className = "result";
+resultEl.hidden = true;
+document.body.appendChild(resultEl);
+
+/** 准确率：Perfect 算 100%、Great 算 60%、Miss 算 0，按已经判定过的靶子算 */
+function accuracy() {
+  const c = song.count;
+  const done = c.perfect + c.great + c.miss;
+  return done ? (c.perfect + c.great * 0.6) / done : 1;
+}
+function showLive() {
+  const c = song.count;
+  liveEl.hidden = !song.running;
+  liveEl.textContent = `准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
+}
+
+const BEST_KEY = "rift-best";
+function bestScores(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(BEST_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function showResult() {
+  const c = song.count;
+  const total = song.targets.length || 1;
+  const score = Math.round(((c.perfect + c.great * 0.6) / total) * 1_000_000);
+  const hitRate = (c.perfect + c.great) / total;
+  const mean = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN);
+  const dev = mean(song.devs) * 1000;
+  const flick = mean(song.flicks) * 1000;
+  // 最高分：按"歌 + 难度"记
+  const key = `${song.pick?.id}|${song.pick?.difficulty}`;
+  const best = bestScores();
+  const prev = best[key] ?? 0;
+  const record = score > prev;
+  if (record) {
+    best[key] = score;
+    try {
+      localStorage.setItem(BEST_KEY, JSON.stringify(best));
+    } catch {
+      // 存不了就算了
+    }
+  }
+  const devText = Number.isNaN(dev) ? "—" : Math.abs(dev) < 3 ? "很准（±3ms 内）" : `平均偏${dev < 0 ? "早" : "晚"} ${Math.abs(dev).toFixed(0)}ms`;
+  const flickText = Number.isNaN(flick) ? "—" : `${flick.toFixed(0)}ms`;
+  resultEl.replaceChildren();
+  const add = (cls: string, text: string) => {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.textContent = text;
+    resultEl.appendChild(d);
+    return d;
+  };
+  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}`);
+  add("r-score", score.toLocaleString("en-US"));
+  if (record) add("r-record", prev ? `新纪录！（之前 ${prev.toLocaleString("en-US")}）` : "新纪录！");
+  else add("r-best", `最高分 ${prev.toLocaleString("en-US")}`);
+  const rows = document.createElement("div");
+  rows.className = "r-rows";
+  for (const [k, v] of [
+    ["命中率", `${(hitRate * 100).toFixed(1)}%`],
+    ["准确率", `${(accuracy() * 100).toFixed(1)}%`],
+    ["Perfect / Great / Miss", `${c.perfect} / ${c.great} / ${c.miss}`],
+    ["最大连击", String(song.maxCombo)],
+    ["时间偏差", devText],
+    ["平均甩枪时间", flickText],
+  ]) {
+    const a = document.createElement("span");
+    a.textContent = k;
+    const b = document.createElement("b");
+    b.textContent = v;
+    rows.append(a, b);
+  }
+  resultEl.appendChild(rows);
+  add("r-tip", "甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · 空格再来一次 · Esc 退出");
+  resultEl.hidden = false;
+  liveEl.hidden = true;
+  log(`结算：${score} 分，命中 ${(hitRate * 100).toFixed(1)}%，偏差 ${devText}，甩枪 ${flickText}${record ? "，新纪录" : ""}`);
 }
 
 /** 每帧：出靶子、收圈、过期算 Miss、按高潮调 N */
@@ -728,8 +854,21 @@ function updateSong(n: number, nowMs: number) {
   if (!song.running) return;
   const now = songTime();
   while (song.next < song.targets.length && song.targets[song.next].t - LEAD <= now) {
-    song.live.push(takeTarget(song.targets[song.next]));
+    const lt = takeTarget(song.targets[song.next]);
+    lt.spawnAt = now;
+    song.live.push(lt);
     song.next++;
+  }
+  // 准星落到哪个靶子上（算甩枪时间）：沿准星方向的射线，不含后坐
+  if (song.live.length) {
+    aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
+    aimDir.set(0, 0, -1).applyEuler(aimEuler);
+    ray.set(camera.position, aimDir);
+    const over = ray.intersectObjects(song.live.filter((l) => !l.gone && l.seenAt === null).map((l) => l.disc), false)[0];
+    if (over) {
+      const lt = song.live.find((l) => l.disc === over.object);
+      if (lt) lt.seenAt = now;
+    }
   }
   let needRows = 1;
   for (let i = song.live.length - 1; i >= 0; i--) {
@@ -744,7 +883,7 @@ function updateSong(n: number, nowMs: number) {
         song.live.splice(i, 1);
         continue;
       }
-      lt.group.scale.setScalar(1 + k * 0.6);
+      lt.group.scale.setScalar(settings.size * (1 + k * 0.6));
       lt.discMat.opacity = lt.coreMat.opacity = 1 - k;
       lt.ringMat.opacity = 0;
       continue;
@@ -758,6 +897,7 @@ function updateSong(n: number, nowMs: number) {
       judge("miss");
       continue;
     }
+    lt.group.scale.setScalar(settings.size);
     const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
     // 能打的那一段变绿（外圈也一起）
     const ready = Math.abs(left) <= GREAT;
@@ -774,8 +914,7 @@ function updateSong(n: number, nowMs: number) {
   const lastT = song.targets.length ? song.targets[song.targets.length - 1].t : 0;
   if (!song.finished && song.next >= song.targets.length && song.live.length === 0 && now > lastT + 1.5) {
     song.finished = true;
-    const c = song.count;
-    showPrompt(`结束　Perfect ${c.perfect} · Great ${c.great} · Miss ${c.miss} · 最大连击 ${song.maxCombo}　空格再来 · Esc 退出`);
+    showResult();
   }
 }
 
@@ -786,8 +925,18 @@ function shootTargets(): boolean {
   const hit = ray.intersectObjects(discs, false)[0];
   if (!hit) return false;
   const lt = song.live.find((l) => l.disc === hit.object)!;
-  const d = Math.abs(songTime() - lt.tg.t);
+  const now = songTime();
+  const signed = now - lt.tg.t;
+  const d = Math.abs(signed);
   const j: Judge = d <= PERFECT ? "perfect" : d <= GREAT ? "great" : "miss";
+  if (j !== "miss") {
+    song.devs.push(signed);
+    // 甩枪：从上一枪（或靶子出现，取较晚的）到准星第一次落上这个靶子
+    const from = Math.max(lt.spawnAt, song.lastShot);
+    const seen = lt.seenAt ?? now;
+    if (seen > from) song.flicks.push(seen - from);
+  }
+  song.lastShot = now;
   lt.gone = performance.now();
   if (j !== "miss") {
     const p = hit.point.clone().setZ(-WALL_Z + 0.12);
@@ -860,6 +1009,8 @@ function close() {
   stopSong();
   showPrompt("");
   comboEl.textContent = "";
+  liveEl.hidden = true;
+  resultEl.hidden = true;
   openSpring.cfg = { stiffness: 160, damping: 26, precision: 0.001 };
   openSpring.target = 0;
 }
@@ -876,6 +1027,7 @@ window.addEventListener("keydown", (e) => {
         stopSong();
         for (const lt of song.live) dropTarget(lt);
         song.live = [];
+        resultEl.hidden = true;
       }
       startSong();
     }
@@ -902,7 +1054,13 @@ async function start() {
   layoutRows(1);
   openSpring.target = 1;
   // 从选歌菜单进来的：载入那首歌；托盘里打开的：测试模式（数字键切 N）
-  const pick = await invoke<Pick | null>("rift_pending").catch(() => null);
+  let pick = await invoke<Pick | null>("rift_pending").catch(() => null);
+  try {
+    if (!pick) pick = JSON.parse(sessionStorage.getItem("rift-pick") ?? "null");
+    sessionStorage.removeItem("rift-pick");
+  } catch {
+    // 没有就是测试模式
+  }
   if (pick) loadSong(pick);
   startEl.hidden = false;
   infoEl.hidden = false;

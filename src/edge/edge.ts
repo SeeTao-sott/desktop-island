@@ -86,11 +86,23 @@ listen<Frame>("audio-frame", (e) => {
   draw();
 });
 
-function setEnabled(on: boolean) {
+/** 托盘里开着没有；玩裂缝射击时临时停掉（保证游戏帧数），玩完恢复 */
+let userEnabled = false;
+let riftOn = false;
+function apply() {
+  const on = userEnabled && !riftOn;
   enabled = on;
   watch(on);
   if (!on) fadeOut();
 }
+function setEnabled(on: boolean) {
+  userEnabled = on;
+  apply();
+}
+listen<boolean>("rift-active", (e) => {
+  riftOn = e.payload;
+  apply();
+});
 
 listen<boolean>("edge-enabled", (e) => setEnabled(e.payload));
 invoke<boolean>("edge_enabled")

@@ -711,12 +711,22 @@ document.querySelector(".js-done")!.addEventListener("click", () => {
 });
 
 listen<boolean>("widgets-edit", (e) => setEditing(e.payload));
+// 全屏程序时、玩裂缝射击时，组件都暂停更新（裂缝射击要保证帧数）
+let riftActive = false;
+function applyPause() {
+  const p = paused || riftActive;
+  for (const l of live) {
+    l.model.setPaused(p);
+    l.frame?.setPaused(p);
+  }
+}
 listen<boolean>("widgets-paused", (e) => {
   paused = e.payload;
-  for (const l of live) {
-    l.model.setPaused(paused);
-    l.frame?.setPaused(paused);
-  }
+  applyPause();
+});
+listen<boolean>("rift-active", (e) => {
+  riftActive = e.payload;
+  applyPause();
 });
 // 裂缝射击打中靶子：律动（音频可视化）组件跟着闪一下（只动 opacity）
 listen("rift-hit", () => {

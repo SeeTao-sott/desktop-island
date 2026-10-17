@@ -75,6 +75,8 @@ pub fn open(app: &AppHandle) {
         }
     }
     let _ = win.show();
+    // 告诉小组件、边缘律动：游戏开始了，先停掉重的动画
+    let _ = app.emit("rift-active", true);
     let _ = win.set_focus();
 }
 
@@ -88,6 +90,7 @@ pub fn rift_log(msg: String) {
 pub fn rift_close(app: AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.close();
+        let _ = app.emit("rift-active", false);
         eprintln!("[裂缝射击] 窗口已关闭");
     }
 }
