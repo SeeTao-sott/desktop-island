@@ -115,6 +115,17 @@ export function densitySchedule(shots: Shot[], bpm: number): NStep[] {
   return steps;
 }
 
+/** 把 1~4 档按比例压到最多 maxRows 行（比如最多 2 行：1、1、2、2） */
+export function capSteps(steps: NStep[], maxRows: number): NStep[] {
+  const out: NStep[] = [];
+  for (const s of steps) {
+    const n = Math.max(1, Math.min(maxRows, Math.round((s.n * maxRows) / 4)));
+    if (out.length && out[out.length - 1].n === n) continue;
+    out.push({ t: s.t, n });
+  }
+  return out.length ? out : [{ t: -Infinity, n: 1 }];
+}
+
 /** 某一时刻的 N */
 export function nAt(steps: NStep[], t: number): number {
   let n = steps[0]?.n ?? 1;

@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Spring } from "../spring";
 import { buildSettings, drawCrosshair, loadSettings, saveSettings } from "./hud";
-import { densitySchedule, nAt, planTargets, type NStep, type Shot, type Target } from "./plan";
+import { capSteps, densitySchedule, nAt, planTargets, type NStep, type Shot, type Target } from "./plan";
 
 // ---------------- 可调的参数 ----------------
 /** N = 4 时裂缝占屏幕高度的比例（以后放进设置） */
@@ -30,6 +30,8 @@ const WALL_Z = 14;
 const MAX_COLS = 9;
 const settings = loadSettings();
 let COLS = settings.cols;
+/** 镜头距离倍数：镜头往后拉，靶墙在屏幕上变小（裂缝、视角范围都跟着缩） */
+let ZOOM = settings.zoom;
 
 const W = window.innerWidth;
 const H = window.innerHeight;
@@ -70,7 +72,7 @@ function applyTheme(t: Theme | null) {
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
-  scene.fog = new THREE.Fog(tint(0.3, 0.03), WALL_Z * 0.9, WALL_Z * 2.6);
+  scene.fog = new THREE.Fog(tint(0.3, 0.03), WALL_Z * ZOOM * 0.9, WALL_Z * (ZOOM + 1.6));
 }
 
 // ---------------- 渲染器、相机 ----------------
@@ -87,7 +89,7 @@ const vfov = (2 * Math.atan(Math.tan((HFOV * Math.PI) / 360) / aspect) * 180) / 
 const camera = new THREE.PerspectiveCamera(vfov, aspect, 0.1, 200);
 // 只画全屏画面里横带那一段：透视和全屏时完全一样
 camera.setViewOffset(W, H, 0, CANVAS_TOP, W, CANVAS_H);
-camera.position.set(0, 0, 0);
+camera.position.set(0, 0, WALL_Z * (ZOOM - 1));
 /** 屏幕上 1 像素 = 靶墙上多少米 */
 const focalPx = H / 2 / Math.tan((vfov * Math.PI) / 360);
 const CELL = (CELL_PX * WALL_Z) / focalPx;
@@ -111,18 +113,19 @@ scene.add(key);
 const ROOM_W = CELL * MAX_COLS + CELL * 3;
 const ROOM_H = CELL * 4 + CELL * 2.2;
 const floorY = -ROOM_H / 2;
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, WALL_Z * 2), mats.floor);
+// 地面、侧墙往后多铺一段：镜头往后拉时也还在房间里
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, WALL_Z * 5), mats.floor);
 floor.rotation.x = -Math.PI / 2;
-floor.position.set(0, floorY, -WALL_Z);
+floor.position.set(0, floorY, WALL_Z * 1.5);
 scene.add(floor);
 const ceil = floor.clone();
 ceil.rotation.x = Math.PI / 2;
 ceil.position.y = -floorY;
 scene.add(ceil);
 for (const sx of [-1, 1]) {
-  const side = new THREE.Mesh(new THREE.PlaneGeometry(WALL_Z * 2, ROOM_H), mats.side);
+  const side = new THREE.Mesh(new THREE.PlaneGeometry(WALL_Z * 5, ROOM_H), mats.side);
   side.rotation.y = (-sx * Math.PI) / 2;
-  side.position.set((sx * ROOM_W) / 2, 0, -WALL_Z);
+  side.position.set((sx * ROOM_W) / 2, 0, WALL_Z * 1.5);
   scene.add(side);
   // 侧墙上两条灯带，往靶墙方向延伸
   for (const sy of [-1, 1]) {
@@ -415,6 +418,15 @@ buildSettings(document.getElementById("settings")!, settings, (st) => {
     COLS = st.cols;
     buildCells();
   }
+  if (st.zoom !== ZOOM) {
+    ZOOM = st.zoom;
+    applyZoom();
+  }
+  // 最多行数改了：按新上限重排时间表（还没开始时裂缝马上跟着变）
+  if (song.on && !song.running) {
+    song.steps = capSteps(song.rawSteps, st.rows);
+    setN(nAt(song.steps, -1));
+  }
   saveSettings(st);
   showInfo();
 });
@@ -427,8 +439,17 @@ let recoil = 0;
 let lockMode = "";
 let playing = false;
 /** 左右能转到靶墙两边的格子，上下只能到当前 N 行的上下边（N=1 时几乎不能动） */
-const yawMax = () => Math.atan(((COLS / 2) * CELL) / WALL_Z);
-const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / WALL_Z);
+const yawMax = () => Math.atan(((COLS / 2) * CELL) / (WALL_Z * ZOOM));
+const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / (WALL_Z * ZOOM));
+
+/** 改了镜头距离：挪镜头、调雾 */
+function applyZoom() {
+  camera.position.z = WALL_Z * (ZOOM - 1);
+  if (scene.fog instanceof THREE.Fog) {
+    scene.fog.near = WALL_Z * ZOOM * 0.9;
+    scene.fog.far = WALL_Z * (ZOOM + 1.6);
+  }
+}
 
 function showInfo() {
   const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
@@ -548,6 +569,7 @@ const song = {
   meta: null as SongEntry | null,
   pick: null as Pick | null,
   shots: [] as Shot[],
+  rawSteps: [] as NStep[], // 按密度分的 1~4 档（没压过）
   targets: [] as Target[],
   steps: [] as NStep[],
   audio: null as AudioBuffer | null,
@@ -604,7 +626,8 @@ async function loadSong(pick: Pick) {
     log(`读谱失败：${e}`);
   }
   const bpm = song.meta?.bpm ?? 120;
-  song.steps = densitySchedule(shots, bpm);
+  song.rawSteps = densitySchedule(shots, bpm);
+  song.steps = capSteps(song.rawSteps, settings.rows);
   song.shots = shots;
   song.targets = planTargets(shots, song.steps, song.meta?.title ?? pick.id, LEAD, COLS);
   const tiers = [1, 2, 3, 4].map((n) => song.steps.filter((x) => x.n === n).length);
@@ -642,7 +665,8 @@ async function loadSong(pick: Pick) {
 async function startSong() {
   if (!song.audio || !actx || song.running || song.starting) return;
   song.starting = true;
-  // 列数可能在开始前改过：按现在的列数重新排靶子
+  // 列数、最多行数可能在开始前改过：按现在的设置重新排靶子
+  song.steps = capSteps(song.rawSteps, settings.rows);
   song.targets = planTargets(song.shots, song.steps, song.meta?.title ?? song.pick!.id, LEAD, COLS);
   await actx.resume();
   const gain = actx.createGain();
@@ -785,7 +809,7 @@ function frame(now: number) {
   openSpring.step(dt);
   const n = nSpring.value;
   const open = Math.max(0, openSpring.value);
-  const half = ((n * CELL_PX) / 2 + MARGIN) * open;
+  const half = ((n * CELL_PX) / ZOOM / 2 + MARGIN) * open;
   halfNow = half;
   layoutRows(n);
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐

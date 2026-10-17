@@ -14,9 +14,13 @@ export interface AimSettings {
   dot: boolean;
   /** 靶墙几列（4~9） */
   cols: number;
+  /** 裂缝最多开到几行（1~4） */
+  rows: number;
+  /** 镜头离靶墙多远（1 = 默认，越大靶墙在屏幕上越小、越集中） */
+  zoom: number;
 }
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6 };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1 };
 const KEY = "rift-aim";
 
 export function loadSettings(): AimSettings {
@@ -24,6 +28,8 @@ export function loadSettings(): AimSettings {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     const s = { ...DEFAULTS, ...raw };
     s.cols = Math.min(9, Math.max(4, Math.round(Number(s.cols) || DEFAULTS.cols)));
+    s.rows = Math.min(4, Math.max(1, Math.round(Number(s.rows) || DEFAULTS.rows)));
+    s.zoom = Math.min(2.5, Math.max(1, Number(s.zoom) || DEFAULTS.zoom));
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -73,7 +79,7 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     }
     panel.appendChild(r);
   };
-  const num = (key: "sens" | "length" | "thick" | "gap" | "cols", min: number, max: number, step: number) => {
+  const num = (key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom", min: number, max: number, step: number) => {
     const i = document.createElement("input");
     i.type = "number";
     i.min = String(min);
@@ -107,6 +113,8 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
   });
   row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
   row("靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
+  row("最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");
+  row("镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));
