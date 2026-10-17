@@ -534,6 +534,8 @@ function shoot(whole = false) {
   aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
   aimDir.set(0, 0, -1).applyEuler(aimEuler);
   ray.set(camera.position, aimDir);
+  // 右键只对金色（还成对的一组）有效：没瞄着金色靶子就什么都不做（不开枪、不算 Miss）
+  if (whole && !aimingAtGold()) return;
   const hitTarget = shootTargets(whole);
   const targets: THREE.Object3D[] = [];
   for (const r of rows) if (r.group.visible && r.cell.opacity > 0.5) for (const c of r.group.children) if ((c as THREE.Mesh).isMesh) targets.push(c);
@@ -998,6 +1000,17 @@ function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = t
   } else lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
   judge(j);
   return j;
+}
+
+/** 准星现在是不是瞄着金色靶子（一组里至少两个都还在） */
+function aimingAtGold(): boolean {
+  if (!song.running) return false;
+  const alive = song.live.filter((l) => !l.gone);
+  const hit = ray.intersectObjects(alive.map((l) => l.disc), false)[0];
+  if (!hit) return false;
+  const lt = alive.find((l) => l.disc === hit.object);
+  if (!lt || lt.tg.group < 0) return false;
+  return alive.filter((l) => l.tg.group === lt.tg.group).length >= 2;
 }
 
 /** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定） */
