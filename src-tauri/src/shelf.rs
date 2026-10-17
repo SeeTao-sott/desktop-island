@@ -277,7 +277,8 @@ impl Shelf {
                 continue;
             }
             let (mon, _) = monitor.unwrap();
-            let fullscreen = crate::fullscreen::FULLSCREEN.load(Ordering::SeqCst);
+            // 全屏程序、玩裂缝射击时：架子绝不弹出
+            let fullscreen = crate::fullscreen::FULLSCREEN.load(Ordering::SeqCst) || crate::rift::ACTIVE.load(Ordering::SeqCst);
 
             if !self.open.load(Ordering::SeqCst) {
                 // ---------- 藏着：看要不要滑出来 ----------

@@ -59,7 +59,9 @@ pub fn spawn(win: WebviewWindow, state: Arc<IslandState>) {
             let scale = if scale > 0.0 { scale } else { 1.0 };
             let lx = (pt.x - rect.left) as f64 / scale;
             let ly = (pt.y - rect.top) as f64 / scale;
-            let now_inside = state.hit.lock().unwrap().contains(lx, ly);
+            // 玩裂缝射击时不理会鼠标：保持点击穿透、不展开（锁定鼠标时看不见的光标也会滑上来）
+            let now_inside = !crate::rift::ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
+                && state.hit.lock().unwrap().contains(lx, ly);
 
             if now_inside != inside {
                 inside = now_inside;

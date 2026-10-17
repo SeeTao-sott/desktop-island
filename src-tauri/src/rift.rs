@@ -1,6 +1,7 @@
 //! 裂缝射击模式：铺满主屏幕的透明置顶窗口，拿键盘和鼠标焦点；画面只在中间的裂缝里，外面是原本的桌面。
 //! 只处理自己窗口里的输入（Pointer Lock 是网页内核自己的功能），不用全局鼠标或键盘钩子。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
@@ -8,6 +9,9 @@ use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
 
 pub const LABEL: &str = "rift";
+
+/// 裂缝射击开着：灵动岛、架子不理会鼠标（鼠标锁定时看不见的系统光标照样会滑到它们上面）
+pub static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// 选歌菜单选好的歌（文件夹名、谱类型、难度），裂缝窗口打开后来取；没有 = 托盘里的测试模式
 #[derive(Clone, serde::Serialize)]
@@ -75,6 +79,13 @@ pub fn open(app: &AppHandle) {
         }
     }
     let _ = win.show();
+    ACTIVE.store(true, Ordering::SeqCst);
+    // 窗口不管怎么没的（正常关、出错），都把标记放下
+    win.on_window_event(|e| {
+        if let tauri::WindowEvent::Destroyed = e {
+            ACTIVE.store(false, Ordering::SeqCst);
+        }
+    });
     // 告诉小组件、边缘律动：游戏开始了，先停掉重的动画
     let _ = app.emit("rift-active", true);
     let _ = win.set_focus();
@@ -90,6 +101,7 @@ pub fn rift_log(msg: String) {
 pub fn rift_close(app: AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.close();
+        ACTIVE.store(false, Ordering::SeqCst);
         let _ = app.emit("rift-active", false);
         eprintln!("[裂缝射击] 窗口已关闭");
     }
