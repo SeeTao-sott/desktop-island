@@ -26,6 +26,8 @@ export interface Target {
   /** 在格子里的小偏移（格子边长的比例） */
   dx: number;
   dy: number;
+  /** 和另一个靶子同一时刻出现（一对）：晚打的那个多给一点时间 */
+  pair: boolean;
 }
 
 export interface NStep {
@@ -172,9 +174,9 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
     return cand.reduce((a, b) => ((freeAt.get(key(b.c, b.r)) ?? 0) < (freeAt.get(key(a.c, a.r)) ?? 0) ? b : a));
   }
 
-  const place = (s: Shot, c: number, r: number) => {
+  const place = (s: Shot, c: number, r: number, pair: boolean) => {
     freeAt.set(key(c, r), s.t + STAY);
-    out.push({ t: s.t, col: c, rb: r, color: s.c, dx: (rand() - 0.5) * 0.2, dy: (rand() - 0.5) * 0.2 });
+    out.push({ t: s.t, col: c, rb: r, color: s.c, dx: (rand() - 0.5) * 0.2, dy: (rand() - 0.5) * 0.2, pair });
   };
 
   let i = 0;
@@ -192,7 +194,7 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
     if (n > 1 && rand() < 0.15) rb += rand() < 0.5 ? -1 : 1;
     rb = Math.min(n - 1, Math.max(0, rb));
     const a = nearestFree(col, rb, n, first.t, lo, hi);
-    place(first, a.c, a.r);
+    place(first, a.c, a.r, j - i > 1);
     // 同一时刻的第二个：紧挨着第一个（往它自己那一边），先同一行，再上下、斜角
     if (j - i > 1) {
       const second = kept[i + 1];
@@ -208,11 +210,11 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
         [a.c - dir, a.r - 1],
       ];
       const spot = around.find(([c, r]) => inRange(c, r, n) && isFree(c, r, second.t));
-      if (spot) place(second, spot[0], spot[1]);
+      if (spot) place(second, spot[0], spot[1], true);
       else {
         const [lo2, hi2] = halfOf(second.c, cols);
         const b = nearestFree(a.c + dir, a.r, n, second.t, lo2, hi2);
-        place(second, b.c, b.r);
+        place(second, b.c, b.r, true);
       }
     }
     i = j;

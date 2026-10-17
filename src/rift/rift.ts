@@ -224,7 +224,7 @@ const TARGET_R = CELL * 0.3;
 const discGeo = new THREE.CircleGeometry(TARGET_R, 48);
 const coreGeo = new THREE.CircleGeometry(TARGET_R * 0.26, 32);
 const approachGeo = new THREE.RingGeometry(TARGET_R * 0.96, TARGET_R * 1.1, 64);
-// 颜色：平时统一用壁纸主色；到了能打的时候（拍点前后 GREAT 以内）变成绿色
+// 颜色：平时统一用壁纸主色；到了能打的时候（判定窗口以内，一对靶子含宽限）变成绿色
 const GREEN = new THREE.Color(0x35ff7a);
 const DIM = new THREE.Color();
 interface LiveTarget {
@@ -580,8 +580,10 @@ interface Pick {
 }
 /** 靶子提前多久出现（秒），设置里可调 */
 let LEAD = settings.lead;
-const PERFECT = 0.05;
-const GREAT = 0.1;
+/** 判定窗口（秒）：Great 前后 greatW，Perfect 是一半；一对靶子晚的那一侧再加宽限（都在设置里） */
+const greatW = () => settings.window / 1000;
+const perfectW = () => settings.window / 2000;
+const lateW = (tg: Target) => greatW() + (tg.pair ? settings.pairGrace / 1000 : 0);
 const song = {
   on: false, // 是选歌进来的（不是托盘里的测试）
   meta: null as SongEntry | null,
@@ -890,7 +892,7 @@ function updateSong(n: number, nowMs: number) {
     }
     needRows = Math.max(needRows, tg.rb + 1);
     const left = tg.t - now; // 离拍点还有几秒
-    if (left < -GREAT) {
+    if (left < -lateW(tg)) {
       // 没打：Miss，变暗淡出
       lt.gone = nowMs;
       lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
@@ -900,7 +902,7 @@ function updateSong(n: number, nowMs: number) {
     lt.group.scale.setScalar(settings.size);
     const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
     // 能打的那一段变绿（外圈也一起）
-    const ready = Math.abs(left) <= GREAT;
+    const ready = left <= greatW() && left >= -lateW(tg);
     lt.discMat.color.copy(ready ? GREEN : accent);
     lt.ringMat.color.copy(ready ? GREEN : accent);
     lt.discMat.opacity = 0.92 * appear;
@@ -928,7 +930,8 @@ function shootTargets(): boolean {
   const now = songTime();
   const signed = now - lt.tg.t;
   const d = Math.abs(signed);
-  const j: Judge = d <= PERFECT ? "perfect" : d <= GREAT ? "great" : "miss";
+  // 太早（超出前窗口）或太晚（超出后窗口，一对靶子含宽限）算 Miss
+  const j: Judge = d <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(lt.tg) ? "great" : "miss";
   if (j !== "miss") {
     song.devs.push(signed);
     // 甩枪：从上一枪（或靶子出现，取较晚的）到准星第一次落上这个靶子

@@ -26,9 +26,13 @@ export interface AimSettings {
   maxFrac: number;
   /** 水平视野（度） */
   fov: number;
+  /** 判定窗口：拍点前后多少毫秒内算 Great（Perfect 是它的一半） */
+  window: number;
+  /** 同一时刻的一对靶子，晚打的那个额外多给多少毫秒 */
+  pairGrace: number;
 }
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103 };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150 };
 const KEY = "rift-aim";
 
 export function loadSettings(): AimSettings {
@@ -42,6 +46,8 @@ export function loadSettings(): AimSettings {
     s.lead = Math.min(2, Math.max(0.5, Number(s.lead) || DEFAULTS.lead));
     s.maxFrac = Math.min(0.8, Math.max(0.3, Number(s.maxFrac) || DEFAULTS.maxFrac));
     s.fov = Math.min(120, Math.max(70, Number(s.fov) || DEFAULTS.fov));
+    s.window = Math.min(250, Math.max(60, Number(s.window) || DEFAULTS.window));
+    s.pairGrace = Math.min(500, Math.max(0, Number.isFinite(Number(s.pairGrace)) ? Number(s.pairGrace) : DEFAULTS.pairGrace));
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -92,7 +98,7 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     panel.appendChild(r);
   };
   const num = (
-    key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov",
+    key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov" | "window" | "pairGrace",
     min: number,
     max: number,
     step: number,
@@ -134,6 +140,8 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
   row("镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
   row("靶子大小", num("size", 0.5, 1.6, 0.1), "0.5~1.6 倍");
   row("出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
+  row("判定窗口（ms）", num("window", 60, 250, 10), "拍点前后多少毫秒内算 Great，Perfect 是它的一半");
+  row("同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   row("准星颜色", color);
