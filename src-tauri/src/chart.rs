@@ -39,6 +39,8 @@ pub struct SongInfo {
     pub difficulties: Vec<Difficulty>,
     /// 歌曲音频文件名（一般是 song.egg，其实就是 ogg）；空 = 没有
     pub song_file: String,
+    /// 封面图片文件名（一般是 cover.png / cover.jpg）；空 = 没有
+    pub cover_file: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq)]
@@ -90,6 +92,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         offset: 0.0,
         difficulties: Vec::new(),
         song_file: String::new(),
+        cover_file: String::new(),
     };
     if let Some(song) = v.get("song") {
         // v4
@@ -99,6 +102,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         if let Some(audio) = v.get("audio") {
             info.bpm = f(audio, "bpm").unwrap_or(120.0);
             info.song_file = s(audio, "songFilename");
+            info.cover_file = s(v, "coverImageFilename");
         }
         for d in arr(v, "difficultyBeatmaps") {
             info.difficulties.push(Difficulty {
@@ -120,6 +124,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
         info.bpm = f(v, "_beatsPerMinute").unwrap_or(120.0);
         info.offset = f(v, "_songTimeOffset").unwrap_or(0.0);
         info.song_file = s(v, "_songFilename");
+        info.cover_file = s(v, "_coverImageFilename");
         for set in arr(v, "_difficultyBeatmapSets") {
             let ch = s(set, "_beatmapCharacteristicName");
             for d in arr(set, "_difficultyBeatmaps") {
@@ -149,11 +154,23 @@ pub fn load_info(dir: &Path) -> Result<SongInfo, String> {
 
 /// 读这首歌的音频文件。文件名来自 Info.dat，只认这首歌文件夹里直接放着的文件（不跟着 ..、子路径跑出去）
 pub fn load_audio(dir: &Path, info: &SongInfo) -> Result<Vec<u8>, String> {
-    let name = info.song_file.as_str();
+    load_named(dir, &info.song_file)
+}
+
+/// 读这首歌的封面，返回 (字节, MIME 类型)
+pub fn load_cover(dir: &Path, info: &SongInfo) -> Result<(Vec<u8>, &'static str), String> {
+    let bytes = load_named(dir, &info.cover_file)?;
+    let lower = info.cover_file.to_ascii_lowercase();
+    let mime = if lower.ends_with(".png") { "image/png" } else if lower.ends_with(".webp") { "image/webp" } else { "image/jpeg" };
+    Ok((bytes, mime))
+}
+
+/// 读歌曲文件夹里直接放着的某个文件（名字来自 Info.dat；不跟着 ..、子路径跑出去）
+fn load_named(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
     if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
-        return Err("这首歌没有能用的音频文件".into());
+        return Err("Info.dat 里没有写这个文件，或者文件名不对".into());
     }
-    let path = find_file(dir, name).ok_or_else(|| format!("找不到音频文件 {name}"))?;
+    let path = find_file(dir, name).ok_or_else(|| format!("找不到文件 {name}"))?;
     fs::read(&path).map_err(|e| format!("读不了 {}：{e}", path.display()))
 }
 
@@ -292,7 +309,8 @@ pub fn charts_dir() -> Option<PathBuf> {
     None
 }
 
-/// 每首歌各自的判定偏移（毫秒），存在配置文件夹的 rhythm-offsets.json：{ "文件夹名": 毫秒 }
+/// 每首歌各自的设置，存在配置文件夹的 rhythm-offsets.json：
+/// { "文件夹名": { "offset_ms": 偏移毫秒, "speed": 下落速度倍数 } }。老文件里直接是数字（只有偏移），照样认
 pub fn load_offsets(path: &Path) -> serde_json::Map<String, Value> {
     fs::read_to_string(path)
         .ok()
@@ -301,9 +319,29 @@ pub fn load_offsets(path: &Path) -> serde_json::Map<String, Value> {
         .unwrap_or_default()
 }
 
-pub fn save_offset(path: &Path, id: &str, ms: i32) -> std::io::Result<()> {
+/// 某首歌的 (偏移毫秒, 速度倍数)；没设过是 (0, 1.0)
+pub fn song_prefs(map: &serde_json::Map<String, Value>, id: &str) -> (i64, f64) {
+    match map.get(id) {
+        Some(Value::Number(n)) => (n.as_i64().unwrap_or(0), 1.0),
+        Some(v @ Value::Object(_)) => (
+            v.get("offset_ms").and_then(Value::as_i64).unwrap_or(0),
+            v.get("speed").and_then(Value::as_f64).filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0),
+        ),
+        _ => (0, 1.0),
+    }
+}
+
+/// 改某首歌的偏移和 / 或速度（没给的保持原样）
+pub fn save_prefs(path: &Path, id: &str, offset_ms: Option<i32>, speed: Option<f64>) -> std::io::Result<()> {
     let mut map = load_offsets(path);
-    map.insert(id.to_string(), Value::from(ms));
+    let (mut o, mut sp) = song_prefs(&map, id);
+    if let Some(x) = offset_ms {
+        o = x as i64;
+    }
+    if let Some(x) = speed {
+        sp = x;
+    }
+    map.insert(id.to_string(), serde_json::json!({ "offset_ms": o, "speed": (sp * 10.0).round() / 10.0 }));
     let text = serde_json::to_string_pretty(&map).map_err(std::io::Error::other)?;
     // 先写临时文件再换名，写到一半断电也不会坏
     let tmp = path.with_extension("json.tmp");

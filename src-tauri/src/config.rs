@@ -69,6 +69,10 @@ pub struct Config {
     /// 回到桌面的快捷键，比如 "Ctrl+Alt+Q"；留空表示不用。做的事和双击灵动岛一样（双击设成"不做什么"时是回到桌面）。
     /// 不能用 Win+D（那是系统自己的）
     pub show_desktop_hotkey: String,
+
+    // ---------- 屏幕边缘律动 ----------
+    /// 放歌时屏幕四条边跟着音乐发光（托盘里可以开关）
+    pub edge_glow: bool,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -110,6 +114,7 @@ impl Default for Config {
             widgets_status_seconds: 3,
             island_double_click: "desktop".into(),
             show_desktop_hotkey: String::new(),
+            edge_glow: false,
         }
     }
 }

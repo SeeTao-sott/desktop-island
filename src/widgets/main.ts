@@ -34,6 +34,14 @@ interface Layout {
   items: Item[];
 }
 
+/** 布局文件：几套布局（布局 1、2、3），各自记组件、位置和主题；current 是现在用的那套 */
+interface LayoutFile {
+  version: 2;
+  current: number;
+  slots: (Layout | null)[];
+}
+const SLOTS = 3;
+
 interface Live {
   item: Item;
   mod: WidgetModule;
@@ -63,6 +71,7 @@ const slot = document.getElementById("slot")!;
 const editBar = document.getElementById("edit-bar")!;
 const library = document.getElementById("library")!;
 const skinBar = document.getElementById("skins")!;
+const layoutBar = document.getElementById("layouts")!;
 const fpsEl = document.getElementById("fps")!;
 
 const live: Live[] = [];
@@ -72,6 +81,10 @@ let skin: Skin = SKINS[0];
 /** 换主题过渡：1 = 正常显示，0 = 缩小淡出的最低点（在这一刻换外观） */
 const morph = new Spring(1, SPRING.fade);
 let pendingSkin: Skin | null = null;
+/** 几套布局；slotIdx 是现在用的。换布局和换主题一样：缩到最低点时换掉全部组件，再弹回来 */
+let slots: (Layout | null)[] = Array(SLOTS).fill(null);
+let slotIdx = 0;
+let pendingSlot: number | null = null;
 
 const editFade = new Spring(0, SPRING.fade);
 const animator = new Animator(applyFrame, (frames) => {
@@ -389,6 +402,7 @@ function applyFrame() {
 
   // 换主题：缩到最低点时换外观，再弹回来
   if (pendingSkin && morph.value < 0.08) applySkin();
+  if (pendingSlot !== null && morph.value < 0.08) swapLayout();
   const m = Math.max(0, Math.min(1, morph.value));
   for (const l of [...live]) {
     l.el.style.width = `${l.w.value}px`;
@@ -449,6 +463,51 @@ function applySkin() {
     settle(l);
   }
   morph.target = 1;
+  save();
+}
+
+// ---------------- 多套布局 ----------------
+
+function renderLayoutBar() {
+  layoutBar.replaceChildren();
+  const cur = pendingSlot ?? slotIdx;
+  for (let i = 0; i < SLOTS; i++) {
+    const b = document.createElement("button");
+    b.className = "skin-btn" + (i === cur ? " on" : "");
+    b.textContent = String(i + 1);
+    b.title = slots[i] || i === slotIdx ? `布局 ${i + 1}` : `布局 ${i + 1}（还没摆过：先复制一份现在的，再按你的喜好挪）`;
+    b.addEventListener("click", () => switchLayout(i));
+    layoutBar.appendChild(b);
+  }
+}
+
+/** 换到第 n 套布局（编辑栏的 1 2 3，或托盘菜单） */
+function switchLayout(n: number) {
+  if (n < 0 || n >= SLOTS || n === (pendingSlot ?? slotIdx) || pendingSkin) return;
+  slots[slotIdx] = layout();
+  pendingSlot = n;
+  closeAllSettings();
+  setActive(null);
+  morph.target = 0;
+  renderLayoutBar();
+  animator.kick();
+}
+
+function swapLayout() {
+  const n = pendingSlot!;
+  pendingSlot = null;
+  // 还没摆过的布局：从刚才那套复制一份（深拷贝，两套以后各改各的）
+  const lay: Layout = JSON.parse(JSON.stringify(slots[n] ?? slots[slotIdx] ?? layout()));
+  for (const l of [...live]) finishRemove(l);
+  slotIdx = n;
+  skin = skinOf(lay.skin ?? skin.id);
+  document.body.dataset.skin = skin.id;
+  applyLayout(lay);
+  slots[n] = layout();
+  morph.target = 1;
+  renderSkinBar();
+  renderLayoutBar();
+  reportHits();
   save();
 }
 
@@ -602,7 +661,10 @@ function setEditing(on: boolean) {
   editing = on;
   document.body.classList.toggle("editing", on);
   editFade.target = on ? 1 : 0;
-  if (on) renderSkinBar();
+  if (on) {
+    renderSkinBar();
+    renderLayoutBar();
+  }
   else {
     closeAllSettings();
     setActive(null);
@@ -616,9 +678,14 @@ function layout(): Layout {
   return { version: 1, skin: (pendingSkin ?? skin).id, items: live.filter((l) => !l.removing).map((l) => ({ ...l.item })) };
 }
 
+function layoutFile(): LayoutFile {
+  slots[slotIdx] = layout();
+  return { version: 2, current: slotIdx, slots };
+}
+
 async function save() {
   try {
-    await invoke("widgets_layout_save", { layout: layout() });
+    await invoke("widgets_layout_save", { layout: layoutFile() });
   } catch (e) {
     console.error(e);
   }
@@ -651,6 +718,8 @@ listen<boolean>("widgets-paused", (e) => {
     l.frame?.setPaused(paused);
   }
 });
+// 托盘里"桌面布局 → 布局 n"
+listen<number>("widgets-layout", (e) => switchLayout(e.payload));
 // 托盘里"切换小组件主题"：换到下一个
 listen("widgets-skin-next", () => {
   const cur = (pendingSkin ?? skin).id;
@@ -676,16 +745,8 @@ function defaultLayout(): Layout {
   return { version: 1, skin: "square", items: [{ id: "clock-1", kind: "clock", size: "medium", col: 0, row: 0, settings: {} }] };
 }
 
-async function start() {
-  let saved: Layout | null = null;
-  try {
-    saved = await invoke<Layout | null>("widgets_layout_get");
-  } catch {
-    saved = null;
-  }
-  const lay = saved && Array.isArray(saved.items) ? saved : defaultLayout();
-  skin = skinOf(lay.skin ?? "square");
-  document.body.dataset.skin = skin.id;
+/** 按一套布局摆出所有组件（调用前要先清空 live、定好主题） */
+function applyLayout(lay: Layout) {
   // 这种网格里还没有位置的组件（比如第一次用六边形主题），先占个位，下面统一找空位
   for (const item of lay.items) if (!cellOf(item)) setCell(item, { col: -99, row: -99 });
   for (const item of lay.items) {
@@ -707,6 +768,32 @@ async function start() {
       l.y.value = l.y.target = p.y;
     }
   }
+}
+
+async function start() {
+  let saved: Layout | LayoutFile | null = null;
+  try {
+    saved = await invoke<Layout | LayoutFile | null>("widgets_layout_get");
+  } catch {
+    saved = null;
+  }
+  let lay: Layout;
+  if (saved && saved.version === 2 && Array.isArray((saved as LayoutFile).slots)) {
+    const f = saved as LayoutFile;
+    slots = Array.from({ length: SLOTS }, (_, i) => {
+      const x = f.slots[i];
+      return x && Array.isArray(x.items) ? x : null;
+    });
+    slotIdx = Math.min(Math.max(0, Math.floor(f.current) || 0), SLOTS - 1);
+    lay = slots[slotIdx] ?? defaultLayout();
+  } else {
+    // 老格式（只有一套）：当作布局 1
+    lay = saved && Array.isArray((saved as Layout).items) ? (saved as Layout) : defaultLayout();
+    slots[0] = lay;
+  }
+  skin = skinOf(lay.skin ?? "square");
+  document.body.dataset.skin = skin.id;
+  applyLayout(lay);
   applyFrame();
   reportHits();
   const editingNow = await invoke<boolean>("widgets_cmd", { action: "get" }).catch(() => false);

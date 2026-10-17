@@ -8,6 +8,7 @@ mod chart;
 mod config;
 mod desktop;
 mod desktop_icons;
+mod edge;
 mod fileops;
 mod fullscreen;
 mod hotkey;
@@ -194,8 +195,9 @@ fn widgets_layout_save(w: State<'_, Arc<Widgets>>, layout: serde_json::Value) ->
 struct SongEntry {
     #[serde(flatten)]
     info: chart::SongInfo,
-    /// 这首歌保存过的判定偏移（毫秒）
+    /// 这首歌保存过的判定偏移（毫秒）和下落速度倍数
     offset_ms: i64,
+    speed: f64,
 }
 
 fn offsets_path(app: &AppHandle) -> Option<PathBuf> {
@@ -210,8 +212,8 @@ fn rhythm_songs(app: AppHandle) -> Vec<SongEntry> {
     chart::list_songs(&root)
         .into_iter()
         .map(|info| {
-            let offset_ms = offsets.get(&info.id).and_then(|v| v.as_i64()).unwrap_or(0);
-            SongEntry { info, offset_ms }
+            let (offset_ms, speed) = chart::song_prefs(&offsets, &info.id);
+            SongEntry { info, offset_ms, speed }
         })
         .collect()
 }
@@ -238,15 +240,57 @@ fn rhythm_audio(id: String) -> Result<tauri::ipc::Response, String> {
 }
 
 #[tauri::command]
-fn rhythm_offset_set(app: AppHandle, id: String, ms: i32) -> Result<(), String> {
+fn rhythm_prefs_set(app: AppHandle, id: String, offset_ms: Option<i32>, speed: Option<f64>) -> Result<(), String> {
     let path = offsets_path(&app).ok_or("找不到配置文件夹")?;
-    chart::save_offset(&path, &id, ms.clamp(-2000, 2000)).map_err(|e| format!("偏移没保存成功：{e}"))
+    let speed = speed.filter(|x| x.is_finite()).map(|x| x.clamp(0.5, 3.0));
+    chart::save_prefs(&path, &id, offset_ms.map(|x| x.clamp(-2000, 2000)), speed).map_err(|e| format!("设置没保存成功：{e}"))
+}
+
+/// 音游自己放歌时，让音乐组件和灵动岛显示这首歌（歌名、歌手、谱里的封面、进度）；
+/// id 为空 = 放完了，换回真实的播放状态
+#[tauri::command]
+fn rhythm_now_playing(tx: State<'_, media::MediaTx>, id: String, position_ms: i64, duration_ms: i64) {
+    if id.is_empty() {
+        let _ = tx.0.send(media::Msg::Override(None));
+        return;
+    }
+    let Some(root) = chart::charts_dir() else { return };
+    let Some(song) = chart::list_songs(&root).into_iter().find(|s| s.id == id) else { return };
+    let cover = chart::load_cover(&root.join(&song.id), &song)
+        .map(|(bytes, mime)| format!("data:{mime};base64,{}", { use base64::Engine; base64::engine::general_purpose::STANDARD.encode(bytes) }))
+        .unwrap_or_default();
+    let info = media::MediaInfo {
+        active: true,
+        title: song.title.clone(),
+        artist: if song.artist.is_empty() { "音游".into() } else { song.artist.clone() },
+        source: "音游".into(),
+        playing: true,
+        position_ms,
+        duration_ms,
+        // 音游的歌不能用播放 / 切歌按钮控制（Esc 退出就停）
+        can_toggle: false,
+        can_next: false,
+        can_prev: false,
+    };
+    let _ = tx.0.send(media::Msg::Override(Some((info, cover))));
 }
 
 /// 进入 / 退出音游模式；返回现在是不是在音游模式（编辑模式下进不去）
 #[tauri::command]
 fn widgets_rhythm(w: State<'_, Arc<Widgets>>, on: bool) -> bool {
     w.set_rhythm(on)
+}
+
+/// 屏幕边缘律动现在是不是打开的（页面加载时问）
+#[tauri::command]
+fn edge_enabled(e: State<'_, Arc<edge::Edge>>) -> bool {
+    e.enabled()
+}
+
+/// 屏幕边缘律动的页面说：有声音了（显示窗口）/ 淡出完了（藏起窗口）
+#[tauri::command]
+fn edge_active(e: State<'_, Arc<edge::Edge>>, on: bool) {
+    e.set_active(on);
 }
 
 /// 灵动岛被双击：按设置回到桌面 / 全部最小化
@@ -319,6 +363,7 @@ fn build_tray(
     widgets_hotkey: &str,
     keep: desktop::Keep,
     desktop_hotkey: &str,
+    edge: Option<Arc<edge::Edge>>,
 ) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
     let widgets_label = if widgets_hotkey.is_empty() {
@@ -329,6 +374,11 @@ fn build_tray(
     let widgets_item = MenuItem::with_id(app, "widgets_edit", widgets_label, widgets.is_some(), None::<&str>)?;
     let skin_item = MenuItem::with_id(app, "widgets_skin", "切换小组件主题", widgets.is_some(), None::<&str>)?;
     let preview_item = MenuItem::with_id(app, "theme_preview", "小组件主题预览", widgets.is_some(), None::<&str>)?;
+    // 桌面布局 1/2/3：各自记组件、位置和主题（布局本身由页面保存）
+    let lay_items: Vec<MenuItem<tauri::Wry>> = (0..3)
+        .map(|i| MenuItem::with_id(app, format!("layout_{i}"), format!("布局 {}", i + 1), widgets.is_some(), None::<&str>))
+        .collect::<tauri::Result<_>>()?;
+    let layout_menu = Submenu::with_items(app, "桌面布局", widgets.is_some(), &[&lay_items[0], &lay_items[1], &lay_items[2]])?;
     let has_shelf = shelf.is_some();
     let shelf_item = MenuItem::with_id(app, "shelf", shelf_label, has_shelf, None::<&str>)?;
     let migrate = MenuItem::with_id(app, "migrate", "从桌面搬进架子…", has_shelf, None::<&str>)?;
@@ -340,6 +390,14 @@ fn build_tray(
     let quit = MenuItem::with_id(app, "quit", "退出灵动岛", true, None::<&str>)?;
     let desktop_label = if desktop_hotkey.is_empty() { "回到桌面".to_string() } else { format!("回到桌面	{desktop_hotkey}") };
     let desktop_item = MenuItem::with_id(app, "show_desktop", desktop_label, true, None::<&str>)?;
+    let edge_item = CheckMenuItem::with_id(
+        app,
+        "edge_glow",
+        "屏幕边缘律动",
+        edge.is_some(),
+        edge.as_ref().is_some_and(|e| e.enabled()),
+        None::<&str>,
+    )?;
     // 双击灵动岛做什么：三选一，打勾的是当前的
     let now = desktop::double_click();
     let dbl: Vec<CheckMenuItem<tauri::Wry>> = [
@@ -362,6 +420,8 @@ fn build_tray(
             &widgets_item,
             &skin_item,
             &preview_item,
+            &layout_menu,
+            &edge_item,
             &PredefinedMenuItem::separator(app)?,
             &desktop_item,
             &dbl_menu,
@@ -376,6 +436,7 @@ fn build_tray(
     )?;
 
     let auto_item = auto.clone();
+    let edge_check = edge_item.clone();
     let icons_item = icons.clone();
     TrayIconBuilder::with_id("island")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -429,6 +490,18 @@ fn build_tray(
             }
             "quit" => app.exit(0),
             "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
+            "edge_glow" => {
+                if let Some(e) = &edge {
+                    let on = edge_check.is_checked().unwrap_or(false);
+                    e.set_enabled(on);
+                    config::set_value(&cfg_path, "edge_glow", serde_json::Value::from(on));
+                }
+            }
+            id if id.starts_with("layout_") => {
+                if let Ok(n) = id[7..].parse::<u32>() {
+                    let _ = app.emit_to("widgets", "widgets-layout", n);
+                }
+            }
             id if id.starts_with("dbl_") => {
                 let a = desktop::Action::parse(&id[4..]);
                 desktop::set_double_click(a);
@@ -454,6 +527,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             set_hit_rect,
             island_double_click,
+            edge_enabled,
+            edge_active,
             media_cmd,
             pomodoro_cmd,
             alerts_get,
@@ -485,7 +560,8 @@ fn main() {
             rhythm_songs,
             rhythm_chart,
             rhythm_audio,
-            rhythm_offset_set,
+            rhythm_prefs_set,
+            rhythm_now_playing,
             widgets_layout_get,
             widgets_layout_save,
             widgets_theme_get,
@@ -565,8 +641,12 @@ fn main() {
                 hide_list.push(shelf_win.clone());
             }
             let (w3, s4, wg) = (win.clone(), shelf.clone(), widgets.clone());
+            let ah = app.handle().clone();
             fullscreen::spawn(hide_list, cfg.hide_in_fullscreen, move || {
                 let _ = place_window(&w3, offset);
+                if let Some(e) = ah.try_state::<Arc<edge::Edge>>() {
+                    e.place();
+                }
                 if let Some(s) = &s4 {
                     let _ = s.place();
                 }
@@ -599,6 +679,18 @@ fn main() {
             };
             app.manage(keep.clone());
 
+            // ---------- 屏幕边缘律动：置顶、永远点击穿透，只在有声音时显示 ----------
+            let edge = match edge::Edge::spawn(app.handle(), cfg.edge_glow) {
+                Ok(e) => {
+                    app.manage(e.clone());
+                    Some(e)
+                }
+                Err(err) => {
+                    eprintln!("屏幕边缘律动窗口创建失败: {err}");
+                    None
+                }
+            };
+
             hover::spawn(win, state.clone());
 
             let handle = app.handle().clone();
@@ -621,7 +713,7 @@ fn main() {
             }
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey, edge) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())

@@ -1,0 +1,55 @@
+/* 屏幕边缘律动：四条贴着屏幕边的光带，跟着音乐变粗变亮。只改 transform / opacity */
+:root {
+  --w-accent: rgba(140, 170, 255, 0.92);
+}
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+.edge {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.top,
+.bottom {
+  left: 0;
+  right: 0;
+  height: 90px;
+}
+.left,
+.right {
+  top: 0;
+  bottom: 0;
+  width: 90px;
+}
+.top {
+  top: 0;
+  transform-origin: top;
+  background: linear-gradient(to bottom, var(--edge-core), var(--edge-glow) 6%, transparent);
+}
+.bottom {
+  bottom: 0;
+  transform-origin: bottom;
+  background: linear-gradient(to top, var(--edge-core), var(--edge-glow) 6%, transparent);
+}
+.left {
+  left: 0;
+  transform-origin: left;
+  background: linear-gradient(to right, var(--edge-core), var(--edge-glow) 6%, transparent);
+}
+.right {
+  right: 0;
+  transform-origin: right;
+  background: linear-gradient(to left, var(--edge-core), var(--edge-glow) 6%, transparent);
+}
+body {
+  /* 贴边一道亮芯 + 往里散开的光，颜色跟着壁纸主题色 */
+  --edge-core: color-mix(in srgb, var(--w-accent) 60%, #fff);
+  --edge-glow: color-mix(in srgb, var(--w-accent) 55%, transparent);
+}

@@ -23,6 +23,8 @@ interface Song {
   difficulties: Difficulty[];
   song_file: string;
   offset_ms: number;
+  /** 下落速度倍数：1 = 提前 1.5 秒出现；2 = 提前 0.75 秒（落得快一倍） */
+  speed: number;
 }
 interface Note {
   t: number;
@@ -37,7 +39,7 @@ export interface Rect {
 
 const KEYS = ["a", "s", "k", "l"];
 const KEY_LABEL = ["A", "S", "K", "L"];
-/** 提前多久出现（秒） */
+/** 速度 1 时提前多久出现（秒）；实际 = LEAD / 速度 */
 const LEAD = 1.5;
 /** 判定窗口（秒） */
 const PERFECT = 0.07;
@@ -286,17 +288,22 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     const corner = el("div", "rh-corner", stage);
     el("div", "rh-corner-title", corner, `${song.title} · ${DIFF_LABEL[diff.name] ?? diff.name}`);
     const offsetEl = el("div", "rh-offset", corner);
-    el("div", "rh-tip", corner, "← → 调偏移 · Esc 退出");
+    const speedEl = el("div", "rh-offset", corner);
+    el("div", "rh-tip", corner, "← → 调延迟 · ↑ ↓ 调速度 · Esc 退出");
 
     // 开始前的提示
     const prompt = el("div", "rh-prompt", stage);
     prompt.style.transform = `translate(${W / 2}px, ${Math.round((SPAWN_Y + judgeY) / 2)}px)`;
+    // 延迟、速度在开始前也能调
+    const tune = () => el("div", "rh-prompt-small", prompt, "← → 调延迟（音符早了 / 晚了）· ↑ ↓ 调下落速度 · 每首歌分别记住");
     if (audio) {
       el("div", "rh-prompt-big", prompt, "按空格开始");
       el("div", "rh-prompt-small", prompt, "歌会自己放，先把浏览器里正在放的歌暂停");
+      tune();
     } else {
       el("div", "rh-prompt-big", prompt, "播放歌曲后按空格开始");
       el("div", "rh-prompt-small", prompt, "这首谱没带歌：可以按键盘的播放键，或点下面的按钮让浏览器开始放");
+      tune();
       const playBtn = el("button", "rh-play", prompt, "▶ 播放 / 暂停");
       playBtn.addEventListener("click", () => {
         invoke("media_cmd", { action: "toggle" }).catch(() => {});
@@ -322,8 +329,13 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     };
 
     let offsetMs = song.offset_ms;
-    const showOffset = () => (offsetEl.textContent = `偏移 ${offsetMs > 0 ? "+" : ""}${offsetMs} ms`);
+    const showOffset = () => (offsetEl.textContent = `延迟 ${offsetMs > 0 ? "+" : ""}${offsetMs} ms`);
     showOffset();
+    // 下落速度：每首歌自己记；改了以后正在落的音符马上按新速度走（位置按时间算，不会跳错拍）
+    let speed = Math.min(3, Math.max(0.5, song.speed || 1));
+    let lead = LEAD / speed;
+    const showSpeed = () => (speedEl.textContent = `速度 ${speed.toFixed(1)}x`);
+    showSpeed();
 
     // 游戏状态
     const done = new Uint8Array(notes.length); // 0 没判定，1 已判定
@@ -364,17 +376,33 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       source = actx.createBufferSource();
       source.buffer = audio;
       source.connect(gain);
-      // 先留 LEAD 秒：歌开头就有的音符也能从上面完整落下来
-      startAt = actx.currentTime + LEAD;
+      // 先留一段：歌开头就有的音符也能从上面完整落下来（慢速时留得更久）
+      startAt = actx.currentTime + Math.max(LEAD, lead);
       source.start(startAt);
+      // 音乐组件、灵动岛显示正在放的这首（进度从"还有几秒开始"算起）
+      const src = source;
+      invoke("rhythm_now_playing", {
+        id: song.id,
+        positionMs: Math.round((actx.currentTime - startAt) * 1000),
+        durationMs: Math.round(audio.duration * 1000),
+      }).catch(() => {});
+      src.onended = () => {
+        if (source === src) {
+          source = null;
+          invoke("rhythm_now_playing", { id: "", positionMs: 0, durationMs: 0 }).catch(() => {});
+        }
+      };
     };
     const stopMusic = () => {
+      if (!source) return;
+      const s = source;
+      source = null;
       try {
-        source?.stop();
+        s.stop();
       } catch {
         // 还没开始放就停，忽略
       }
-      source = null;
+      invoke("rhythm_now_playing", { id: "", positionMs: 0, durationMs: 0 }).catch(() => {});
     };
 
     const judge = (j: Judge, lane: number) => {
@@ -426,7 +454,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       if (!running) return;
       const now = songTime();
       // 新出现的
-      while (next < notes.length && notes[next].t - now <= LEAD) {
+      while (next < notes.length && notes[next].t - now <= lead) {
         if (!done[next]) live.set(next, take(notes[next].lane));
         next++;
       }
@@ -441,7 +469,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       // 摆位置：只改 transform
       for (const [i, e] of live) {
         const n = notes[i];
-        const y = judgeY - ((n.t - now) / LEAD) * travel;
+        const y = judgeY - ((n.t - now) / lead) * travel;
         e.style.transform = `translate3d(${left + n.lane * LANE_W + 7}px, ${y - NOTE_H / 2}px, 0)`;
       }
       if (now > lastT + 2 && !finished) {
@@ -497,7 +525,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
     };
 
     const restart = () => {
-      startGame({ ...song, offset_ms: offsetMs }, diff, notes, anchor, audio);
+      startGame({ ...song, offset_ms: offsetMs, speed }, diff, notes, anchor, audio);
     };
 
     const onKey = (e: KeyboardEvent) => {
@@ -531,7 +559,16 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
         offsetMs += k === "arrowright" ? 20 : -20;
         offsetMs = Math.max(-2000, Math.min(2000, offsetMs));
         showOffset();
-        invoke("rhythm_offset_set", { id: song.id, ms: offsetMs }).catch(() => {});
+        invoke("rhythm_prefs_set", { id: song.id, offsetMs, speed: null }).catch(() => {});
+        return;
+      }
+      if (k === "arrowup" || k === "arrowdown") {
+        e.preventDefault();
+        speed = Math.round((speed + (k === "arrowup" ? 0.1 : -0.1)) * 10) / 10;
+        speed = Math.max(0.5, Math.min(3, speed));
+        lead = LEAD / speed;
+        showSpeed();
+        invoke("rhythm_prefs_set", { id: song.id, offsetMs: null, speed }).catch(() => {});
         return;
       }
       const lane = KEYS.indexOf(k);

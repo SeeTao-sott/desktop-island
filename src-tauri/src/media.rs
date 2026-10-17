@@ -27,6 +27,9 @@ pub enum Msg {
     Toggle,
     Next,
     Prev,
+    /// 音游自己在放歌：先显示它给的歌曲信息和封面（data URL），真实的播放状态照样跟踪但不推送；
+    /// None = 音游放完了，换回真实的状态
+    Override(Option<(MediaInfo, String)>),
 }
 
 /// 页面那边持有的发送端
@@ -119,6 +122,11 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
 
     // 换歌后排好的封面补读时间点；没有计划时就一直睡到有事件
     let mut cover_retries: Vec<Instant> = Vec::new();
+    // 音游正在放的歌（见 Msg::Override）；dirty = 刚变过，要推一次
+    let mut ovr: Option<(MediaInfo, String)> = None;
+    let mut ovr_dirty = false;
+    // 音游刚结束：真实的那边要是也没在放，封面要清掉（不然还留着音游那首的封面）
+    let mut ovr_ended = false;
 
     let _ = tx.send(Msg::Refresh);
     loop {
@@ -137,6 +145,14 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
         let mut refetch_cover = first.is_none();
         let mut force = false;
         let mut handle = |m: &Msg, cur: Option<&Session>| {
+            if let Msg::Override(o) = m {
+                ovr = o.clone();
+                ovr_dirty = true;
+                // 音游结束：把真实的状态和封面重新推一遍
+                force |= o.is_none();
+                ovr_ended |= o.is_none();
+                return;
+            }
             force |= matches!(m, Msg::Resync);
             refetch_cover |= matches!(m, Msg::PropsChanged);
             control(m, cur);
@@ -177,6 +193,16 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
         current = pick(&mgr, &sessions);
         let info = current.as_ref().and_then(|s| read_info(s).ok()).unwrap_or_default();
 
+        if let Some((oi, url)) = &ovr {
+            // 页面刚加载好（Resync）也要再推一次
+            if ovr_dirty || force {
+                let _ = app.emit("media", oi);
+                let _ = app.emit("media-cover", url.clone());
+            }
+            ovr_dirty = false;
+            continue;
+        }
+
         if last_info.as_ref() != Some(&info) {
             let _ = app.emit("media", &info);
             last_info = Some(info.clone());
@@ -204,12 +230,13 @@ fn run(app: AppHandle, tx: Sender<Msg>, rx: Receiver<Msg>) -> windows::core::Res
                 let _ = app.emit("media-cover", url);
                 last_cover = bytes.0;
             }
-        } else if !info.active && !last_cover.is_empty() {
+        } else if !info.active && (!last_cover.is_empty() || ovr_ended) {
             cover_retries.clear();
             cover_key.clear();
             last_cover.clear();
             let _ = app.emit("media-cover", String::new());
         }
+        ovr_ended = false;
     }
 }
 
@@ -219,7 +246,7 @@ fn control(msg: &Msg, s: Option<&Session>) {
         Msg::Toggle => s.TryTogglePlayPauseAsync().and_then(|op| op.join()),
         Msg::Next => s.TrySkipNextAsync().and_then(|op| op.join()),
         Msg::Prev => s.TrySkipPreviousAsync().and_then(|op| op.join()),
-        Msg::Refresh | Msg::Resync | Msg::PropsChanged => Ok(true),
+        Msg::Refresh | Msg::Resync | Msg::PropsChanged | Msg::Override(_) => Ok(true),
     };
 }
 

@@ -172,7 +172,9 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                     if now - since >= SILENT_AFTER {
                         if !sent_silent {
                             sent_silent = true;
-                            let _ = app.emit_to("widgets", "audio-frame", Frame { bands: vec![0; BANDS], level: 0.0, silent: true });
+                            let silent = Frame { bands: vec![0; BANDS], level: 0.0, silent: true };
+                            let _ = app.emit_to("widgets", "audio-frame", &silent);
+                            let _ = app.emit_to(crate::edge::LABEL, "audio-frame", &silent);
                         }
                         // 没声音：慢一点检查，不发数据
                         thread::sleep(Duration::from_millis(50));
@@ -183,7 +185,8 @@ fn capture(app: &AppHandle) -> windows::core::Result<()> {
                     sent_silent = false;
                 }
                 let frame = Frame { bands: an.bands(&samples), level: (level * 4.0).min(1.0), silent: false };
-                let _ = app.emit_to("widgets", "audio-frame", frame);
+                let _ = app.emit_to("widgets", "audio-frame", &frame);
+                let _ = app.emit_to(crate::edge::LABEL, "audio-frame", &frame);
             }
             // 睡到下一帧（最多 10 毫秒，系统大约每 10 毫秒给一包数据）
             let wait = next.saturating_duration_since(Instant::now()).min(Duration::from_millis(10));
