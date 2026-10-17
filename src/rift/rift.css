@@ -1,0 +1,60 @@
+/* 裂缝射击：整个窗口透明，只有裂缝里有画面 */
+:root {
+  --w-accent: rgba(140, 170, 255, 0.92);
+  --w-bg-base: rgba(14, 14, 18, 0.86);
+  --w-text: #f2f2f5;
+}
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  user-select: none;
+}
+#catch {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.012);
+}
+#view {
+  position: fixed;
+  left: 0;
+  display: block;
+}
+.test {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+}
+.test[hidden] {
+  display: none;
+}
+.test button {
+  font: inherit;
+  width: 30px;
+  height: 26px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.test button.on {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+}
+.test .hint {
+  opacity: 0.6;
+}

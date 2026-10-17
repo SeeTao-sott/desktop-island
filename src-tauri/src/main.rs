@@ -375,8 +375,8 @@ fn build_tray(
     let widgets_item = MenuItem::with_id(app, "widgets_edit", widgets_label, widgets.is_some(), None::<&str>)?;
     let skin_item = MenuItem::with_id(app, "widgets_skin", "切换小组件主题", widgets.is_some(), None::<&str>)?;
     let preview_item = MenuItem::with_id(app, "theme_preview", "小组件主题预览", widgets.is_some(), None::<&str>)?;
-    // 裂缝射击的可行性测试（阶段 0，做完游戏后去掉）
-    let rift_item = MenuItem::with_id(app, "rift_test", "裂缝射击测试", true, None::<&str>)?;
+    // 裂缝射击（开发中：以后从选歌菜单进）
+    let rift_item = MenuItem::with_id(app, "rift", "裂缝射击（测试）", true, None::<&str>)?;
     // 桌面布局 1/2/3：各自记组件、位置和主题（布局本身由页面保存）
     let lay_items: Vec<MenuItem<tauri::Wry>> = (0..3)
         .map(|i| MenuItem::with_id(app, format!("layout_{i}"), format!("布局 {}", i + 1), widgets.is_some(), None::<&str>))
@@ -467,7 +467,7 @@ fn build_tray(
                 }
             }
             "theme_preview" => open_theme_preview(app),
-            "rift_test" => rift::open_test(app),
+            "rift" => rift::open(app),
             // 所有组件一起换到下一个主题（方形 → 圆环 → 科幻 HUD → 六边形 → …）
             "widgets_skin" => {
                 let _ = app.emit("widgets-skin-next", ());
@@ -533,7 +533,7 @@ fn main() {
             set_hit_rect,
             island_double_click,
             rift::rift_log,
-            rift::rift_test_close,
+            rift::rift_close,
             edge_enabled,
             edge_active,
             media_cmd,
@@ -718,9 +718,9 @@ fn main() {
             if std::env::args().any(|a| a == "--theme-preview") {
                 open_theme_preview(app.handle());
             }
-            // 启动参数 --rift-test：打开裂缝射击的可行性测试窗口（阶段 0）
-            if std::env::args().any(|a| a == "--rift-test") {
-                rift::open_test(app.handle());
+            // 启动参数 --rift：一启动就打开裂缝射击（测试用，平时从托盘打开）
+            if std::env::args().any(|a| a == "--rift") {
+                rift::open(app.handle());
             }
 
             // 托盘失败不影响主体功能

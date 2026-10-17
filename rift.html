@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>裂缝射击</title>
+    <link rel="stylesheet" href="/src/rift/rift.css" />
+  </head>
+  <body>
+    <!-- 看不出来的一层底：透明像素的点击会穿到桌面上，游戏时整个窗口要接住鼠标、保住键盘焦点 -->
+    <div id="catch"></div>
+    <canvas id="view"></canvas>
+    <div id="test" class="test" hidden>
+      <span>测试：靶墙行数 N</span>
+      <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button><button data-n="4">4</button>
+      <span class="hint">Esc 退出</span>
+    </div>
+    <script type="module" src="/src/rift/rift.ts"></script>
+  </body>
+</html>

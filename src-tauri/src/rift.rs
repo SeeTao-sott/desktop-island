@@ -1,20 +1,20 @@
-//! 裂缝射击模式。阶段 0：可行性测试窗口（铺满主屏幕的透明置顶窗口，拿键盘和鼠标焦点）。
+//! 裂缝射击模式：铺满主屏幕的透明置顶窗口，拿键盘和鼠标焦点；画面只在中间的裂缝里，外面是原本的桌面。
 //! 只处理自己窗口里的输入（Pointer Lock 是网页内核自己的功能），不用全局鼠标或键盘钩子。
 
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
 
-pub const TEST_LABEL: &str = "rift";
+pub const LABEL: &str = "rift";
 
-/// 打开测试窗口（已经开着就拿到前面）
-pub fn open_test(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(TEST_LABEL) {
+/// 打开游戏窗口（已经开着就拿到前面）
+pub fn open(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.set_focus();
         return;
     }
-    let built = WebviewWindowBuilder::new(app, TEST_LABEL, WebviewUrl::App("rift-test.html".into()))
-        .title("裂缝射击测试")
+    let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("rift.html".into()))
+        .title("裂缝射击")
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -29,7 +29,7 @@ pub fn open_test(app: &AppHandle) {
     let win = match built {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("[裂缝测试] 窗口创建失败: {e}");
+            eprintln!("[裂缝射击] 窗口创建失败: {e}");
             return;
         }
     };
@@ -49,13 +49,14 @@ pub fn open_test(app: &AppHandle) {
 
 #[tauri::command]
 pub fn rift_log(msg: String) {
-    eprintln!("[裂缝测试] {msg}");
+    eprintln!("[裂缝射击] {msg}");
 }
 
+/// 页面播完"裂缝合上"的动画后调用
 #[tauri::command]
-pub fn rift_test_close(app: AppHandle) {
-    if let Some(w) = app.get_webview_window(TEST_LABEL) {
+pub fn rift_close(app: AppHandle) {
+    if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.close();
-        eprintln!("[裂缝测试] 窗口已关闭");
+        eprintln!("[裂缝射击] 窗口已关闭");
     }
 }
