@@ -1,11 +1,42 @@
 //! 裂缝射击模式：铺满主屏幕的透明置顶窗口，拿键盘和鼠标焦点；画面只在中间的裂缝里，外面是原本的桌面。
 //! 只处理自己窗口里的输入（Pointer Lock 是网页内核自己的功能），不用全局鼠标或键盘钩子。
 
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
+use std::sync::Mutex;
+
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
 
 pub const LABEL: &str = "rift";
+
+/// 选歌菜单选好的歌（文件夹名、谱类型、难度），裂缝窗口打开后来取；没有 = 托盘里的测试模式
+#[derive(Clone, serde::Serialize)]
+pub struct Pick {
+    pub id: String,
+    pub characteristic: String,
+    pub difficulty: String,
+}
+static PENDING: Mutex<Option<Pick>> = Mutex::new(None);
+
+/// 从选歌菜单进：记下这首歌，打开裂缝。
+/// 必须是异步命令：Windows 上在同步命令里建窗口会卡死（窗口建了一半、一直不显示）
+#[tauri::command]
+pub async fn rift_open(app: AppHandle, id: String, characteristic: String, difficulty: String) {
+    *PENDING.lock().unwrap() = Some(Pick { id, characteristic, difficulty });
+    open(&app);
+}
+
+/// 裂缝页面加载好后来取要玩的歌（取一次就清掉）
+#[tauri::command]
+pub fn rift_pending() -> Option<Pick> {
+    PENDING.lock().unwrap().take()
+}
+
+/// 打中靶子：让桌面上的律动组件闪一下
+#[tauri::command]
+pub fn rift_hit(app: AppHandle) {
+    let _ = app.emit_to("widgets", "rift-hit", ());
+}
 
 /// 打开游戏窗口（已经开着就拿到前面）
 pub fn open(app: &AppHandle) {

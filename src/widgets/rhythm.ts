@@ -85,6 +85,35 @@ export async function openRhythm(anchor: Rect) {
 }
 
 /** 退出：拆掉界面，窗口沉回桌面层、恢复点击穿透、焦点还给原来的程序 */
+// ---------------- 玩法选择 ----------------
+
+type PlayMode = "fall" | "rift";
+const MODE_KEY = "rhythm-mode";
+function playMode(): PlayMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === "rift" ? "rift" : "fall";
+  } catch {
+    return "fall";
+  }
+}
+function setPlayMode(m: PlayMode) {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // 记不住就算了
+  }
+}
+
+/** 裂缝射击：先让小组件窗口退出音游模式（沉回桌面、交还焦点），再打开裂缝窗口 */
+async function openRift(song: Song, diff: Difficulty) {
+  cleanup?.();
+  cleanup = null;
+  root?.remove();
+  root = null;
+  await invoke("widgets_rhythm", { on: false }).catch(() => {});
+  invoke("rift_open", { id: song.id, characteristic: diff.characteristic, difficulty: diff.name }).catch(() => {});
+}
+
 export function closeRhythm() {
   cleanup?.();
   cleanup = null;
@@ -125,6 +154,18 @@ function showMenu(anchor: Rect) {
     });
     const card = el("div", "rh-menu", root!);
     el("div", "rh-menu-title", card, "选一首歌");
+    // 玩法：下落式 4 键 / 裂缝射击（记住上次选的）
+    const modes = el("div", "rh-modes", card);
+    for (const [id, label] of [
+      ["fall", "下落 4 键"],
+      ["rift", "裂缝射击"],
+    ] as const) {
+      const b = el("button", "rh-mode" + (playMode() === id ? " on" : ""), modes, label);
+      b.addEventListener("click", () => {
+        setPlayMode(id);
+        modes.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+      });
+    }
     const list = el("div", "rh-list", card);
     el("div", "rh-empty", list, "读取中…");
 
@@ -155,7 +196,7 @@ function showMenu(anchor: Rect) {
           for (const d of std.length ? std : song.difficulties) {
             const b = el("button", "rh-diff", diffs, DIFF_LABEL[d.name] ?? d.name);
             b.title = `${d.characteristic} / ${d.name}`;
-            b.addEventListener("click", () => loadAndPlay(song, d, anchor));
+            b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
           }
         }
         place();

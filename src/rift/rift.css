@@ -174,3 +174,53 @@ body {
 .info[hidden] {
   display: none;
 }
+
+/* 提示（按空格开始 / 结束）：在裂缝上方 */
+.prompt {
+  position: fixed;
+  left: 50%;
+  top: 9%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.prompt[hidden] {
+  display: none;
+}
+/* 判定字：准星下方 */
+.judge {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 34px);
+  transform: translate(-50%, 0);
+  font-size: 26px;
+  font-weight: 800;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+.judge[data-j="perfect"] {
+  color: #ffe27a;
+}
+.judge[data-j="great"] {
+  color: #8fd8ff;
+}
+.judge[data-j="miss"] {
+  color: #ff6b6b;
+}
+.combo {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 70px);
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}

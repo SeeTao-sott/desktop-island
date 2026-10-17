@@ -452,3 +452,12 @@ body.editing .widget.dragging .remove-btn {
 .w-settings.float-down {
   top: calc(100% + 48px);
 }
+/* 裂缝射击打中时，律动组件闪一下 */
+.hit-flash {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--w-radius);
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--w-accent) 70%, #fff) 0%, color-mix(in srgb, var(--w-accent) 35%, transparent) 55%, transparent 80%);
+  opacity: 0;
+  pointer-events: none;
+}

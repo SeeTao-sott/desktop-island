@@ -718,6 +718,20 @@ listen<boolean>("widgets-paused", (e) => {
     l.frame?.setPaused(paused);
   }
 });
+// 裂缝射击打中靶子：律动（音频可视化）组件跟着闪一下（只动 opacity）
+listen("rift-hit", () => {
+  for (const l of live) {
+    if (l.mod.kind !== "audio" || l.removing) continue;
+    let f = l.el.querySelector<HTMLElement>(".hit-flash");
+    if (!f) {
+      f = document.createElement("div");
+      f.className = "hit-flash";
+      l.el.appendChild(f);
+    }
+    f.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 240, easing: "ease-out" });
+  }
+});
+
 // 托盘里"桌面布局 → 布局 n"
 listen<number>("widgets-layout", (e) => switchLayout(e.payload));
 // 托盘里"切换小组件主题"：换到下一个

@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Spring } from "../spring";
 import { buildSettings, drawCrosshair, loadSettings, saveSettings } from "./hud";
+import { densitySchedule, nAt, planTargets, type NStep, type Shot, type Target } from "./plan";
 
 // ---------------- 可调的参数 ----------------
 /** N = 4 时裂缝占屏幕高度的比例（以后放进设置） */
@@ -198,6 +199,56 @@ const muzzleLight = new THREE.PointLight(0xffd08a, 0, 0, 1.4);
 muzzleLight.position.set(0.4, -0.3, -1);
 scene.add(muzzleLight);
 
+// ---------------- 靶子 ----------------
+// 一个靶子 = 圆盘 + 中心亮点 + 往里收的外圈；外圈收到贴住圆盘边的那一刻就是拍点
+const TARGET_R = CELL * 0.3;
+const discGeo = new THREE.CircleGeometry(TARGET_R, 48);
+const coreGeo = new THREE.CircleGeometry(TARGET_R * 0.26, 32);
+const approachGeo = new THREE.RingGeometry(TARGET_R * 0.96, TARGET_R * 1.1, 64);
+const TCOLOR = [new THREE.Color(0xff3552), new THREE.Color(0x2f8cff)];
+interface LiveTarget {
+  tg: Target;
+  group: THREE.Group;
+  disc: THREE.Mesh;
+  discMat: THREE.MeshBasicMaterial;
+  coreMat: THREE.MeshBasicMaterial;
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  /** 打中或错过之后淡出的起点（ms），0 = 还活着 */
+  gone: number;
+}
+const targetLayer = new THREE.Group();
+scene.add(targetLayer);
+const targetPool: LiveTarget[] = [];
+function takeTarget(tg: Target): LiveTarget {
+  let lt = targetPool.pop();
+  if (!lt) {
+    const group = new THREE.Group();
+    const discMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+    const ringMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const disc = new THREE.Mesh(discGeo, discMat);
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.z = 0.01;
+    const ring = new THREE.Mesh(approachGeo, ringMat);
+    ring.position.z = 0.02;
+    group.add(disc, core, ring);
+    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0 };
+  }
+  lt.tg = tg;
+  lt.gone = 0;
+  const c = TCOLOR[tg.color] ?? TCOLOR[0];
+  lt.discMat.color.copy(c);
+  lt.ringMat.color.copy(c).lerp(new THREE.Color(0xffffff), 0.35);
+  lt.group.scale.setScalar(1);
+  targetLayer.add(lt.group);
+  return lt;
+}
+function dropTarget(lt: LiveTarget) {
+  targetLayer.remove(lt.group);
+  targetPool.push(lt);
+}
+
 // ---------------- 裂缝：擦掉外面 + 发光边 ----------------
 // 在画布像素坐标里画（y 向下），用正交相机
 const overlay = new THREE.Scene();
@@ -357,8 +408,8 @@ const yawMax = Math.atan(((COLS / 2) * CELL) / WALL_Z);
 const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / WALL_Z);
 
 function showInfo() {
-  infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}
-Esc 退出`;
+  const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
+  infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}${delay}\nEsc 退出`;
 }
 
 async function lock() {
@@ -385,6 +436,7 @@ document.addEventListener("pointerlockchange", () => {
     playing = true;
     startEl.hidden = true;
     crossEl.hidden = false;
+    if (song.on && !song.running && !song.finished) showPrompt(song.audio ? "按空格开始" : "正在载入歌曲…");
   } else if (playing) {
     // 锁定中按 Esc：浏览器自己先释放锁定（这一下 Esc 页面收不到），当作退出
     playing = false;
@@ -415,10 +467,11 @@ function shoot() {
   aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
   aimDir.set(0, 0, -1).applyEuler(aimEuler);
   ray.set(camera.position, aimDir);
+  const hitTarget = shootTargets();
   const targets: THREE.Object3D[] = [];
   for (const r of rows) if (r.group.visible && r.cell.opacity > 0.5) for (const c of r.group.children) if ((c as THREE.Mesh).isMesh) targets.push(c);
-  const hit = ray.intersectObjects(targets, false)[0];
-  const wallHit = hit ?? ray.intersectObject(wall, false)[0];
+  const hit = hitTarget ? undefined : ray.intersectObjects(targets, false)[0];
+  const wallHit = hitTarget ? undefined : (hit ?? ray.intersectObject(wall, false)[0]);
   if (wallHit) {
     const p = wallHit.point.clone().setZ(-WALL_Z + 0.05);
     // 弹孔：深色小圆点，慢慢淡掉
@@ -450,6 +503,231 @@ function shoot() {
 let halfNow = 0;
 const currentHalf = () => halfNow;
 
+// ---------------- 一首歌：谱、放歌、判定 ----------------
+interface SongEntry {
+  id: string;
+  title: string;
+  artist: string;
+  bpm: number;
+  offset_ms: number;
+}
+interface Pick {
+  id: string;
+  characteristic: string;
+  difficulty: string;
+}
+/** 靶子提前多久出现（秒），以后放进设置 */
+const LEAD = 1.0;
+const PERFECT = 0.05;
+const GREAT = 0.1;
+const song = {
+  on: false, // 是选歌进来的（不是托盘里的测试）
+  meta: null as SongEntry | null,
+  pick: null as Pick | null,
+  targets: [] as Target[],
+  steps: [] as NStep[],
+  audio: null as AudioBuffer | null,
+  next: 0, // 下一个还没出现的靶子
+  live: [] as LiveTarget[],
+  running: false,
+  starting: false,
+  finished: false,
+  startAt: 0,
+  offsetMs: 0,
+  count: { perfect: 0, great: 0, miss: 0 },
+  combo: 0,
+  maxCombo: 0,
+};
+let actx: AudioContext | null = null;
+let source: AudioBufferSourceNode | null = null;
+const promptEl = document.createElement("div");
+promptEl.className = "prompt";
+promptEl.hidden = true;
+document.body.appendChild(promptEl);
+const judgeEl = document.createElement("div");
+judgeEl.className = "judge";
+document.body.appendChild(judgeEl);
+const comboEl = document.createElement("div");
+comboEl.className = "combo";
+document.body.appendChild(comboEl);
+
+function showPrompt(text: string) {
+  promptEl.textContent = text;
+  promptEl.hidden = !text;
+}
+
+/** 音频时钟此刻"正从扬声器出来"的位置（秒），getOutputTimestamp 已含输出延迟 */
+function audioNow() {
+  const ts = actx!.getOutputTimestamp();
+  if (ts.contextTime !== undefined && ts.performanceTime) return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+  return actx!.currentTime - (actx!.outputLatency || actx!.baseLatency || 0);
+}
+/** 歌放到第几秒（扣掉偏移：偏移为正，靶子整体晚一点） */
+const songTime = () => audioNow() - song.startAt - song.offsetMs / 1000;
+
+async function loadSong(pick: Pick) {
+  song.on = true;
+  song.pick = pick;
+  document.getElementById("test")!.hidden = true;
+  showPrompt("正在载入歌曲…");
+  const list = await invoke<SongEntry[]>("rhythm_songs").catch(() => [] as SongEntry[]);
+  song.meta = list.find((x) => x.id === pick.id) ?? null;
+  song.offsetMs = song.meta?.offset_ms ?? 0;
+  let shots: Shot[] = [];
+  try {
+    shots = await invoke<Shot[]>("rhythm_shots", { id: pick.id, characteristic: pick.characteristic, difficulty: pick.difficulty });
+  } catch (e) {
+    log(`读谱失败：${e}`);
+  }
+  const bpm = song.meta?.bpm ?? 120;
+  song.steps = densitySchedule(shots, bpm);
+  song.targets = planTargets(shots, song.steps, song.meta?.title ?? pick.id, LEAD);
+  const tiers = [1, 2, 3, 4].map((n) => song.steps.filter((x) => x.n === n).length);
+  log(`《${song.meta?.title}》${pick.difficulty}：音符 ${shots.length} 个 → 靶子 ${song.targets.length} 个；N 变化 ${song.steps.length - 1} 次（各档出现 ${tiers.join("/")} 次）`);
+  log(`N 时间表：${song.steps.slice(1, 16).map((x) => `${x.t.toFixed(1)}s→${x.n}`).join("  ")}`);
+  log(`前 8 个靶子：${song.targets.slice(0, 8).map((x) => `${x.t.toFixed(2)}s ${x.color ? "蓝" : "红"} 第${x.col + 1}列 下数第${x.rb + 1}行`).join("；")}`);
+  try {
+    const bytes = await invoke<ArrayBuffer>("rhythm_audio", { id: pick.id });
+    actx = new AudioContext({ latencyHint: "interactive" });
+    song.audio = await actx.decodeAudioData(bytes);
+  } catch (e) {
+    log(`歌读不了：${e}`);
+  }
+  setN(nAt(song.steps, -1));
+  showInfo();
+  showPrompt(document.pointerLockElement ? "按空格开始" : "");
+}
+
+async function startSong() {
+  if (!song.audio || !actx || song.running || song.starting) return;
+  song.starting = true;
+  await actx.resume();
+  const gain = actx.createGain();
+  gain.gain.value = 0.85;
+  gain.connect(actx.destination);
+  source = actx.createBufferSource();
+  source.buffer = song.audio;
+  source.connect(gain);
+  // 先留一点时间：开头就有的靶子也能完整地收圈
+  song.startAt = actx.currentTime + Math.max(1.5, LEAD + 0.5);
+  source.start(song.startAt);
+  invoke("rhythm_now_playing", {
+    id: song.pick!.id,
+    positionMs: Math.round((actx.currentTime - song.startAt) * 1000),
+    durationMs: Math.round(song.audio.duration * 1000),
+  }).catch(() => {});
+  Object.assign(song, { running: true, starting: false, finished: false, next: 0, combo: 0, maxCombo: 0, count: { perfect: 0, great: 0, miss: 0 } });
+  showPrompt("");
+}
+
+function stopSong() {
+  if (source) {
+    try {
+      source.stop();
+    } catch {
+      // 还没开始放
+    }
+    source = null;
+    invoke("rhythm_now_playing", { id: "", positionMs: 0, durationMs: 0 }).catch(() => {});
+  }
+  song.running = false;
+}
+
+type Judge = "perfect" | "great" | "miss";
+const JUDGE_TEXT: Record<Judge, string> = { perfect: "Perfect", great: "Great", miss: "Miss" };
+function judge(j: Judge) {
+  song.count[j]++;
+  if (j === "miss") song.combo = 0;
+  else {
+    song.combo++;
+    song.maxCombo = Math.max(song.maxCombo, song.combo);
+    invoke("rift_hit").catch(() => {});
+  }
+  judgeEl.textContent = JUDGE_TEXT[j];
+  judgeEl.dataset.j = j;
+  judgeEl.animate(
+    [
+      { transform: "translate(-50%, 0) scale(1.25)", opacity: 1 },
+      { transform: "translate(-50%, 0) scale(1)", opacity: 1, offset: 0.25 },
+      { transform: "translate(-50%, 0) scale(1)", opacity: 0 },
+    ],
+    { duration: 600, easing: "ease-out", fill: "forwards" },
+  );
+  comboEl.textContent = song.combo >= 2 ? `${song.combo} combo` : "";
+}
+
+/** 每帧：出靶子、收圈、过期算 Miss、按高潮调 N */
+function updateSong(n: number, nowMs: number) {
+  if (!song.running) return;
+  const now = songTime();
+  while (song.next < song.targets.length && song.targets[song.next].t - LEAD <= now) {
+    song.live.push(takeTarget(song.targets[song.next]));
+    song.next++;
+  }
+  let needRows = 1;
+  for (let i = song.live.length - 1; i >= 0; i--) {
+    const lt = song.live[i];
+    const tg = lt.tg;
+    // 跟着自己那一行走（行的位置随 N 变）
+    lt.group.position.set((tg.col - (COLS - 1) / 2 + tg.dx) * CELL, (tg.rb - (n - 1) / 2 + tg.dy) * CELL, -WALL_Z + 0.06);
+    if (lt.gone) {
+      const k = (nowMs - lt.gone) / 220;
+      if (k >= 1) {
+        dropTarget(lt);
+        song.live.splice(i, 1);
+        continue;
+      }
+      lt.group.scale.setScalar(1 + k * 0.6);
+      lt.discMat.opacity = lt.coreMat.opacity = 1 - k;
+      lt.ringMat.opacity = 0;
+      continue;
+    }
+    needRows = Math.max(needRows, tg.rb + 1);
+    const left = tg.t - now; // 离拍点还有几秒
+    if (left < -GREAT) {
+      // 没打：Miss，变暗淡出
+      lt.gone = nowMs;
+      lt.discMat.color.multiplyScalar(0.35);
+      judge("miss");
+      continue;
+    }
+    const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
+    lt.discMat.opacity = 0.92 * appear;
+    lt.coreMat.opacity = appear;
+    lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
+    lt.ringMat.opacity = appear * (left > 0 ? 0.9 : 0.5);
+  }
+  // 高潮：N 跟着时间表走（已经提前 1 拍），但不能比还没打完的靶子要的行数少
+  const want = Math.max(nAt(song.steps, now), needRows);
+  if (want !== nSpring.target) setN(want);
+  const lastT = song.targets.length ? song.targets[song.targets.length - 1].t : 0;
+  if (!song.finished && song.next >= song.targets.length && song.live.length === 0 && now > lastT + 1.5) {
+    song.finished = true;
+    const c = song.count;
+    showPrompt(`结束　Perfect ${c.perfect} · Great ${c.great} · Miss ${c.miss} · 最大连击 ${song.maxCombo}　空格再来 · Esc 退出`);
+  }
+}
+
+/** 射线打靶子：打中返回 true */
+function shootTargets(): boolean {
+  if (!song.running || song.live.length === 0) return false;
+  const discs = song.live.filter((l) => !l.gone).map((l) => l.disc);
+  const hit = ray.intersectObjects(discs, false)[0];
+  if (!hit) return false;
+  const lt = song.live.find((l) => l.disc === hit.object)!;
+  const d = Math.abs(songTime() - lt.tg.t);
+  const j: Judge = d <= PERFECT ? "perfect" : d <= GREAT ? "great" : "miss";
+  lt.gone = performance.now();
+  if (j !== "miss") {
+    const c = TCOLOR[lt.tg.color] ?? TCOLOR[0];
+    const p = hit.point.clone().setZ(-WALL_Z + 0.12);
+    spawnFx(ringGeo, c.clone().lerp(shotColor, 0.3), p, 420, 3.2, true);
+    spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.01), 200, 1.6, true);
+  } else lt.discMat.color.multiplyScalar(0.35);
+  judge(j);
+  return true;
+}
+
 // ---------------- 主循环 ----------------
 let last = performance.now();
 let frames = 0;
@@ -471,6 +749,7 @@ function frame(now: number) {
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
   updateFx(now);
+  updateSong(n, now);
   updateRift(half, open);
   glowMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.9 + 0.1 * Math.sin(now / 160));
 
@@ -508,6 +787,9 @@ function close() {
   startEl.hidden = true;
   infoEl.hidden = true;
   if (document.pointerLockElement) document.exitPointerLock();
+  stopSong();
+  showPrompt("");
+  comboEl.textContent = "";
   openSpring.cfg = { stiffness: 160, damping: 26, precision: 0.001 };
   openSpring.target = 0;
 }
@@ -516,7 +798,26 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") close();
   // 在设置框里打字时不当快捷键
   if ((e.target as HTMLElement)?.tagName === "INPUT") return;
-  // 测试：数字键 1~4 也能切 N
+  if (song.on) {
+    // 空格：开始放歌（先锁定鼠标）；结束后空格再来一次
+    if (e.key === " " && playing && !e.repeat) {
+      e.preventDefault();
+      if (song.finished) {
+        stopSong();
+        for (const lt of song.live) dropTarget(lt);
+        song.live = [];
+      }
+      startSong();
+    }
+    // ← → 调延迟（靶子早了 / 晚了），每首歌分别记住；和下落模式共用同一个设置
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      song.offsetMs = Math.max(-2000, Math.min(2000, song.offsetMs + (e.key === "ArrowRight" ? 20 : -20)));
+      invoke("rhythm_prefs_set", { id: song.pick!.id, offsetMs: song.offsetMs, speed: null }).catch(() => {});
+      showInfo();
+    }
+    return;
+  }
+  // 测试模式：数字键 1~4 切 N
   if (e.key >= "1" && e.key <= "4") setN(Number(e.key));
 });
 document.querySelectorAll<HTMLButtonElement>("#test button").forEach((b) => b.addEventListener("click", () => setN(Number(b.dataset.n))));
@@ -530,6 +831,9 @@ async function start() {
   setN(1);
   layoutRows(1);
   openSpring.target = 1;
+  // 从选歌菜单进来的：载入那首歌；托盘里打开的：测试模式（数字键切 N）
+  const pick = await invoke<Pick | null>("rift_pending").catch(() => null);
+  if (pick) loadSong(pick);
   startEl.hidden = false;
   infoEl.hidden = false;
   showInfo();

@@ -224,10 +224,84 @@ fn lane_of(x: f64) -> u8 {
     x.round().clamp(0.0, 3.0) as u8
 }
 
+/// 谱里的变速：v2 老工具写在 _customData._BPMChanges、新一点的写成 100 号事件；v3 是 bpmEvents
+fn bpm_changes(v: &Value) -> Vec<(f64, f64)> {
+    let mut changes = Vec::new();
+    if let Some(cd) = v.get("_customData") {
+        for c in arr(cd, "_BPMChanges").iter().chain(arr(cd, "_bpmChanges")) {
+            if let (Some(b), Some(m)) = (f(c, "_time"), f(c, "_BPM").or_else(|| f(c, "_bpm"))) {
+                changes.push((b, m));
+            }
+        }
+    }
+    for e in arr(v, "_events") {
+        if f(e, "_type") == Some(100.0) {
+            if let (Some(b), Some(m)) = (f(e, "_time"), f(e, "_floatValue")) {
+                changes.push((b, m));
+            }
+        }
+    }
+    for e in arr(v, "bpmEvents") {
+        if let (Some(b), Some(m)) = (f(e, "b"), f(e, "m")) {
+            changes.push((b, m));
+        }
+    }
+    changes
+}
+
+/// 裂缝射击用的音符：时间、列（lineIndex 0~3）、层（lineLayer 0~2，下到上）、颜色（0 红 1 蓝）
+#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+pub struct Shot {
+    pub t: f64,
+    pub x: u8,
+    pub y: u8,
+    pub c: u8,
+}
+
+/// 解析裂缝射击要的音符：只要红蓝方块（v3 的 arc 两头本来就是方块，照样算）；
+/// 炸弹、墙、arc 本身、链条（burstSliders）全部忽略
+pub fn parse_shots(v: &Value, bpm: f64, offset: f64) -> Vec<Shot> {
+    let mut raw: Vec<(f64, u8, u8, u8)> = Vec::new();
+    let layer = |y: f64| y.round().clamp(0.0, 2.0) as u8;
+    if v.get("_notes").is_some() {
+        for n in arr(v, "_notes") {
+            let ty = f(n, "_type").unwrap_or(-1.0) as i64;
+            if ty == 0 || ty == 1 {
+                if let (Some(b), Some(x)) = (f(n, "_time"), f(n, "_lineIndex")) {
+                    raw.push((b, lane_of(x), layer(f(n, "_lineLayer").unwrap_or(0.0)), ty as u8));
+                }
+            }
+        }
+    } else {
+        let data = arr(v, "colorNotesData");
+        for n in arr(v, "colorNotes") {
+            let d = match f(n, "i") {
+                Some(i) => data.get(i as usize),
+                None => Some(n),
+            };
+            let Some(d) = d else { continue };
+            if let (Some(b), Some(x)) = (f(n, "b"), f(d, "x")) {
+                let c = f(d, "c").unwrap_or(0.0).clamp(0.0, 1.0) as u8;
+                raw.push((b.max(0.0), lane_of(x), layer(f(d, "y").unwrap_or(0.0)), c));
+            }
+        }
+    }
+    let tempo = Tempo::new(bpm, bpm_changes(v));
+    let mut out: Vec<Shot> = raw.into_iter().map(|(b, x, y, c)| Shot { t: tempo.seconds(b) + offset, x, y, c }).collect();
+    out.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.c.cmp(&b.c)).then(a.x.cmp(&b.x)));
+    out
+}
+
+/// 读某首歌某个难度的裂缝射击音符
+pub fn load_shots(dir: &Path, info: &SongInfo, diff: &Difficulty) -> Result<Vec<Shot>, String> {
+    let path = find_file(dir, &diff.file).ok_or_else(|| format!("找不到谱文件 {}", diff.file))?;
+    let v = read_json(&path)?;
+    Ok(parse_shots(&v, info.bpm, info.offset))
+}
+
 /// 解析一个难度的谱文件，返回按时间排好的音符
 pub fn parse_notes(v: &Value, bpm: f64, offset: f64) -> Vec<Note> {
     let mut beats: Vec<(f64, u8)> = Vec::new();
-    let mut changes: Vec<(f64, f64)> = Vec::new();
 
     if v.get("_notes").is_some() {
         // v2：_type 3 是炸弹，不要；0、1 是红蓝方块
@@ -236,21 +310,6 @@ pub fn parse_notes(v: &Value, bpm: f64, offset: f64) -> Vec<Note> {
             if ty == 0 || ty == 1 {
                 if let (Some(b), Some(x)) = (f(n, "_time"), f(n, "_lineIndex")) {
                     beats.push((b, lane_of(x)));
-                }
-            }
-        }
-        // 变速：老工具写在 _customData._BPMChanges；新一点的写成 100 号事件
-        if let Some(cd) = v.get("_customData") {
-            for c in arr(cd, "_BPMChanges").iter().chain(arr(cd, "_bpmChanges")) {
-                if let (Some(b), Some(m)) = (f(c, "_time"), f(c, "_BPM").or_else(|| f(c, "_bpm"))) {
-                    changes.push((b, m));
-                }
-            }
-        }
-        for e in arr(v, "_events") {
-            if f(e, "_type") == Some(100.0) {
-                if let (Some(b), Some(m)) = (f(e, "_time"), f(e, "_floatValue")) {
-                    changes.push((b, m));
                 }
             }
         }
@@ -272,14 +331,9 @@ pub fn parse_notes(v: &Value, bpm: f64, offset: f64) -> Vec<Note> {
                 beats.push((b, lane_of(x)));
             }
         }
-        for e in arr(v, "bpmEvents") {
-            if let (Some(b), Some(m)) = (f(e, "b"), f(e, "m")) {
-                changes.push((b, m));
-            }
-        }
     }
 
-    let tempo = Tempo::new(bpm, changes);
+    let tempo = Tempo::new(bpm, bpm_changes(v));
     let mut notes: Vec<Note> = beats.into_iter().map(|(b, lane)| Note { t: tempo.seconds(b) + offset, lane }).collect();
     notes.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.lane.cmp(&b.lane)));
     // 同一条轨道、同一时刻叠着两个方块（上下两层）只算一个：按一次键就够
@@ -426,6 +480,40 @@ mod tests {
             0.0,
         );
         assert_eq!(notes, vec![Note { t: 3.0, lane: 0 }, Note { t: 6.0, lane: 3 }]);
+    }
+
+    #[test]
+    fn shots_keep_color_and_layer_skip_bombs_and_chains() {
+        let v2 = parse_shots(
+            &json!({ "_version": "2.2.0", "_notes": [
+                { "_time": 2, "_lineIndex": 3, "_lineLayer": 2, "_type": 1 },
+                { "_time": 1, "_lineIndex": 0, "_lineLayer": 0, "_type": 0 },
+                { "_time": 1.5, "_lineIndex": 2, "_lineLayer": 1, "_type": 3 }
+            ], "_obstacles": [{ "_time": 1, "_lineIndex": 0, "_duration": 2 }] }),
+            120.0,
+            0.0,
+        );
+        assert_eq!(v2, vec![Shot { t: 0.5, x: 0, y: 0, c: 0 }, Shot { t: 1.0, x: 3, y: 2, c: 1 }]);
+        let v3 = parse_shots(
+            &json!({ "version": "3.3.0",
+                "colorNotes": [{ "b": 2, "x": 1, "y": 1, "c": 1, "d": 1 }],
+                "bombNotes": [{ "b": 3, "x": 0, "y": 0 }],
+                "burstSliders": [{ "b": 4, "x": 3, "y": 0, "c": 0 }],
+                "sliders": [{ "b": 5, "x": 2, "y": 0, "c": 0, "tb": 6 }]
+            }),
+            120.0,
+            0.0,
+        );
+        assert_eq!(v3, vec![Shot { t: 1.0, x: 1, y: 1, c: 1 }]);
+        let v4 = parse_shots(
+            &json!({ "version": "4.0.0",
+                "colorNotes": [{ "b": 4, "i": 0 }],
+                "colorNotesData": [{ "x": 2, "y": 2, "c": 0, "d": 1 }]
+            }),
+            60.0,
+            0.0,
+        );
+        assert_eq!(v4, vec![Shot { t: 4.0, x: 2, y: 2, c: 0 }]);
     }
 
     #[test]

@@ -34,6 +34,26 @@
   color: var(--w-sub);
   margin: 0 4px 10px;
 }
+.rh-modes {
+  display: flex;
+  gap: 6px;
+  margin: 0 4px 10px;
+}
+.rh-mode {
+  font: inherit;
+  font-size: 12px;
+  color: var(--w-text);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--w-text) 18%, transparent);
+  background: transparent;
+  cursor: pointer;
+}
+.rh-mode.on {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+  color: #fff;
+}
 .rh-list {
   overflow-y: auto;
   display: flex;

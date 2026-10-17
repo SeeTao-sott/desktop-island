@@ -232,6 +232,19 @@ fn rhythm_chart(id: String, characteristic: String, difficulty: String) -> Resul
     chart::load_notes(&root.join(&song.id), &song, diff)
 }
 
+/// 裂缝射击用：某首歌某个难度的音符（时间、列、层、颜色）
+#[tauri::command]
+fn rhythm_shots(id: String, characteristic: String, difficulty: String) -> Result<Vec<chart::Shot>, String> {
+    let root = chart::charts_dir().ok_or("找不到 charts 文件夹")?;
+    let song = chart::list_songs(&root).into_iter().find(|s| s.id == id).ok_or("找不到这首歌")?;
+    let diff = song
+        .difficulties
+        .iter()
+        .find(|d| d.characteristic == characteristic && d.name == difficulty)
+        .ok_or("找不到这个难度")?;
+    chart::load_shots(&root.join(&song.id), &song, diff)
+}
+
 /// 这首歌的音频文件原始字节（ogg），页面自己解码播放。用二进制直接传，不转 base64
 #[tauri::command]
 fn rhythm_audio(id: String) -> Result<tauri::ipc::Response, String> {
@@ -534,6 +547,10 @@ fn main() {
             island_double_click,
             rift::rift_log,
             rift::rift_close,
+            rift::rift_open,
+            rift::rift_pending,
+            rift::rift_hit,
+            rhythm_shots,
             edge_enabled,
             edge_active,
             media_cmd,
