@@ -1,7 +1,7 @@
 // 裂缝射击：把谱变成靶子（纯计算，不碰画面）。
 //
 // 时间：音符的时间就是靶子该被打中的时刻。
-// 位置：红色放左半边（第 1–5 列），蓝色放右半边（第 5–9 列），再按 lineIndex 细分；
+// 位置：红色放左半边、蓝色放右半边（列数是单数时中间那列两边共用，比如 9 列是 1–5 / 5–9），再按 lineIndex 细分；
 //       lineLayer（下 0 ~ 上 2）映射到行，不超过靶子出现那一刻的 N；加一点固定随机（歌名做种子，每次一样）。
 // 同一时刻最多保留 2 个靶子（优先一红一蓝）。
 // 高潮：4 秒滑动窗口的音符密度（个/秒）按全曲分位数分成 4 档 → N = 1~4；
@@ -17,7 +17,7 @@ export interface Shot {
 export interface Target {
   /** 应该被打中的时刻（秒） */
   t: number;
-  /** 列 0~8（左到右） */
+  /** 列 0~列数-1（左到右） */
   col: number;
   /** 行，从下往上数 0~N-1（跟着所在的行一起移动） */
   rb: number;
@@ -125,19 +125,25 @@ export function nAt(steps: NStep[], t: number): number {
   return n;
 }
 
-/** 把音符变成靶子；lead：靶子提前多少秒出现 */
-export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: number): Target[] {
+/** 红 / 蓝各自能用的列 [起, 止]（含两头） */
+export function halfOf(color: number, cols: number): [number, number] {
+  const mid = (cols - 1) / 2;
+  return color === 0 ? [0, Math.floor(mid)] : [Math.ceil(mid), cols - 1];
+}
+
+/** 把音符变成靶子；lead：靶子提前多少秒出现；cols：靶墙几列 */
+export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: number, cols: number): Target[] {
   const rand = rng(seed);
   const kept = limitPerMoment(shots);
   const out: Target[] = [];
   for (let i = 0; i < kept.length; i++) {
     const s = kept[i];
     const n = nAt(steps, s.t - lead);
-    const half0 = s.c === 0 ? 0 : 4;
-    // lineIndex 0~3 → 半边里的 0~4 列
-    let col = half0 + Math.round((s.x * 4) / 3);
+    const [lo, hi] = halfOf(s.c, cols);
+    // lineIndex 0~3 → 半边里从左到右
+    let col = lo + Math.round((s.x * (hi - lo)) / 3);
     if (rand() < 0.22) col += rand() < 0.5 ? -1 : 1;
-    col = Math.min(half0 + 4, Math.max(half0, col));
+    col = Math.min(hi, Math.max(lo, col));
     // lineLayer 0~2（下到上）→ 0~N-1 行
     let rb = Math.round((s.y * (n - 1)) / 2);
     if (n > 1 && rand() < 0.15) rb += rand() < 0.5 ? -1 : 1;
@@ -145,7 +151,7 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
     // 同一时刻的另一个靶子在同一格：挪到旁边一列
     const prev = out[out.length - 1];
     if (prev && Math.abs(prev.t - s.t) < 0.002 && prev.col === col && prev.rb === rb) {
-      col = col + 1 <= half0 + 4 ? col + 1 : col - 1;
+      col = col + 1 <= hi ? col + 1 : Math.max(lo, col - 1);
     }
     out.push({ t: s.t, col, rb, color: s.c, dx: (rand() - 0.5) * 0.24, dy: (rand() - 0.5) * 0.24 });
   }

@@ -26,7 +26,10 @@ const GLOW = 30;
 const HFOV = 103;
 /** 靶墙离眼睛多远（米） */
 const WALL_Z = 14;
-const COLS = 9;
+/** 房间按最多 9 列的宽度建；实际列数在设置里（默认 6） */
+const MAX_COLS = 9;
+const settings = loadSettings();
+let COLS = settings.cols;
 
 const W = window.innerWidth;
 const H = window.innerHeight;
@@ -105,7 +108,7 @@ const key = new THREE.PointLight(0xffffff, 60, 0, 1.6);
 key.position.set(0, 1, -WALL_Z * 0.45);
 scene.add(key);
 
-const ROOM_W = CELL * COLS + CELL * 3;
+const ROOM_W = CELL * MAX_COLS + CELL * 3;
 const ROOM_H = CELL * 4 + CELL * 2.2;
 const floorY = -ROOM_H / 2;
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, WALL_Z * 2), mats.floor);
@@ -132,26 +135,38 @@ const wall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_H), mats.wall);
 wall.position.z = -WALL_Z;
 scene.add(wall);
 
-// 9 × 4 个格子：每行一组，行的位置和透明度跟着 N 的弹簧走
+// 列数 × 4 行格子：每行一组，行的位置和透明度跟着 N 的弹簧走
+// 绘制顺序固定：格子 → 靶子 → 特效。半透明物体默认按"离相机多远"排顺序，
+// 靠边的靶子会被排到格子前面先画、再被格子盖住（看不见但打得到），所以写死顺序，格子也不写深度
 const rows: { group: THREE.Group; cell: THREE.MeshStandardMaterial; edge: THREE.MeshBasicMaterial }[] = [];
 const cellGeo = new THREE.PlaneGeometry(CELL * 0.86, CELL * 0.86);
 const edgeGeo = new THREE.EdgesGeometry(cellGeo);
 for (let r = 0; r < 4; r++) {
   const group = new THREE.Group();
   const cell = mats.cell.clone();
+  cell.depthWrite = false;
   const edge = mats.cellEdge.clone();
-  for (let c = 0; c < COLS; c++) {
-    const m = new THREE.Mesh(cellGeo, cell);
-    m.position.set((c - (COLS - 1) / 2) * CELL, 0, 0.01);
-    group.add(m);
-    const e = new THREE.LineSegments(edgeGeo, edge);
-    e.position.copy(m.position).setZ(0.02);
-    group.add(e as unknown as THREE.Mesh);
-  }
   group.position.z = -WALL_Z;
   scene.add(group);
   rows.push({ group, cell, edge });
 }
+/** 按现在的列数摆格子（设置里改了列数会重新摆） */
+function buildCells() {
+  for (const r of rows) {
+    r.group.clear();
+    for (let c = 0; c < COLS; c++) {
+      const m = new THREE.Mesh(cellGeo, r.cell);
+      m.position.set((c - (COLS - 1) / 2) * CELL, 0, 0.01);
+      m.renderOrder = 0;
+      r.group.add(m);
+      const e = new THREE.LineSegments(edgeGeo, r.edge);
+      e.position.copy(m.position).setZ(0.02);
+      e.renderOrder = 1;
+      r.group.add(e);
+    }
+  }
+}
+buildCells();
 
 // ---------------- 射击特效：命中光圈、弹孔、枪口照亮 ----------------
 const fxGroup = new THREE.Group();
@@ -171,6 +186,7 @@ function spawnFx(geo: THREE.BufferGeometry, color: THREE.Color, at: THREE.Vector
   if (!fx) {
     const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
     fx = { mesh: new THREE.Mesh(geo, mat), mat, born: 0, life, grow };
+    fx.mesh.renderOrder = 20;
     fxGroup.add(fx.mesh);
     fxPool.push(fx);
   }
@@ -232,6 +248,9 @@ function takeTarget(tg: Target): LiveTarget {
     core.position.z = 0.01;
     const ring = new THREE.Mesh(approachGeo, ringMat);
     ring.position.z = 0.02;
+    disc.renderOrder = 10;
+    core.renderOrder = 11;
+    ring.renderOrder = 12;
     group.add(disc, core, ring);
     lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0 };
   }
@@ -384,7 +403,6 @@ function layoutRows(n: number) {
 }
 
 // ---------------- 瞄准：鼠标锁定、视角、射击 ----------------
-const settings = loadSettings();
 const crossEl = document.getElementById("cross")!;
 const flashEl = document.getElementById("flash")!;
 const startEl = document.getElementById("start")!;
@@ -392,6 +410,10 @@ const infoEl = document.getElementById("info")!;
 drawCrosshair(crossEl, settings);
 buildSettings(document.getElementById("settings")!, settings, (st) => {
   drawCrosshair(crossEl, st);
+  if (st.cols !== COLS) {
+    COLS = st.cols;
+    buildCells();
+  }
   saveSettings(st);
   showInfo();
 });
@@ -404,7 +426,7 @@ let recoil = 0;
 let lockMode = "";
 let playing = false;
 /** 左右能转到靶墙两边的格子，上下只能到当前 N 行的上下边（N=1 时几乎不能动） */
-const yawMax = Math.atan(((COLS / 2) * CELL) / WALL_Z);
+const yawMax = () => Math.atan(((COLS / 2) * CELL) / WALL_Z);
 const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / WALL_Z);
 
 function showInfo() {
@@ -449,7 +471,7 @@ document.addEventListener("mousemove", (e) => {
   if (!playing) return;
   // Valorant：每个移动单位转 0.07 × 灵敏度 度
   const k = ((0.07 * settings.sens) * Math.PI) / 180;
-  aimYaw = Math.min(yawMax, Math.max(-yawMax, aimYaw - e.movementX * k));
+  aimYaw = Math.min(yawMax(), Math.max(-yawMax(), aimYaw - e.movementX * k));
   aimPitch -= e.movementY * k;
 });
 
@@ -524,6 +546,7 @@ const song = {
   on: false, // 是选歌进来的（不是托盘里的测试）
   meta: null as SongEntry | null,
   pick: null as Pick | null,
+  shots: [] as Shot[],
   targets: [] as Target[],
   steps: [] as NStep[],
   audio: null as AudioBuffer | null,
@@ -581,7 +604,8 @@ async function loadSong(pick: Pick) {
   }
   const bpm = song.meta?.bpm ?? 120;
   song.steps = densitySchedule(shots, bpm);
-  song.targets = planTargets(shots, song.steps, song.meta?.title ?? pick.id, LEAD);
+  song.shots = shots;
+  song.targets = planTargets(shots, song.steps, song.meta?.title ?? pick.id, LEAD, COLS);
   const tiers = [1, 2, 3, 4].map((n) => song.steps.filter((x) => x.n === n).length);
   log(`《${song.meta?.title}》${pick.difficulty}：音符 ${shots.length} 个 → 靶子 ${song.targets.length} 个；N 变化 ${song.steps.length - 1} 次（各档出现 ${tiers.join("/")} 次）`);
   log(`N 时间表：${song.steps.slice(1, 16).map((x) => `${x.t.toFixed(1)}s→${x.n}`).join("  ")}`);
@@ -601,6 +625,8 @@ async function loadSong(pick: Pick) {
 async function startSong() {
   if (!song.audio || !actx || song.running || song.starting) return;
   song.starting = true;
+  // 列数可能在开始前改过：按现在的列数重新排靶子
+  song.targets = planTargets(song.shots, song.steps, song.meta?.title ?? song.pick!.id, LEAD, COLS);
   await actx.resume();
   const gain = actx.createGain();
   gain.gain.value = 0.85;

@@ -12,15 +12,19 @@ export interface AimSettings {
   gap: number;
   outline: boolean;
   dot: boolean;
+  /** 靶墙几列（4~9） */
+  cols: number;
 }
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6 };
 const KEY = "rift-aim";
 
 export function loadSettings(): AimSettings {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return { ...DEFAULTS, ...raw };
+    const s = { ...DEFAULTS, ...raw };
+    s.cols = Math.min(9, Math.max(4, Math.round(Number(s.cols) || DEFAULTS.cols)));
+    return s;
   } catch {
     return { ...DEFAULTS };
   }
@@ -69,7 +73,7 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     }
     panel.appendChild(r);
   };
-  const num = (key: "sens" | "length" | "thick" | "gap", min: number, max: number, step: number) => {
+  const num = (key: "sens" | "length" | "thick" | "gap" | "cols", min: number, max: number, step: number) => {
     const i = document.createElement("input");
     i.type = "number";
     i.min = String(min);
@@ -79,7 +83,7 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     i.addEventListener("input", () => {
       const v = Number(i.value);
       if (!Number.isFinite(v)) return;
-      s[key] = Math.min(max, Math.max(min, v));
+      s[key] = Math.min(max, Math.max(min, step >= 1 ? Math.round(v) : v));
       onChange(s);
     });
     return i;
@@ -102,6 +106,7 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     onChange(s);
   });
   row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
+  row("靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));
