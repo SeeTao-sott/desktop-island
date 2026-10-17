@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Spring } from "../spring";
+import { buildSettings, drawCrosshair, loadSettings, saveSettings } from "./hud";
 
 // ---------------- 可调的参数 ----------------
 /** N = 4 时裂缝占屏幕高度的比例（以后放进设置） */
@@ -64,6 +65,7 @@ function applyTheme(t: Theme | null) {
   hemi.groundColor = tint(0.4, 0.05);
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
+  document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
   scene.fog = new THREE.Fog(tint(0.3, 0.03), WALL_Z * 0.9, WALL_Z * 2.6);
 }
 
@@ -149,6 +151,52 @@ for (let r = 0; r < 4; r++) {
   scene.add(group);
   rows.push({ group, cell, edge });
 }
+
+// ---------------- 射击特效：命中光圈、弹孔、枪口照亮 ----------------
+const fxGroup = new THREE.Group();
+scene.add(fxGroup);
+interface Fx {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  born: number;
+  life: number;
+  grow: number;
+}
+const fxPool: Fx[] = [];
+const ringGeo = new THREE.RingGeometry(CELL * 0.1, CELL * 0.16, 40);
+const holeGeo = new THREE.CircleGeometry(CELL * 0.05, 20);
+function spawnFx(geo: THREE.BufferGeometry, color: THREE.Color, at: THREE.Vector3, life: number, grow: number, additive: boolean) {
+  let fx = fxPool.find((f) => !f.mesh.visible && f.mesh.geometry === geo);
+  if (!fx) {
+    const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+    fx = { mesh: new THREE.Mesh(geo, mat), mat, born: 0, life, grow };
+    fxGroup.add(fx.mesh);
+    fxPool.push(fx);
+  }
+  fx.mat.color.copy(color);
+  fx.mesh.position.copy(at);
+  fx.mesh.visible = true;
+  fx.born = performance.now();
+  fx.life = life;
+  fx.grow = grow;
+  return fx;
+}
+function updateFx(now: number) {
+  for (const f of fxPool) {
+    if (!f.mesh.visible) continue;
+    const k = (now - f.born) / f.life;
+    if (k >= 1) {
+      f.mesh.visible = false;
+      continue;
+    }
+    f.mesh.scale.setScalar(1 + f.grow * k);
+    f.mat.opacity = 1 - k * k;
+  }
+}
+// 开枪时把靶场照亮一下
+const muzzleLight = new THREE.PointLight(0xffd08a, 0, 0, 1.4);
+muzzleLight.position.set(0.4, -0.3, -1);
+scene.add(muzzleLight);
 
 // ---------------- 裂缝：擦掉外面 + 发光边 ----------------
 // 在画布像素坐标里画（y 向下），用正交相机
@@ -284,6 +332,124 @@ function layoutRows(n: number) {
   }
 }
 
+// ---------------- 瞄准：鼠标锁定、视角、射击 ----------------
+const settings = loadSettings();
+const crossEl = document.getElementById("cross")!;
+const flashEl = document.getElementById("flash")!;
+const startEl = document.getElementById("start")!;
+const infoEl = document.getElementById("info")!;
+drawCrosshair(crossEl, settings);
+buildSettings(document.getElementById("settings")!, settings, (st) => {
+  drawCrosshair(crossEl, st);
+  saveSettings(st);
+  showInfo();
+});
+
+/** 准星指向（弧度）：yaw 左右、pitch 上下（往上为正） */
+let aimYaw = 0;
+let aimPitch = 0;
+/** 后坐只是画面往上踢一下再回来，不改准星指向 */
+let recoil = 0;
+let lockMode = "";
+let playing = false;
+/** 左右能转到靶墙两边的格子，上下只能到当前 N 行的上下边（N=1 时几乎不能动） */
+const yawMax = Math.atan(((COLS / 2) * CELL) / WALL_Z);
+const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / WALL_Z);
+
+function showInfo() {
+  infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}
+Esc 退出`;
+}
+
+async function lock() {
+  try {
+    // 原始输入：不受 Windows 鼠标加速影响，和游戏里一样
+    await (document.body.requestPointerLock as (o?: object) => Promise<void>)({ unadjustedMovement: true });
+    lockMode = "原始输入";
+  } catch {
+    try {
+      await (document.body.requestPointerLock as () => Promise<void> | void)();
+      lockMode = "普通锁定（有鼠标加速）";
+    } catch (e) {
+      log(`鼠标锁定失败：${(e as Error)?.message}`);
+      return;
+    }
+  }
+  log(`鼠标锁定：${lockMode}`);
+}
+startEl.querySelector(".start-go")!.addEventListener("click", () => lock());
+
+document.addEventListener("pointerlockchange", () => {
+  const locked = document.pointerLockElement === document.body;
+  if (locked) {
+    playing = true;
+    startEl.hidden = true;
+    crossEl.hidden = false;
+  } else if (playing) {
+    // 锁定中按 Esc：浏览器自己先释放锁定（这一下 Esc 页面收不到），当作退出
+    playing = false;
+    close();
+  }
+  showInfo();
+});
+
+document.addEventListener("mousemove", (e) => {
+  if (!playing) return;
+  // Valorant：每个移动单位转 0.07 × 灵敏度 度
+  const k = ((0.07 * settings.sens) * Math.PI) / 180;
+  aimYaw = Math.min(yawMax, Math.max(-yawMax, aimYaw - e.movementX * k));
+  aimPitch -= e.movementY * k;
+});
+
+const ray = new THREE.Raycaster();
+const aimDir = new THREE.Vector3();
+const aimEuler = new THREE.Euler();
+const shotColor = new THREE.Color(0xffffff);
+document.addEventListener("mousedown", (e) => {
+  if (!playing || e.button !== 0) return;
+  shoot();
+});
+
+function shoot() {
+  // 射线从眼睛沿准星方向（不含后坐）
+  aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
+  aimDir.set(0, 0, -1).applyEuler(aimEuler);
+  ray.set(camera.position, aimDir);
+  const targets: THREE.Object3D[] = [];
+  for (const r of rows) if (r.group.visible && r.cell.opacity > 0.5) for (const c of r.group.children) if ((c as THREE.Mesh).isMesh) targets.push(c);
+  const hit = ray.intersectObjects(targets, false)[0];
+  const wallHit = hit ?? ray.intersectObject(wall, false)[0];
+  if (wallHit) {
+    const p = wallHit.point.clone().setZ(-WALL_Z + 0.05);
+    // 弹孔：深色小圆点，慢慢淡掉
+    spawnFx(holeGeo, new THREE.Color(0x050505), p, 2500, 0, false);
+    if (hit) {
+      // 打中格子：一圈亮环往外扩 + 一团光
+      spawnFx(ringGeo, accent.clone().lerp(shotColor, 0.35), p.clone().setZ(p.z + 0.02), 380, 2.4, true);
+      spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.03), 180, 1.0, true);
+    }
+  }
+  // 后坐：画面往上踢一下（准星不动）
+  recoil = Math.min(0.03, recoil + 0.012);
+  // 枪口闪光：在裂缝里、准星右下方
+  const half = currentHalf();
+  const fx = W / 2 + Math.min(W * 0.3, 380);
+  const fy = CY + Math.max(10, Math.min(half - 30, 140));
+  flashEl.style.left = `${fx}px`;
+  flashEl.style.top = `${fy}px`;
+  flashEl.animate(
+    [
+      { transform: "scale(0.5) rotate(0deg)", opacity: 1 },
+      { transform: "scale(1.15) rotate(25deg)", opacity: 0 },
+    ],
+    { duration: 70, easing: "ease-out" },
+  );
+  muzzleLight.intensity = 30;
+}
+
+let halfNow = 0;
+const currentHalf = () => halfNow;
+
 // ---------------- 主循环 ----------------
 let last = performance.now();
 let frames = 0;
@@ -296,7 +462,15 @@ function frame(now: number) {
   const n = nSpring.value;
   const open = Math.max(0, openSpring.value);
   const half = ((n * CELL_PX) / 2 + MARGIN) * open;
+  halfNow = half;
   layoutRows(n);
+  // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
+  const pm = pitchMax(n);
+  aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  recoil *= Math.exp(-dt / 0.07);
+  camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
+  muzzleLight.intensity *= Math.exp(-dt / 0.03);
+  updateFx(now);
   updateRift(half, open);
   glowMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.9 + 0.1 * Math.sin(now / 160));
 
@@ -329,12 +503,19 @@ function frame(now: number) {
 function close() {
   if (closing) return;
   closing = true;
+  playing = false;
+  crossEl.hidden = true;
+  startEl.hidden = true;
+  infoEl.hidden = true;
+  if (document.pointerLockElement) document.exitPointerLock();
   openSpring.cfg = { stiffness: 160, damping: 26, precision: 0.001 };
   openSpring.target = 0;
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") close();
+  // 在设置框里打字时不当快捷键
+  if ((e.target as HTMLElement)?.tagName === "INPUT") return;
   // 测试：数字键 1~4 也能切 N
   if (e.key >= "1" && e.key <= "4") setN(Number(e.key));
 });
@@ -349,6 +530,9 @@ async function start() {
   setN(1);
   layoutRows(1);
   openSpring.target = 1;
+  startEl.hidden = false;
+  infoEl.hidden = false;
+  showInfo();
   log(`裂缝射击开始：屏幕 ${W}x${H}，格子 ${CELL_PX.toFixed(0)}px，画布高 ${CANVAS_H}`);
   requestAnimationFrame(frame);
 }

@@ -10,6 +10,18 @@
     <!-- 看不出来的一层底：透明像素的点击会穿到桌面上，游戏时整个窗口要接住鼠标、保住键盘焦点 -->
     <div id="catch"></div>
     <canvas id="view"></canvas>
+    <!-- 准星：固定在屏幕正中 -->
+    <div id="cross" class="cross" hidden></div>
+    <!-- 枪口闪光 -->
+    <div id="flash" class="flash"></div>
+    <!-- 开始前：点开始锁定鼠标；顺便调灵敏度和准星 -->
+    <div id="start" class="start" hidden>
+      <div class="start-title">裂缝射击</div>
+      <button class="start-go">点这里开始（锁定鼠标）</button>
+      <div class="start-tip">鼠标转视角 · 左键射击 · 数字键 1~4 换行数（测试）· Esc 随时退出</div>
+      <div id="settings" class="settings"></div>
+    </div>
+    <div id="info" class="info" hidden></div>
     <div id="test" class="test" hidden>
       <span>测试：靶墙行数 N</span>
       <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button><button data-n="4">4</button>
