@@ -267,8 +267,9 @@ function takeTarget(tg: Target): LiveTarget {
   lt.tg = tg;
   lt.gone = 0;
   lt.seenAt = null;
-  lt.discMat.color.copy(tg.group >= 0 ? GOLD : accent);
-  lt.ringMat.color.copy(tg.group >= 0 ? GOLD : accent);
+  // 颜色每帧在 updateSong 里定（一组里两个都还在才是金色）
+  lt.discMat.color.copy(accent);
+  lt.ringMat.color.copy(accent);
   lt.group.scale.setScalar(1);
   targetLayer.add(lt.group);
   return lt;
@@ -677,6 +678,16 @@ async function loadSong(pick: Pick) {
         }
       }
     log(`排靶核对（${COLS} 列）：同格重叠 ${overlap} 对；同时出现 ${pairs} 对，其中左右/上下相邻 ${adjacent} 对`);
+    // 金色组核对：同一组的靶子拍点时间必须一样（出现时间也就一样）
+    const groups = new Map<number, number[]>();
+    for (const x of tg) if (x.group >= 0) groups.set(x.group, [...(groups.get(x.group) ?? []), x.t]);
+    let worst = 0;
+    let sizes = new Set<number>();
+    for (const ts of groups.values()) {
+      worst = Math.max(worst, Math.max(...ts) - Math.min(...ts));
+      sizes.add(ts.length);
+    }
+    log(`金色组核对：${groups.size} 组，每组 ${[...sizes].join("/")} 个，组内拍点最大相差 ${(worst * 1000).toFixed(1)}ms`);
   }
   log(`前 8 个靶子：${song.targets.slice(0, 8).map((x) => `${x.t.toFixed(2)}s ${x.color ? "蓝" : "红"} 第${x.col + 1}列 下数第${x.rb + 1}行`).join("；")}`);
   try {
@@ -877,6 +888,9 @@ function updateSong(n: number, nowMs: number) {
     }
   }
   let needRows = 1;
+  // 每组还剩几个没打：至少两个都还在，才算"要同时打"的一组（金色）
+  const aliveInGroup = new Map<number, number>();
+  for (const l of song.live) if (!l.gone && l.tg.group >= 0) aliveInGroup.set(l.tg.group, (aliveInGroup.get(l.tg.group) ?? 0) + 1);
   for (let i = song.live.length - 1; i >= 0; i--) {
     const lt = song.live[i];
     const tg = lt.tg;
@@ -908,9 +922,10 @@ function updateSong(n: number, nowMs: number) {
     // 能打的那一段变绿（外圈也一起）
     const ready = left <= greatW() && left >= -lateW(tg);
     // 一组的靶子：平时金色，能打时圆盘变绿、外圈保持金色（看得出是一组）
-    const base = tg.group >= 0 ? GOLD : accent;
+    const linked = tg.group >= 0 && (aliveInGroup.get(tg.group) ?? 0) >= 2;
+    const base = linked ? GOLD : accent;
     lt.discMat.color.copy(ready ? GREEN : base);
-    lt.ringMat.color.copy(tg.group >= 0 ? GOLD : ready ? GREEN : accent);
+    lt.ringMat.color.copy(linked ? GOLD : ready ? GREEN : accent);
     lt.discMat.opacity = 0.92 * appear;
     lt.coreMat.opacity = appear;
     lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
