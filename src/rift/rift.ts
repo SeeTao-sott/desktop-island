@@ -221,7 +221,9 @@ const TARGET_R = CELL * 0.3;
 const discGeo = new THREE.CircleGeometry(TARGET_R, 48);
 const coreGeo = new THREE.CircleGeometry(TARGET_R * 0.26, 32);
 const approachGeo = new THREE.RingGeometry(TARGET_R * 0.96, TARGET_R * 1.1, 64);
-const TCOLOR = [new THREE.Color(0xff3552), new THREE.Color(0x2f8cff)];
+// 颜色：平时统一用壁纸主色；到了能打的时候（拍点前后 GREAT 以内）变成绿色
+const GREEN = new THREE.Color(0x35ff7a);
+const DIM = new THREE.Color();
 interface LiveTarget {
   tg: Target;
   group: THREE.Group;
@@ -256,9 +258,8 @@ function takeTarget(tg: Target): LiveTarget {
   }
   lt.tg = tg;
   lt.gone = 0;
-  const c = TCOLOR[tg.color] ?? TCOLOR[0];
-  lt.discMat.color.copy(c);
-  lt.ringMat.color.copy(c).lerp(new THREE.Color(0xffffff), 0.35);
+  lt.discMat.color.copy(accent);
+  lt.ringMat.color.copy(accent);
   lt.group.scale.setScalar(1);
   targetLayer.add(lt.group);
   return lt;
@@ -609,6 +610,22 @@ async function loadSong(pick: Pick) {
   const tiers = [1, 2, 3, 4].map((n) => song.steps.filter((x) => x.n === n).length);
   log(`《${song.meta?.title}》${pick.difficulty}：音符 ${shots.length} 个 → 靶子 ${song.targets.length} 个；N 变化 ${song.steps.length - 1} 次（各档出现 ${tiers.join("/")} 次）`);
   log(`N 时间表：${song.steps.slice(1, 16).map((x) => `${x.t.toFixed(1)}s→${x.n}`).join("  ")}`);
+  {
+    // 核对：同一格同时在屏幕上的靶子有几对；同一时刻的两个靶子有几对是挨着的
+    const tg = song.targets;
+    let overlap = 0;
+    let pairs = 0;
+    let adjacent = 0;
+    for (let i = 0; i < tg.length; i++)
+      for (let k = i + 1; k < tg.length && tg[k].t - tg[i].t < LEAD + 0.25; k++) {
+        if (tg[k].col === tg[i].col && tg[k].rb === tg[i].rb) overlap++;
+        if (tg[k].t - tg[i].t < 0.002) {
+          pairs++;
+          if (Math.abs(tg[k].col - tg[i].col) + Math.abs(tg[k].rb - tg[i].rb) === 1) adjacent++;
+        }
+      }
+    log(`排靶核对（${COLS} 列）：同格重叠 ${overlap} 对；同时出现 ${pairs} 对，其中左右/上下相邻 ${adjacent} 对`);
+  }
   log(`前 8 个靶子：${song.targets.slice(0, 8).map((x) => `${x.t.toFixed(2)}s ${x.color ? "蓝" : "红"} 第${x.col + 1}列 下数第${x.rb + 1}行`).join("；")}`);
   try {
     const bytes = await invoke<ArrayBuffer>("rhythm_audio", { id: pick.id });
@@ -713,11 +730,15 @@ function updateSong(n: number, nowMs: number) {
     if (left < -GREAT) {
       // 没打：Miss，变暗淡出
       lt.gone = nowMs;
-      lt.discMat.color.multiplyScalar(0.35);
+      lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
       judge("miss");
       continue;
     }
     const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
+    // 能打的那一段变绿（外圈也一起）
+    const ready = Math.abs(left) <= GREAT;
+    lt.discMat.color.copy(ready ? GREEN : accent);
+    lt.ringMat.color.copy(ready ? GREEN : accent);
     lt.discMat.opacity = 0.92 * appear;
     lt.coreMat.opacity = appear;
     lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
@@ -745,11 +766,10 @@ function shootTargets(): boolean {
   const j: Judge = d <= PERFECT ? "perfect" : d <= GREAT ? "great" : "miss";
   lt.gone = performance.now();
   if (j !== "miss") {
-    const c = TCOLOR[lt.tg.color] ?? TCOLOR[0];
     const p = hit.point.clone().setZ(-WALL_Z + 0.12);
-    spawnFx(ringGeo, c.clone().lerp(shotColor, 0.3), p, 420, 3.2, true);
+    spawnFx(ringGeo, GREEN.clone().lerp(shotColor, 0.3), p, 420, 3.2, true);
     spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.01), 200, 1.6, true);
-  } else lt.discMat.color.multiplyScalar(0.35);
+  } else lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
   judge(j);
   return true;
 }

@@ -131,29 +131,80 @@ export function halfOf(color: number, cols: number): [number, number] {
   return color === 0 ? [0, Math.floor(mid)] : [Math.ceil(mid), cols - 1];
 }
 
-/** 把音符变成靶子；lead：靶子提前多少秒出现；cols：靶墙几列 */
+/** 一格的靶子打完后还要留多久（淡出）才算空出来 */
+const STAY = 0.25;
+
+/** 把音符变成靶子；lead：靶子提前多少秒出现；cols：靶墙几列
+ *  - 同一格同一时间只放一个靶子：这格的靶子还在屏幕上，就换到最近的空格（优先同一行、同一半边）
+ *  - 同一时刻的两个靶子挨着放（优先同一行左右相邻），可以一枪扫过去 */
 export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: number, cols: number): Target[] {
   const rand = rng(seed);
   const kept = limitPerMoment(shots);
   const out: Target[] = [];
-  for (let i = 0; i < kept.length; i++) {
-    const s = kept[i];
-    const n = nAt(steps, s.t - lead);
-    const [lo, hi] = halfOf(s.c, cols);
-    // lineIndex 0~3 → 半边里从左到右
-    let col = lo + Math.round((s.x * (hi - lo)) / 3);
+  // 每一格最近一个靶子什么时候离开屏幕
+  const freeAt = new Map<string, number>();
+  const key = (c: number, r: number) => `${c},${r}`;
+  const isFree = (c: number, r: number, t: number) => (freeAt.get(key(c, r)) ?? -Infinity) <= t - lead;
+  const inRange = (c: number, r: number, n: number) => c >= 0 && c < cols && r >= 0 && r < n;
+
+  /** 离想要的格子最近的空格；全满时选最早空出来的那格 */
+  function nearestFree(col: number, rb: number, n: number, t: number, lo: number, hi: number) {
+    const cand: { c: number; r: number; d: number }[] = [];
+    for (let r = 0; r < n; r++)
+      for (let c = 0; c < cols; c++) {
+        const d = Math.abs(c - col) + Math.abs(r - rb) * 1.5 + (c < lo || c > hi ? 2.5 : 0);
+        cand.push({ c, r, d });
+      }
+    cand.sort((a, b) => a.d - b.d);
+    const free = cand.find((x) => isFree(x.c, x.r, t));
+    if (free) return free;
+    return cand.reduce((a, b) => ((freeAt.get(key(b.c, b.r)) ?? 0) < (freeAt.get(key(a.c, a.r)) ?? 0) ? b : a));
+  }
+
+  const place = (s: Shot, c: number, r: number) => {
+    freeAt.set(key(c, r), s.t + STAY);
+    out.push({ t: s.t, col: c, rb: r, color: s.c, dx: (rand() - 0.5) * 0.2, dy: (rand() - 0.5) * 0.2 });
+  };
+
+  let i = 0;
+  while (i < kept.length) {
+    let j = i;
+    while (j < kept.length && kept[j].t - kept[i].t < 0.002) j++;
+    const first = kept[i];
+    const n = nAt(steps, first.t - lead);
+    // 第一个：红左蓝右，lineIndex 细分列，lineLayer 映射到行，加一点固定随机
+    const [lo, hi] = halfOf(first.c, cols);
+    let col = lo + Math.round((first.x * (hi - lo)) / 3);
     if (rand() < 0.22) col += rand() < 0.5 ? -1 : 1;
     col = Math.min(hi, Math.max(lo, col));
-    // lineLayer 0~2（下到上）→ 0~N-1 行
-    let rb = Math.round((s.y * (n - 1)) / 2);
+    let rb = Math.round((first.y * (n - 1)) / 2);
     if (n > 1 && rand() < 0.15) rb += rand() < 0.5 ? -1 : 1;
     rb = Math.min(n - 1, Math.max(0, rb));
-    // 同一时刻的另一个靶子在同一格：挪到旁边一列
-    const prev = out[out.length - 1];
-    if (prev && Math.abs(prev.t - s.t) < 0.002 && prev.col === col && prev.rb === rb) {
-      col = col + 1 <= hi ? col + 1 : Math.max(lo, col - 1);
+    const a = nearestFree(col, rb, n, first.t, lo, hi);
+    place(first, a.c, a.r);
+    // 同一时刻的第二个：紧挨着第一个（往它自己那一边），先同一行，再上下、斜角
+    if (j - i > 1) {
+      const second = kept[i + 1];
+      const dir = second.c !== first.c ? (second.c === 1 ? 1 : -1) : rand() < 0.5 ? 1 : -1;
+      const around: [number, number][] = [
+        [a.c + dir, a.r],
+        [a.c - dir, a.r],
+        [a.c, a.r + 1],
+        [a.c, a.r - 1],
+        [a.c + dir, a.r + 1],
+        [a.c + dir, a.r - 1],
+        [a.c - dir, a.r + 1],
+        [a.c - dir, a.r - 1],
+      ];
+      const spot = around.find(([c, r]) => inRange(c, r, n) && isFree(c, r, second.t));
+      if (spot) place(second, spot[0], spot[1]);
+      else {
+        const [lo2, hi2] = halfOf(second.c, cols);
+        const b = nearestFree(a.c + dir, a.r, n, second.t, lo2, hi2);
+        place(second, b.c, b.r);
+      }
     }
-    out.push({ t: s.t, col, rb, color: s.c, dx: (rand() - 0.5) * 0.24, dy: (rand() - 0.5) * 0.24 });
+    i = j;
   }
   return out;
 }
