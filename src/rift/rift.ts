@@ -226,6 +226,8 @@ const coreGeo = new THREE.CircleGeometry(TARGET_R * 0.26, 32);
 const approachGeo = new THREE.RingGeometry(TARGET_R * 0.96, TARGET_R * 1.1, 64);
 // 颜色：平时统一用壁纸主色；到了能打的时候（判定窗口以内，一对靶子含宽限）变成绿色
 const GREEN = new THREE.Color(0x35ff7a);
+/** 同一时刻要一起打的一组：金色，中间连一条金线；右键打中其中一个，整组都算 */
+const GOLD = new THREE.Color(0xffc53d);
 const DIM = new THREE.Color();
 interface LiveTarget {
   tg: Target;
@@ -265,8 +267,8 @@ function takeTarget(tg: Target): LiveTarget {
   lt.tg = tg;
   lt.gone = 0;
   lt.seenAt = null;
-  lt.discMat.color.copy(accent);
-  lt.ringMat.color.copy(accent);
+  lt.discMat.color.copy(tg.group >= 0 ? GOLD : accent);
+  lt.ringMat.color.copy(tg.group >= 0 ? GOLD : accent);
   lt.group.scale.setScalar(1);
   targetLayer.add(lt.group);
   return lt;
@@ -519,17 +521,19 @@ const ray = new THREE.Raycaster();
 const aimDir = new THREE.Vector3();
 const aimEuler = new THREE.Euler();
 const shotColor = new THREE.Color(0xffffff);
+// 左键：打一个；右键：打中一组（金色）里的一个，整组都算
 document.addEventListener("mousedown", (e) => {
-  if (!playing || e.button !== 0) return;
-  shoot();
+  if (!playing || (e.button !== 0 && e.button !== 2)) return;
+  shoot(e.button === 2);
 });
+document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-function shoot() {
+function shoot(whole = false) {
   // 射线从眼睛沿准星方向（不含后坐）
   aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
   aimDir.set(0, 0, -1).applyEuler(aimEuler);
   ray.set(camera.position, aimDir);
-  const hitTarget = shootTargets();
+  const hitTarget = shootTargets(whole);
   const targets: THREE.Object3D[] = [];
   for (const r of rows) if (r.group.visible && r.cell.opacity > 0.5) for (const c of r.group.children) if ((c as THREE.Mesh).isMesh) targets.push(c);
   const hit = hitTarget ? undefined : ray.intersectObjects(targets, false)[0];
@@ -903,13 +907,16 @@ function updateSong(n: number, nowMs: number) {
     const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
     // 能打的那一段变绿（外圈也一起）
     const ready = left <= greatW() && left >= -lateW(tg);
-    lt.discMat.color.copy(ready ? GREEN : accent);
-    lt.ringMat.color.copy(ready ? GREEN : accent);
+    // 一组的靶子：平时金色，能打时圆盘变绿、外圈保持金色（看得出是一组）
+    const base = tg.group >= 0 ? GOLD : accent;
+    lt.discMat.color.copy(ready ? GREEN : base);
+    lt.ringMat.color.copy(tg.group >= 0 ? GOLD : ready ? GREEN : accent);
     lt.discMat.opacity = 0.92 * appear;
     lt.coreMat.opacity = appear;
     lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
     lt.ringMat.opacity = appear * (left > 0 ? 0.9 : 0.5);
   }
+  updateBeams();
   // 高潮：N 跟着时间表走（已经提前 1 拍），但不能比还没打完的靶子要的行数少
   const want = Math.max(nAt(song.steps, now), needRows);
   if (want !== nSpring.target) setN(want);
@@ -920,14 +927,42 @@ function updateSong(n: number, nowMs: number) {
   }
 }
 
-/** 射线打靶子：打中返回 true */
-function shootTargets(): boolean {
-  if (!song.running || song.live.length === 0) return false;
-  const discs = song.live.filter((l) => !l.gone).map((l) => l.disc);
-  const hit = ray.intersectObjects(discs, false)[0];
-  if (!hit) return false;
-  const lt = song.live.find((l) => l.disc === hit.object)!;
-  const now = songTime();
+// 一组靶子之间的金线：每对活着的靶子之间摆一根细长的发光条
+const beamGeo = new THREE.PlaneGeometry(1, CELL * 0.07);
+const beamPool: THREE.Mesh[] = [];
+function updateBeams() {
+  const groups = new Map<number, LiveTarget[]>();
+  for (const lt of song.live) {
+    if (lt.gone || lt.tg.group < 0) continue;
+    const g = groups.get(lt.tg.group) ?? [];
+    g.push(lt);
+    groups.set(lt.tg.group, g);
+  }
+  let k = 0;
+  for (const g of groups.values()) {
+    for (let i = 0; i + 1 < g.length; i++) {
+      let beam = beamPool[k];
+      if (!beam) {
+        beam = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
+        beam.renderOrder = 9; // 在靶子底下
+        targetLayer.add(beam);
+        beamPool.push(beam);
+      }
+      const a = g[i].group.position;
+      const b = g[i + 1].group.position;
+      beam.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, a.z - 0.01);
+      beam.scale.x = Math.hypot(b.x - a.x, b.y - a.y);
+      beam.rotation.z = Math.atan2(b.y - a.y, b.x - a.x);
+      (beam.material as THREE.MeshBasicMaterial).opacity = 0.85 * Math.min(g[i].discMat.opacity, g[i + 1].discMat.opacity);
+      beam.visible = true;
+      k++;
+    }
+  }
+  for (; k < beamPool.length; k++) beamPool[k].visible = false;
+}
+
+/** 打中一个靶子：按时间判定、记统计、放特效 */
+function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = true): Judge {
   const signed = now - lt.tg.t;
   const d = Math.abs(signed);
   // 太早（超出前窗口）或太晚（超出后窗口，一对靶子含宽限）算 Miss
@@ -937,16 +972,32 @@ function shootTargets(): boolean {
     // 甩枪：从上一枪（或靶子出现，取较晚的）到准星第一次落上这个靶子
     const from = Math.max(lt.spawnAt, song.lastShot);
     const seen = lt.seenAt ?? now;
-    if (seen > from) song.flicks.push(seen - from);
+    // 右键顺带打中的同组靶子准星没瞄过，不算甩枪
+    if (aimed && seen > from) song.flicks.push(seen - from);
   }
-  song.lastShot = now;
   lt.gone = performance.now();
   if (j !== "miss") {
-    const p = hit.point.clone().setZ(-WALL_Z + 0.12);
+    const p = (at ?? lt.group.position).clone().setZ(-WALL_Z + 0.12);
     spawnFx(ringGeo, GREEN.clone().lerp(shotColor, 0.3), p, 420, 3.2, true);
     spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.01), 200, 1.6, true);
   } else lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
   judge(j);
+  return j;
+}
+
+/** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定） */
+function shootTargets(whole = false): boolean {
+  if (!song.running || song.live.length === 0) return false;
+  const discs = song.live.filter((l) => !l.gone).map((l) => l.disc);
+  const hit = ray.intersectObjects(discs, false)[0];
+  if (!hit) return false;
+  const lt = song.live.find((l) => l.disc === hit.object)!;
+  const now = songTime();
+  hitOne(lt, hit.point, now);
+  if (whole && lt.tg.group >= 0) {
+    for (const other of song.live.filter((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group)) hitOne(other, null, now, false);
+  }
+  song.lastShot = now;
   return true;
 }
 

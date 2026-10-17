@@ -28,6 +28,8 @@ export interface Target {
   dy: number;
   /** 和另一个靶子同一时刻出现（一对）：晚打的那个多给一点时间 */
   pair: boolean;
+  /** 同一时刻的一组靶子共用的编号（金色、连线、右键一起打）；-1 = 单个 */
+  group: number;
 }
 
 export interface NStep {
@@ -174,9 +176,9 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
     return cand.reduce((a, b) => ((freeAt.get(key(b.c, b.r)) ?? 0) < (freeAt.get(key(a.c, a.r)) ?? 0) ? b : a));
   }
 
-  const place = (s: Shot, c: number, r: number, pair: boolean) => {
+  const place = (s: Shot, c: number, r: number, pair: boolean, group: number) => {
     freeAt.set(key(c, r), s.t + STAY);
-    out.push({ t: s.t, col: c, rb: r, color: s.c, dx: (rand() - 0.5) * 0.2, dy: (rand() - 0.5) * 0.2, pair });
+    out.push({ t: s.t, col: c, rb: r, color: s.c, dx: (rand() - 0.5) * 0.2, dy: (rand() - 0.5) * 0.2, pair, group: pair ? group : -1 });
   };
 
   let i = 0;
@@ -194,7 +196,8 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
     if (n > 1 && rand() < 0.15) rb += rand() < 0.5 ? -1 : 1;
     rb = Math.min(n - 1, Math.max(0, rb));
     const a = nearestFree(col, rb, n, first.t, lo, hi);
-    place(first, a.c, a.r, j - i > 1);
+    const groupId = out.length;
+    place(first, a.c, a.r, j - i > 1, groupId);
     // 同一时刻的第二个：紧挨着第一个（往它自己那一边），先同一行，再上下、斜角
     if (j - i > 1) {
       const second = kept[i + 1];
@@ -210,11 +213,11 @@ export function planTargets(shots: Shot[], steps: NStep[], seed: string, lead: n
         [a.c - dir, a.r - 1],
       ];
       const spot = around.find(([c, r]) => inRange(c, r, n) && isFree(c, r, second.t));
-      if (spot) place(second, spot[0], spot[1], true);
+      if (spot) place(second, spot[0], spot[1], true, groupId);
       else {
         const [lo2, hi2] = halfOf(second.c, cols);
         const b = nearestFree(a.c + dir, a.r, n, second.t, lo2, hi2);
-        place(second, b.c, b.r, true);
+        place(second, b.c, b.r, true, groupId);
       }
     }
     i = j;
