@@ -6,8 +6,13 @@
 //!   [Difficulty] CircleSize、ApproachRate、OverallDifficulty
 //!   [Events]     背景图 `0,0,"bg.jpg",0,0`
 //!   [TimingPoints] 第一个"非继承"时间点的 beatLength（毫秒 / 拍）→ BPM
-//!   [HitObjects] 每行 x,y,time,type,...：type 的 bit0 圈、bit1 滑条、bit3 转盘
-//! 我们要：圈（x, y, 毫秒）、滑条只要起点、转盘不要。坐标范围 x 0–512、y 0–384。
+//!   [HitObjects] 每行 x,y,time,type,hitSound,...：type 的 bit0 圈、bit1 滑条、bit3 转盘、bit7 mania 长按
+//! 我们要：圈（x, y, 毫秒）、滑条和长按只要起点、转盘不要。坐标范围 x 0–512、y 0–384。
+//! 四种模式用的是同一种格式，只是意思不同：
+//!   standard：x、y 是屏幕位置
+//!   taiko：x、y 没用；hitSound 里有 whistle(2) 或 clap(8) 是蓝（鼓边 ka），否则红（鼓面 don）；finish(4) 是大音符
+//!   catch：x 是左右位置，y 没用
+//!   mania：x 是第几轨（轨道 = x × 键数 ÷ 512），CircleSize 就是键数
 
 use std::fs;
 use std::path::Path;
@@ -15,7 +20,7 @@ use std::path::Path;
 use serde::Serialize;
 
 /// 一个要打的点
-#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq)]
 pub struct OsuHit {
     /// osu 坐标（x 0–512，y 0–384，y 向下）
     pub x: f64,
@@ -24,6 +29,8 @@ pub struct OsuHit {
     pub t: f64,
     /// 是滑条的起点（不是普通圈）
     pub slider: bool,
+    /// hitSound：bit1 whistle、bit2 finish、bit3 clap（太鼓用来分红蓝、大小）
+    pub sound: u8,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -120,8 +127,9 @@ pub fn parse(text: &str) -> OsuChart {
                 if ty & 8 != 0 {
                     continue; // 转盘：不要
                 }
-                if ty & 1 != 0 || ty & 2 != 0 {
-                    c.hits.push(OsuHit { x, y, t: t / 1000.0, slider: ty & 2 != 0 });
+                let sound = f.get(4).and_then(|s| s.trim().parse::<u8>().ok()).unwrap_or(0);
+                if ty & (1 | 2 | 128) != 0 {
+                    c.hits.push(OsuHit { x, y, t: t / 1000.0, slider: ty & 2 != 0, sound });
                 }
             }
             _ => {}
@@ -196,12 +204,24 @@ Video,-70,\"video.mp4\"
         // 滑条只取起点；转盘不要；按时间排好
         assert_eq!(
             c.hits,
-            vec![OsuHit { x: 100.0, y: 50.0, t: 1.0, slider: true }, OsuHit { x: 256.0, y: 192.0, t: 3.0, slider: false }]
+            vec![
+                OsuHit { x: 100.0, y: 50.0, t: 1.0, slider: true, sound: 0 },
+                OsuHit { x: 256.0, y: 192.0, t: 3.0, slider: false, sound: 0 }
+            ]
         );
         // AR9 → 提前 0.6 秒；AR5 → 1.2 秒；AR0 → 1.8 秒
         assert!((c.preempt() - 0.6).abs() < 1e-9);
         assert!((OsuChart { ar: 5.0, ..Default::default() }.preempt() - 1.2).abs() < 1e-9);
         assert!((OsuChart { ar: 0.0, ..Default::default() }.preempt() - 1.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reads_hitsound_and_mania_holds() {
+        // 太鼓：第 5 列是 hitSound；mania：type 128 是长按，也要（只取起点）
+        let c = parse("[HitObjects]\n256,192,1000,1,8,0:0:0:0:\n64,192,2000,128,0,2500:0:0:0:0:\n");
+        assert_eq!(c.hits.len(), 2);
+        assert_eq!(c.hits[0].sound, 8);
+        assert_eq!((c.hits[1].x, c.hits[1].t), (64.0, 2.0));
     }
 
     #[test]
