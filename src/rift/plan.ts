@@ -4,7 +4,7 @@
 // 位置：红色放左半边、蓝色放右半边（列数是单数时中间那列两边共用，比如 9 列是 1–5 / 5–9），再按 lineIndex 细分；
 //       lineLayer（下 0 ~ 上 2）映射到行，不超过靶子出现那一刻的 N；加一点固定随机（歌名做种子，每次一样）。
 // 同一时刻最多保留 2 个靶子（优先一红一蓝）。
-// 高潮：4 秒滑动窗口的音符密度（个/秒）按全曲分位数分成 4 档 → N = 1~4；
+// 高潮：4 秒滑动窗口的音符密度（个/秒）按在全曲里的排名分成 4 档 → N = 1~4；
 //       密度上升时裂缝提前 1 拍开始变大（谱是提前知道的）。
 
 export interface Shot {
@@ -90,11 +90,27 @@ export function densitySchedule(shots: Shot[], bpm: number): NStep[] {
     while (hi < times.length && times[hi] <= t + WINDOW / 2) hi++;
     samples.push({ t, d: (hi - lo) / WINDOW });
   }
-  // 分位数只看有音符的那一段（前奏、尾奏空白不算）
+  // 按"比全曲多少比例的时间密"分 4 档；只看有音符的那一段（前奏、尾奏空白不算）。
+  // 一样密的算在它们中间（中位排名）：整首差不多密的谱（mania 常见的固定连打）落在中间档，
+  // 不会因为大家都一样就全部掉到第 1 档、裂缝一直只开一行
   const ds = samples.filter((s) => s.t >= first && s.t <= last).map((s) => s.d).sort((a, b) => a - b);
-  const q = (p: number) => ds[Math.min(ds.length - 1, Math.floor(p * ds.length))] ?? 0;
-  const [q1, q2, q3] = [q(0.25), q(0.5), q(0.75)];
-  let tiers = samples.map((s) => 1 + (s.d > q1 ? 1 : 0) + (s.d > q2 ? 1 : 0) + (s.d > q3 ? 1 : 0));
+  const lowerBound = (v: number) => {
+    let lo = 0;
+    let hi = ds.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (ds[mid] < v) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const rank = (d: number) => {
+    if (!ds.length) return 0;
+    const below = lowerBound(d);
+    const equal = lowerBound(d + 1e-9) - below;
+    return (below + equal / 2) / ds.length;
+  };
+  let tiers = samples.map((s) => 1 + Math.min(3, Math.floor(rank(s.d) * 4)));
   // 太短的一档并进前一档
   const minLen = Math.round(MIN_RUN / STEP);
   for (let pass = 0; pass < 2; pass++) {

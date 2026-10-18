@@ -28,6 +28,8 @@ pub struct Difficulty {
     pub note: String,
     /// 靶子数量（osu! 谱读的时候就数好；BeatSaver 是 0 = 没数）
     pub count: usize,
+    /// 在难度按钮上额外标出的玩法（"太鼓"、"接水果"、"mania 4K"）；空 = 不用标
+    pub tag: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -119,6 +121,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
                 file: s(d, "beatmapDataFilename"),
                 note: String::new(),
                 count: 0,
+                tag: String::new(),
             });
             if info.mapper.is_empty() {
                 let authors = d.get("beatmapAuthors").map(|a| arr(a, "mappers")).unwrap_or(&[]);
@@ -144,6 +147,7 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
                     file: s(d, "_beatmapFilename"),
                     note: String::new(),
                     count: 0,
+                    tag: String::new(),
                 });
             }
         }
@@ -194,18 +198,20 @@ fn osu_info(id: &str, files: &[PathBuf]) -> SongInfo {
         cover_file: main.background.clone(),
     };
     for (file, c) in &charts {
-        let (characteristic, note) = match c.mode {
-            0 => ("osu", ""),
-            3 => ("osu-mania", "mania，暂不支持"),
-            1 => ("osu-taiko", "taiko，暂不支持"),
-            _ => ("osu-catch", "catch，暂不支持"),
+        let (characteristic, note, tag) = match c.mode {
+            0 => ("osu", String::new(), String::new()),
+            1 => ("osu-taiko", String::new(), "太鼓".to_string()),
+            2 => ("osu-catch", String::new(), "接水果".to_string()),
+            3 => ("osu-mania", String::new(), format!("mania {}K", mania_keys(c))),
+            m => ("osu-other", format!("模式 {m}，不认识"), String::new()),
         };
         info.difficulties.push(Difficulty {
             characteristic: characteristic.into(),
             name: if c.version.is_empty() { file.clone() } else { c.version.clone() },
             file: file.clone(),
-            note: note.into(),
+            note,
             count: c.hits.len(),
+            tag,
         });
     }
     info
@@ -351,42 +357,140 @@ pub fn parse_shots(v: &Value, bpm: f64, offset: f64) -> Vec<Shot> {
     out
 }
 
-/// osu! 的靶子换成和 BeatSaver 一样的音符，后面排靶子、高潮检测、判定全部照旧：
-///   x 0–512：左半边红、右半边蓝，各自那半边再细分成 4 列（lineIndex 0~3）
-///   y 0–384（向下）：分成 3 层，屏幕上方 = 上层（lineLayer 2）
-///   时间已经是从歌开头算的秒数，直接用
-/// osu! 没有真正同时的两个圈，但常有挨得很近的：前后两个相差不到 OSU_PAIR 秒就配成一对，
-/// 后一个的时间对齐到前一个 → 变成"同时出现的一组"（金色、连线、右键一起打）。每次只两两配对
+/// osu! 的靶子换成和 BeatSaver 一样的音符，后面排靶子、高潮检测、判定全部照旧。
+/// 颜色（红 0 / 蓝 1）、半边里的列（lineIndex 0~3）、层（lineLayer 下 0 ~ 上 2）按模式来：
+///   standard：x 左半边红、右半边蓝，各自那半边再分 4 列；y 分 3 层（上方 = 上层）
+///   taiko：红蓝就是鼓面 / 鼓边；谱里没有位置，列和层按固定随机慢慢走（每次玩都一样）；大音符变成同色的一对
+///   catch：x 和 standard 一样；没有上下，层按固定随机慢慢走
+///   mania：左半边的轨是红、右半边是蓝，再按轨细分列；层按固定随机慢慢走
+/// 时间已经是从歌开头算的秒数，直接用。
+/// 除了 mania，osu! 没有真正同时的两个音符，但常有挨得很近的：前后两个相差不到 OSU_PAIR 秒就配成一对，
+/// 后一个的时间对齐到前一个 → 变成"同时出现的一组"（金色、连线、右键一起打）。每次只两两配对。
+/// mania 本来就有真正的和弦，不另外配对
 pub const OSU_PAIR: f64 = 0.2;
 
+/// mania 的键数（CircleSize），1~18
+pub fn mania_keys(chart: &crate::osu::OsuChart) -> u32 {
+    (chart.cs.round() as u32).clamp(1, 18)
+}
+
+/// mania：x → 第几轨（0 ~ 键数-1）
+fn mania_col(x: f64, keys: u32) -> u32 {
+    ((x.clamp(0.0, 511.0) * keys as f64 / 512.0).floor() as u32).min(keys - 1)
+}
+
+/// 太鼓：鼓边（whistle 或 clap）是蓝，其余是红；finish 是大音符
+fn taiko_kind(sound: u8) -> (u8, bool) {
+    (if sound & (2 | 8) != 0 { 1 } else { 0 }, sound & 4 != 0)
+}
+
+/// 固定随机（splitmix64）：谱一样，每次出来的位置就一样
+struct Walk(u64);
+
+impl Walk {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// 从 v 往旁边走一步或不动（各 2/5 往左右、1/5 不动），夹在 0..=max
+    fn step(&mut self, v: u8, max: u8) -> u8 {
+        let d = ((self.next() % 5) as i32 - 2).signum();
+        (v as i32 + d).clamp(0, max as i32) as u8
+    }
+}
+
+/// 按 x 的比例（0~1）分红蓝、在那半边里细分列
+fn by_x(u: f64) -> (u8, u8) {
+    let c = if u < 0.5 { 0 } else { 1 };
+    let v = if c == 0 { u / 0.5 } else { (u - 0.5) / 0.5 };
+    (c, (v * 4.0).floor().clamp(0.0, 3.0) as u8)
+}
+
 pub fn osu_shots(chart: &crate::osu::OsuChart) -> Vec<Shot> {
-    let mut out: Vec<Shot> = chart
-        .hits
-        .iter()
-        .map(|h| {
-            let x = h.x.clamp(0.0, 512.0);
-            let c = if x < 256.0 { 0 } else { 1 };
-            let u = if c == 0 { x / 256.0 } else { (x - 256.0) / 256.0 };
-            let lane = (u * 4.0).floor().clamp(0.0, 3.0) as u8;
-            let row = (h.y.clamp(0.0, 384.0) / 384.0 * 3.0).floor().clamp(0.0, 2.0) as u8;
-            Shot { t: h.t, x: lane, y: 2 - row, c }
-        })
-        .collect();
+    let mut walk = Walk(chart.hits.len() as u64 ^ (chart.hits.first().map_or(0, |h| (h.t * 1000.0) as u64) << 16));
+    // 没有位置信息的模式：每种颜色各自记着上一个的列和层，慢慢走，免得满屏乱跳
+    let mut pos = [(1u8, 1u8), (2u8, 1u8)];
+    let keys = mania_keys(chart);
+    let mut out: Vec<Shot> = Vec::with_capacity(chart.hits.len());
+    for h in &chart.hits {
+        match chart.mode {
+            1 => {
+                let (c, big) = taiko_kind(h.sound);
+                let p = &mut pos[c as usize];
+                p.0 = walk.step(p.0, 3);
+                p.1 = walk.step(p.1, 2);
+                out.push(Shot { t: h.t, x: p.0, y: p.1, c });
+                if big {
+                    // 大音符：同一时刻再来一个同色的，变成金色的一对
+                    out.push(Shot { t: h.t, x: p.0, y: p.1, c });
+                }
+            }
+            2 | 3 => {
+                let u = if chart.mode == 3 { (mania_col(h.x, keys) as f64 + 0.5) / keys as f64 } else { h.x.clamp(0.0, 512.0) / 512.0 };
+                // 单数键的中间那一轨正好在中线上：红蓝随机
+                let (c, lane) = if (u - 0.5).abs() < 1e-9 { ((walk.next() % 2) as u8, 0) } else { by_x(u) };
+                let p = &mut pos[c as usize];
+                p.1 = walk.step(p.1, 2);
+                out.push(Shot { t: h.t, x: lane, y: p.1, c });
+            }
+            _ => {
+                let (c, lane) = by_x(h.x.clamp(0.0, 512.0) / 512.0);
+                let row = (h.y.clamp(0.0, 384.0) / 384.0 * 3.0).floor().clamp(0.0, 2.0) as u8;
+                out.push(Shot { t: h.t, x: lane, y: 2 - row, c });
+            }
+        }
+    }
     out.sort_by(|a, b| a.t.total_cmp(&b.t));
-    let mut i = 0;
-    while i + 1 < out.len() {
-        if out[i + 1].t - out[i].t <= OSU_PAIR {
-            out[i + 1].t = out[i].t;
-            i += 2;
-        } else {
-            i += 1;
+    if chart.mode != 3 {
+        let mut i = 0;
+        while i + 1 < out.len() {
+            if out[i + 1].t - out[i].t <= OSU_PAIR {
+                out[i + 1].t = out[i].t;
+                i += 2;
+            } else {
+                i += 1;
+            }
         }
     }
     out.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.c.cmp(&b.c)).then(a.x.cmp(&b.x)));
     out
 }
 
-/// 读 osu! 的某个难度（只认 standard；mania 等直接说不支持）
+/// osu! 换成下落 4 键的音符：
+///   mania：4 键一轨对一轨；其他键数按比例并成 4 轨
+///   taiko：红（鼓面）在中间两轨、蓝（鼓边）在两边，左右轮流（像街机 D F J K）；大音符两只手一起
+///   standard、catch：x 平均分 4 轨
+pub fn osu_notes(chart: &crate::osu::OsuChart) -> Vec<Note> {
+    let keys = mania_keys(chart);
+    let mut flip = [false, false];
+    let mut notes: Vec<Note> = Vec::with_capacity(chart.hits.len());
+    for h in &chart.hits {
+        match chart.mode {
+            1 => {
+                let (c, big) = taiko_kind(h.sound);
+                let pair = if c == 0 { [1, 2] } else { [0, 3] };
+                if big {
+                    notes.extend(pair.map(|lane| Note { t: h.t, lane }));
+                } else {
+                    let f = &mut flip[c as usize];
+                    notes.push(Note { t: h.t, lane: pair[*f as usize] });
+                    *f = !*f;
+                }
+            }
+            3 => notes.push(Note { t: h.t, lane: (mania_col(h.x, keys) * 4 / keys).min(3) as u8 }),
+            _ => notes.push(Note { t: h.t, lane: (h.x / 128.0).floor().clamp(0.0, 3.0) as u8 }),
+        }
+    }
+    notes.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.lane.cmp(&b.lane)));
+    notes.dedup_by(|b, a| a.lane == b.lane && (b.t - a.t).abs() < 0.001);
+    notes
+}
+
+/// 读 osu! 的某个难度（不认识的模式直接说不支持）
 fn load_osu(dir: &Path, diff: &Difficulty) -> Result<crate::osu::OsuChart, String> {
     if !diff.note.is_empty() {
         return Err(diff.note.clone());
@@ -450,12 +554,7 @@ pub fn parse_notes(v: &Value, bpm: f64, offset: f64) -> Vec<Note> {
 /// 读某首歌某个难度的音符
 pub fn load_notes(dir: &Path, info: &SongInfo, diff: &Difficulty) -> Result<Vec<Note>, String> {
     if info.format == "osu" {
-        // 下落 4 键：x 0–512 平均分成 4 条轨道
-        let chart = load_osu(dir, diff)?;
-        let mut notes: Vec<Note> =
-            chart.hits.iter().map(|h| Note { t: h.t, lane: (h.x / 128.0).floor().clamp(0.0, 3.0) as u8 }).collect();
-        notes.dedup_by(|b, a| a.lane == b.lane && (b.t - a.t).abs() < 0.001);
-        return Ok(notes);
+        return Ok(osu_notes(&load_osu(dir, diff)?));
     }
     let path = find_file(dir, &diff.file).ok_or_else(|| format!("找不到谱文件 {}", diff.file))?;
     let v = read_json(&path)?;
@@ -633,7 +732,7 @@ mod tests {
     #[test]
     fn osu_hits_become_shots() {
         use crate::osu::{OsuChart, OsuHit};
-        let hit = |x: f64, y: f64, t: f64| OsuHit { x, y, t, slider: false };
+        let hit = |x: f64, y: f64, t: f64| OsuHit { x, y, t, ..Default::default() };
         let chart = OsuChart {
             hits: vec![hit(0.0, 0.0, 1.0), hit(255.0, 383.0, 2.0), hit(256.0, 192.0, 3.0), hit(512.0, 384.0, 4.0), hit(130.0, 200.0, 5.0)],
             ..Default::default()
@@ -657,7 +756,7 @@ mod tests {
     #[test]
     fn close_osu_hits_pair_up() {
         use crate::osu::{OsuChart, OsuHit};
-        let hit = |x: f64, t: f64| OsuHit { x, y: 192.0, t, slider: false };
+        let hit = |x: f64, t: f64| OsuHit { x, y: 192.0, t, ..Default::default() };
         // 1.0 和 1.125 配成一对；1.25 和 1.375 再配一对；1.5 落单（不跟已经配好的连起来）；3.0 离得远
         let chart = OsuChart {
             hits: vec![hit(100.0, 1.0), hit(400.0, 1.125), hit(100.0, 1.25), hit(400.0, 1.375), hit(100.0, 1.5), hit(400.0, 3.0)],
@@ -665,6 +764,61 @@ mod tests {
         };
         let times: Vec<f64> = osu_shots(&chart).iter().map(|s| s.t).collect();
         assert_eq!(times, vec![1.0, 1.0, 1.25, 1.25, 1.5, 3.0]);
+    }
+
+    #[test]
+    fn mania_columns_and_lanes() {
+        use crate::osu::{OsuChart, OsuHit};
+        // 4K：x 64 / 192 / 320 / 448 是第 0~3 轨；同一时刻两轨是和弦（mania 不另外配对）
+        let hit = |x: f64, t: f64| OsuHit { x, y: 192.0, t, ..Default::default() };
+        let chart = OsuChart {
+            mode: 3,
+            cs: 4.0,
+            hits: vec![hit(64.0, 1.0), hit(448.0, 1.0), hit(192.0, 1.1), hit(320.0, 1.2)],
+            ..Default::default()
+        };
+        let lanes: Vec<u8> = osu_notes(&chart).iter().map(|n| n.lane).collect();
+        assert_eq!(lanes, vec![0, 3, 1, 2]);
+        // 左两轨红、右两轨蓝；时间不变（相差 0.1 秒的也不配对）
+        let shots = osu_shots(&chart);
+        assert_eq!(shots.iter().map(|s| (s.t, s.c)).collect::<Vec<_>>(), vec![(1.0, 0), (1.0, 1), (1.1, 0), (1.2, 1)]);
+        assert!(shots.iter().all(|s| s.x <= 3 && s.y <= 2));
+        // 7K 下落：并成 4 轨
+        let seven = OsuChart {
+            mode: 3,
+            cs: 7.0,
+            hits: (0..7).map(|k| hit(k as f64 * 512.0 / 7.0 + 10.0, k as f64)).collect(),
+            ..Default::default()
+        };
+        assert_eq!(osu_notes(&seven).iter().map(|n| n.lane).collect::<Vec<_>>(), vec![0, 0, 1, 1, 2, 2, 3]);
+        // 7K 射击：中间那轨红蓝随机，其余左红右蓝
+        let c7: Vec<u8> = osu_shots(&seven).iter().map(|s| s.c).collect();
+        assert_eq!((&c7[..3], &c7[4..]), (&[0, 0, 0][..], &[1, 1, 1][..]));
+    }
+
+    #[test]
+    fn taiko_colors_and_big_notes() {
+        use crate::osu::{OsuChart, OsuHit};
+        let hit = |sound: u8, t: f64| OsuHit { x: 256.0, y: 192.0, t, sound, ..Default::default() };
+        // don、ka（clap）、ka（whistle）、大 don（finish）
+        let chart = OsuChart { mode: 1, hits: vec![hit(0, 1.0), hit(8, 2.0), hit(2, 3.0), hit(4, 4.0)], ..Default::default() };
+        let shots = osu_shots(&chart);
+        assert_eq!(shots.iter().map(|s| (s.t, s.c)).collect::<Vec<_>>(), vec![(1.0, 0), (2.0, 1), (3.0, 1), (4.0, 0), (4.0, 0)]);
+        assert!(shots.iter().all(|s| s.x <= 3 && s.y <= 2));
+        // 同一张谱每次排出来一样
+        assert_eq!(osu_shots(&chart), shots);
+        // 下落：红在中间两轨（1、2 轮流），蓝在两边（0、3 轮流），大音符两轨一起
+        let lanes: Vec<(f64, u8)> = osu_notes(&chart).iter().map(|n| (n.t, n.lane)).collect();
+        assert_eq!(lanes, vec![(1.0, 1), (2.0, 0), (3.0, 3), (4.0, 1), (4.0, 2)]);
+    }
+
+    #[test]
+    fn catch_uses_x_only() {
+        use crate::osu::{OsuChart, OsuHit};
+        let hit = |x: f64, t: f64| OsuHit { x, y: 0.0, t, ..Default::default() };
+        let chart = OsuChart { mode: 2, hits: vec![hit(10.0, 1.0), hit(500.0, 2.0)], ..Default::default() };
+        let shots = osu_shots(&chart);
+        assert_eq!(shots.iter().map(|s| (s.c, s.x)).collect::<Vec<_>>(), vec![(0, 0), (1, 3)]);
     }
 
     #[test]

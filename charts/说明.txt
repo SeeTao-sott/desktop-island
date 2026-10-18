@@ -6,6 +6,6 @@
   charts/white-night/xxx (Easy).osu
   charts/white-night/xxx (Hard).osu
   charts/white-night/audio.mp3
-  （有 Info.dat 是 BeatSaver，有 .osu 是 osu!；只支持 standard 模式，mania 等会标"暂不支持"）
+  （有 Info.dat 是 BeatSaver，有 .osu 是 osu!；osu!、太鼓、接水果、mania 四种模式都能玩）
 歌的音频文件不用管（游戏用你自己在浏览器里放的歌）。
 这些文件夹不进 git。

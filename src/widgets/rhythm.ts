@@ -16,6 +16,8 @@ interface Difficulty {
   note: string;
   /** 靶子数量（osu! 谱有；BeatSaver 是 0） */
   count: number;
+  /** 额外标出的玩法（"太鼓"、"接水果"、"mania 4K"）；空 = 不用标 */
+  tag: string;
 }
 interface Song {
   id: string;
@@ -200,10 +202,14 @@ function showMenu(anchor: Rect) {
           el("div", "rh-song-artist", meta, `${song.artist}${song.mapper ? ` · 谱 ${song.mapper}` : ""} · ${Math.round(song.bpm)} BPM`);
           const diffs = el("div", "rh-diffs", row);
           if (song.format === "osu") {
-            // osu!：每个 .osu 一个难度，按靶子数从少到多排（最左边就是最简单的）；mania 等暂不支持的灰着，写上原因
-            const sorted = [...song.difficulties].sort((a, b) => Number(!!a.note) - Number(!!b.note) || a.count - b.count);
+            // osu!：每个 .osu 一个难度。同一种玩法排在一起（standard 在前），各自按靶子数从少到多排；
+            // 太鼓、接水果、mania 在按钮上标出来；不认识的模式灰着，写上原因
+            const sorted = [...song.difficulties].sort(
+              (a, b) => Number(!!a.note) - Number(!!b.note) || a.tag.localeCompare(b.tag) || a.count - b.count,
+            );
             for (const d of sorted) {
-              const b = el("button", "rh-diff", diffs, d.note ? `${d.name}（${d.note}）` : d.name);
+              const extra = d.note || d.tag;
+              const b = el("button", "rh-diff", diffs, extra ? `${d.name}（${extra}）` : d.name);
               b.title = `${d.name} · ${d.count} 个靶子`;
               b.disabled = !!d.note;
               b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));

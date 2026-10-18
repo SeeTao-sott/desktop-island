@@ -45,7 +45,7 @@ fn main() {
                 c.od,
                 if d.note.is_empty() { String::new() } else { format!("  [{}]", d.note) }
             );
-            if c.mode == 0 && fewest.as_ref().is_none_or(|(n, _)| d.count < *n) {
+            if d.note.is_empty() && fewest.as_ref().is_none_or(|(n, _)| d.count < *n) {
                 fewest = Some((d.count, c));
             }
         }
@@ -55,14 +55,14 @@ fn main() {
             for (i, h) in c.hits.iter().take(20).enumerate() {
                 println!("  {:>3}   {:>9.0}   {:>4.0}   {:>4.0}   {}", i + 1, h.t * 1000.0, h.x, h.y, if h.slider { "滑条起点" } else { "圈" });
             }
-            // 换成裂缝射击的靶子：相差不到 0.2 秒的两个配成金色一对（时间对齐到前一个）
+            // 换成裂缝射击的靶子：同一时刻的两个是金色一对（mania 的和弦、太鼓大音符、相差不到 0.2 秒配成的一对）
             let shots = chart::osu_shots(&c);
             let gold = |i: usize| {
                 let t = shots[i].t;
                 (i > 0 && shots[i - 1].t == t) || shots.get(i + 1).is_some_and(|s| s.t == t)
             };
             let pairs = (0..shots.len()).filter(|&i| gold(i)).count() / 2;
-            println!("\n  裂缝射击：{} 个靶子，其中金色 {} 对（相差 ≤ {} 秒配对）；前 20 个：", shots.len(), pairs, chart::OSU_PAIR);
+            println!("\n  裂缝射击：{} 个靶子，其中同时出现（金色）{} 对；前 20 个：", shots.len(), pairs);
             println!("  序号   时间(毫秒)   颜色  列  层");
             for (i, s) in shots.iter().enumerate().take(20) {
                 println!(
