@@ -97,7 +97,11 @@
   background: transparent;
   cursor: pointer;
 }
-.rh-diff:hover,
+.rh-diff:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.rh-diff:not(:disabled):hover,
 .rh-play:hover {
   background: var(--w-accent);
   border-color: var(--w-accent);

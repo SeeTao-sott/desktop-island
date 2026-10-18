@@ -12,9 +12,15 @@ interface Difficulty {
   characteristic: string;
   name: string;
   file: string;
+  /** 不能玩的原因（比如"mania，暂不支持"）；空 = 能玩 */
+  note: string;
+  /** 靶子数量（osu! 谱有；BeatSaver 是 0） */
+  count: number;
 }
 interface Song {
   id: string;
+  /** "beatsaver" 或 "osu" */
+  format: string;
   title: string;
   sub_title: string;
   artist: string;
@@ -57,6 +63,8 @@ const DIFF_LABEL: Record<string, string> = {
   Expert: "专家",
   ExpertPlus: "专家+",
 };
+/** 难度按钮上的字：BeatSaver 换成中文；osu! 直接用谱里的难度名（Version） */
+const diffLabel = (song: Song, d: Difficulty) => (song.format === "osu" ? d.name : (DIFF_LABEL[d.name] ?? d.name));
 
 let root: HTMLElement | null = null;
 /** 放歌用的音频环境，整个程序只建一个 */
@@ -183,7 +191,7 @@ function showMenu(anchor: Rect) {
       .then((songs) => {
         list.replaceChildren();
         if (songs.length === 0) {
-          el("div", "rh-empty", list, "charts 文件夹里还没有歌。把 BeatSaver 的 zip 解压进去，一首歌一个文件夹。");
+          el("div", "rh-empty", list, "charts 文件夹里还没有歌。把 BeatSaver 的 zip 或 osu! 的 .osz（改成 .zip）解压进去，一首歌一个文件夹。");
         }
         for (const song of songs) {
           const row = el("div", "rh-song", list);
@@ -191,12 +199,24 @@ function showMenu(anchor: Rect) {
           el("div", "rh-song-name", meta, song.title + (song.sub_title ? ` ${song.sub_title}` : ""));
           el("div", "rh-song-artist", meta, `${song.artist}${song.mapper ? ` · 谱 ${song.mapper}` : ""} · ${Math.round(song.bpm)} BPM`);
           const diffs = el("div", "rh-diffs", row);
-          // 只列标准谱（单手、无方向等玩法对 4 键没有意义）；没有标准谱就全列
-          const std = song.difficulties.filter((d) => d.characteristic === "Standard");
-          for (const d of std.length ? std : song.difficulties) {
-            const b = el("button", "rh-diff", diffs, DIFF_LABEL[d.name] ?? d.name);
-            b.title = `${d.characteristic} / ${d.name}`;
-            b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
+          if (song.format === "osu") {
+            // osu!：每个 .osu 一个难度，按靶子数从少到多排；mania 等暂不支持的灰着，写上原因
+            const sorted = [...song.difficulties].sort((a, b) => Number(!!a.note) - Number(!!b.note) || a.count - b.count);
+            for (const d of sorted) {
+              const b = el("button", "rh-diff", diffs, d.note ? `${d.name}（${d.note}）` : d.name);
+              b.title = `${d.name} · ${d.count} 个靶子`;
+              // 阶段 2 才接进游戏：现在先只列出来
+              b.disabled = true;
+              if (!d.note) b.title += " · 还没接入游戏";
+            }
+          } else {
+            // 只列标准谱（单手、无方向等玩法对 4 键没有意义）；没有标准谱就全列
+            const std = song.difficulties.filter((d) => d.characteristic === "Standard");
+            for (const d of std.length ? std : song.difficulties) {
+              const b = el("button", "rh-diff", diffs, diffLabel(song, d));
+              b.title = `${d.characteristic} / ${d.name}`;
+              b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
+            }
           }
         }
         place();
@@ -327,7 +347,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
 
     // 角落：歌名、难度、偏移、操作提示
     const corner = el("div", "rh-corner", stage);
-    el("div", "rh-corner-title", corner, `${song.title} · ${DIFF_LABEL[diff.name] ?? diff.name}`);
+    el("div", "rh-corner-title", corner, `${song.title} · ${diffLabel(song, diff)}`);
     const offsetEl = el("div", "rh-offset", corner);
     const speedEl = el("div", "rh-offset", corner);
     el("div", "rh-tip", corner, "← → 调延迟 · ↑ ↓ 调速度 · Esc 退出");
@@ -546,7 +566,7 @@ function startGame(song: Song, diff: Difficulty, notes: Note[], anchor: Rect, au
       const score = Math.round(acc * 1_000_000);
       const card = el("div", "rh-result", stage);
       card.style.transform = `translate(${W / 2}px, ${Math.round((SPAWN_Y + judgeY) / 2)}px)`;
-      el("div", "rh-result-title", card, `${song.title} · ${DIFF_LABEL[diff.name] ?? diff.name}`);
+      el("div", "rh-result-title", card, `${song.title} · ${diffLabel(song, diff)}`);
       el("div", "rh-score", card, score.toLocaleString("en-US"));
       el("div", "rh-acc", card, `准确率 ${(acc * 100).toFixed(2)}%`);
       const rows = el("div", "rh-rows", card);
