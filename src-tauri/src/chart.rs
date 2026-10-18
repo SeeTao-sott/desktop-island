@@ -355,6 +355,10 @@ pub fn parse_shots(v: &Value, bpm: f64, offset: f64) -> Vec<Shot> {
 ///   x 0–512：左半边红、右半边蓝，各自那半边再细分成 4 列（lineIndex 0~3）
 ///   y 0–384（向下）：分成 3 层，屏幕上方 = 上层（lineLayer 2）
 ///   时间已经是从歌开头算的秒数，直接用
+/// osu! 没有真正同时的两个圈，但常有挨得很近的：前后两个相差不到 OSU_PAIR 秒就配成一对，
+/// 后一个的时间对齐到前一个 → 变成"同时出现的一组"（金色、连线、右键一起打）。每次只两两配对
+pub const OSU_PAIR: f64 = 0.2;
+
 pub fn osu_shots(chart: &crate::osu::OsuChart) -> Vec<Shot> {
     let mut out: Vec<Shot> = chart
         .hits
@@ -368,6 +372,16 @@ pub fn osu_shots(chart: &crate::osu::OsuChart) -> Vec<Shot> {
             Shot { t: h.t, x: lane, y: 2 - row, c }
         })
         .collect();
+    out.sort_by(|a, b| a.t.total_cmp(&b.t));
+    let mut i = 0;
+    while i + 1 < out.len() {
+        if out[i + 1].t - out[i].t <= OSU_PAIR {
+            out[i + 1].t = out[i].t;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
     out.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.c.cmp(&b.c)).then(a.x.cmp(&b.x)));
     out
 }
@@ -638,6 +652,19 @@ mod tests {
                 Shot { t: 5.0, x: 2, y: 1, c: 0 },
             ]
         );
+    }
+
+    #[test]
+    fn close_osu_hits_pair_up() {
+        use crate::osu::{OsuChart, OsuHit};
+        let hit = |x: f64, t: f64| OsuHit { x, y: 192.0, t, slider: false };
+        // 1.0 和 1.125 配成一对；1.25 和 1.375 再配一对；1.5 落单（不跟已经配好的连起来）；3.0 离得远
+        let chart = OsuChart {
+            hits: vec![hit(100.0, 1.0), hit(400.0, 1.125), hit(100.0, 1.25), hit(400.0, 1.375), hit(100.0, 1.5), hit(400.0, 3.0)],
+            ..Default::default()
+        };
+        let times: Vec<f64> = osu_shots(&chart).iter().map(|s| s.t).collect();
+        assert_eq!(times, vec![1.0, 1.0, 1.25, 1.25, 1.5, 3.0]);
     }
 
     #[test]
