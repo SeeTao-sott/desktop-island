@@ -51,19 +51,28 @@ fn main() {
         }
         if let Some((_, c)) = fewest {
             println!("\n  前 20 个靶子（{}，靶子最少的难度）：", c.version);
-            println!("  序号   时间(毫秒)     x      y    类型        → 裂缝射击");
+            println!("  序号   时间(毫秒)     x      y    类型");
+            for (i, h) in c.hits.iter().take(20).enumerate() {
+                println!("  {:>3}   {:>9.0}   {:>4.0}   {:>4.0}   {}", i + 1, h.t * 1000.0, h.x, h.y, if h.slider { "滑条起点" } else { "圈" });
+            }
+            // 换成裂缝射击的靶子：相差不到 0.2 秒的两个配成金色一对（时间对齐到前一个）
             let shots = chart::osu_shots(&c);
-            for (i, (h, s)) in c.hits.iter().zip(&shots).take(20).enumerate() {
+            let gold = |i: usize| {
+                let t = shots[i].t;
+                (i > 0 && shots[i - 1].t == t) || shots.get(i + 1).is_some_and(|s| s.t == t)
+            };
+            let pairs = (0..shots.len()).filter(|&i| gold(i)).count() / 2;
+            println!("\n  裂缝射击：{} 个靶子，其中金色 {} 对（相差 ≤ {} 秒配对）；前 20 个：", shots.len(), pairs, chart::OSU_PAIR);
+            println!("  序号   时间(毫秒)   颜色  列  层");
+            for (i, s) in shots.iter().enumerate().take(20) {
                 println!(
-                    "  {:>3}   {:>9.0}   {:>4.0}   {:>4.0}   {:<8}  {} 第 {} 列 {}",
+                    "  {:>3}   {:>9.0}    {}   {}   {}{}",
                     i + 1,
-                    h.t * 1000.0,
-                    h.x,
-                    h.y,
-                    if h.slider { "滑条起点" } else { "圈" },
+                    s.t * 1000.0,
                     if s.c == 0 { "红" } else { "蓝" },
                     s.x + 1,
-                    ["下层", "中层", "上层"][s.y as usize]
+                    ["下层", "中层", "上层"][s.y as usize],
+                    if gold(i) { "  ★金色" } else { "" }
                 );
             }
         }
