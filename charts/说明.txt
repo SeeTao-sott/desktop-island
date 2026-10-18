@@ -2,5 +2,10 @@
   charts/die-for-you/Info.dat
   charts/die-for-you/ExpertPlusStandard.dat
   ...
+也认 osu! 谱：把 .osz 改成 .zip 解压进来，比如：
+  charts/white-night/xxx (Easy).osu
+  charts/white-night/xxx (Hard).osu
+  charts/white-night/audio.mp3
+  （有 Info.dat 是 BeatSaver，有 .osu 是 osu!；只支持 standard 模式，mania 等会标"暂不支持"）
 歌的音频文件不用管（游戏用你自己在浏览器里放的歌）。
 这些文件夹不进 git。

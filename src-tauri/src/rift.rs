@@ -106,3 +106,33 @@ pub fn rift_close(app: AppHandle) {
         eprintln!("[裂缝射击] 窗口已关闭");
     }
 }
+
+// ---------------- 设置、模式、最高分：存成文件 ----------------
+// 以前放在网页的 localStorage 里，Windows 关机时 WebView2 来不及写盘就会丢（隔天开机设置全回到默认）。
+// 现在存在 %APPDATA%\com.stanley.desktopisland\rift.json，内容的格式由页面自己管。
+
+fn store_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("rift.json"))
+}
+
+/// 读出存过的设置（没有或读不了 = null，页面用默认值）
+#[tauri::command]
+pub fn rift_store_get(app: AppHandle) -> serde_json::Value {
+    store_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// 整个覆盖写入：先写临时文件再改名，写到一半断电也不会把旧文件弄坏
+#[tauri::command]
+pub fn rift_store_set(app: AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let path = store_path(&app).ok_or("找不到配置文件夹")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}

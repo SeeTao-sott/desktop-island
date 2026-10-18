@@ -1,6 +1,7 @@
 // 裂缝射击：准星和设置面板。
 // 准星照 Valorant 的"内侧线"画：四条短线围着中心，可调颜色、长度、粗细、间隙、描边、中心点。
-// 设置存在这个窗口自己的 localStorage 里（只在本机，下次打开还在）。
+// 设置、模式、最高分存在配置文件夹的 rift.json 里（loadStore / saveStore）。
+import { invoke } from "@tauri-apps/api/core";
 
 export interface AimSettings {
   /** Valorant 灵敏度：每个鼠标移动单位转 0.07 × 灵敏度 度 */
@@ -35,10 +36,30 @@ export interface AimSettings {
 export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150 };
 const KEY = "rift-aim";
 
-export function loadSettings(): AimSettings {
+/** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
+export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace"] as const;
+type ModeKey = (typeof MODE_KEYS)[number];
+export interface Mode {
+  name: string;
+  v: Pick<AimSettings, ModeKey>;
+}
+
+/** 存在 rift.json 里的全部东西 */
+export interface RiftStore {
+  settings: AimSettings;
+  modes: Mode[];
+  /** 当前用哪个模式（modes 的下标） */
+  active: number;
+  /** 最高分：按"歌 | 难度"记 */
+  best: Record<string, number>;
+}
+
+const pickMode = (s: AimSettings): Mode["v"] => Object.fromEntries(MODE_KEYS.map((k) => [k, s[k]])) as Mode["v"];
+
+/** 把明显不合理的值拉回范围 */
+export function cleanSettings(raw: unknown): AimSettings {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    const s = { ...DEFAULTS, ...raw };
+    const s = { ...DEFAULTS, ...(raw && typeof raw === "object" ? raw : {}) } as AimSettings;
     s.cols = Math.min(9, Math.max(4, Math.round(Number(s.cols) || DEFAULTS.cols)));
     s.rows = Math.min(4, Math.max(1, Math.round(Number(s.rows) || DEFAULTS.rows)));
     s.zoom = Math.min(2.5, Math.max(1, Number(s.zoom) || DEFAULTS.zoom));
@@ -54,9 +75,57 @@ export function loadSettings(): AimSettings {
   }
 }
 
-export function saveSettings(s: AimSettings) {
+function readLocal<T>(key: string): T | null {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    return JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+/** 读文件；文件还没有时，把以前存在 localStorage 里的设置和最高分搬过来 */
+export async function loadStore(): Promise<RiftStore> {
+  let raw: Partial<RiftStore> | null = null;
+  try {
+    raw = await invoke<Partial<RiftStore> | null>("rift_store_get");
+  } catch {
+    // 读不了就当没有
+  }
+  if (!raw || typeof raw !== "object") {
+    raw = { settings: readLocal(KEY) ?? undefined, best: readLocal("rift-best") ?? undefined };
+  }
+  const settings = cleanSettings(raw.settings);
+  let modes = Array.isArray(raw.modes)
+    ? raw.modes
+        .filter((m) => m && typeof m === "object")
+        .map((m, i) => ({ name: String(m.name || `模式 ${i + 1}`), v: pickMode(cleanSettings({ ...settings, ...m.v })) }))
+    : [];
+  if (!modes.length) modes = [{ name: "模式 1", v: pickMode(settings) }];
+  const active = Math.min(modes.length - 1, Math.max(0, Math.round(Number(raw.active) || 0)));
+  Object.assign(settings, modes[active].v);
+  const best = raw.best && typeof raw.best === "object" ? raw.best : {};
+  return { settings, modes, active, best };
+}
+
+let saveTimer = 0;
+let pending: RiftStore | null = null;
+/** 存盘：连着改的时候停一下手再写（数字框每敲一个字都会触发） */
+export function saveStore(st: RiftStore) {
+  // 当前模式的值跟着设置走
+  st.modes[st.active].v = pickMode(st.settings);
+  pending = st;
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(flushStore, 300);
+}
+
+/** 马上写盘（关窗口前调） */
+export async function flushStore() {
+  window.clearTimeout(saveTimer);
+  const st = pending;
+  pending = null;
+  if (!st) return;
+  try {
+    await invoke("rift_store_set", { data: st });
   } catch {
     // 存不了就算了，这次照样能用
   }
@@ -81,9 +150,11 @@ export function drawCrosshair(el: HTMLElement, s: AimSettings) {
   if (s.dot) bar(-half, -half, t, t);
 }
 
-/** 设置面板：改了就立刻生效并保存 */
-export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: AimSettings) => void) {
+/** 设置面板：改了就立刻生效并保存。最上面是模式：切换、新建、改名、删除 */
+export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s: AimSettings) => void) {
   panel.replaceChildren();
+  const s = store.settings;
+  const rebuild = () => buildSettings(panel, store, onChange);
   const row = (label: string, input: HTMLElement, note?: string) => {
     const r = document.createElement("label");
     r.className = "rf-row";
@@ -134,14 +205,64 @@ export function buildSettings(panel: HTMLElement, s: AimSettings, onChange: (s: 
     s.color = color.value;
     onChange(s);
   });
+  // ---- 模式 ----
+  const modeBar = document.createElement("div");
+  modeBar.className = "rf-modes";
+  const sel = document.createElement("select");
+  store.modes.forEach((m, i) => sel.add(new Option(m.name, String(i), false, i === store.active)));
+  sel.addEventListener("change", () => {
+    store.active = Number(sel.value);
+    Object.assign(s, store.modes[store.active].v);
+    onChange(s);
+    rebuild();
+  });
+  const btn = (text: string, title: string, fn: () => void) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.title = title;
+    b.addEventListener("click", fn);
+    return b;
+  };
+  const add = btn("新建", "用现在的设置新建一个模式", () => {
+    let n = store.modes.length + 1;
+    while (store.modes.some((m) => m.name === `模式 ${n}`)) n++;
+    store.modes.push({ name: `模式 ${n}`, v: pickMode(s) });
+    store.active = store.modes.length - 1;
+    onChange(s);
+    rebuild();
+  });
+  const del = btn("删除", "删除这个模式", () => {
+    if (store.modes.length <= 1) return;
+    store.modes.splice(store.active, 1);
+    store.active = Math.max(0, store.active - 1);
+    Object.assign(s, store.modes[store.active].v);
+    onChange(s);
+    rebuild();
+  });
+  del.disabled = store.modes.length <= 1;
+  modeBar.append(sel, add, del);
+  row("模式", modeBar, "下面带 ◆ 的几项每个模式各存一份，改了自动记到当前模式里");
+  const name = document.createElement("input");
+  name.type = "text";
+  name.maxLength = 20;
+  name.value = store.modes[store.active].name;
+  name.addEventListener("input", () => {
+    const t = name.value.trim() || `模式 ${store.active + 1}`;
+    store.modes[store.active].name = t;
+    sel.options[store.active].text = t;
+    onChange(s);
+  });
+  row("模式名字", name);
+
   row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
-  row("靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
-  row("最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");
-  row("镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
-  row("靶子大小", num("size", 0.5, 1.6, 0.1), "0.5~1.6 倍");
-  row("出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
-  row("判定窗口（ms）", num("window", 60, 250, 10), "拍点前后多少毫秒内算 Great，Perfect 是它的一半");
-  row("同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
+  row("◆ 靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
+  row("◆ 最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");
+  row("◆ 镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
+  row("◆ 靶子大小", num("size", 0.5, 1.6, 0.1), "0.5~1.6 倍");
+  row("◆ 出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
+  row("◆ 判定窗口（ms）", num("window", 60, 250, 10), "拍点前后多少毫秒内算 Great，Perfect 是它的一半");
+  row("◆ 同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   row("准星颜色", color);
