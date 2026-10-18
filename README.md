@@ -241,6 +241,7 @@ npm install
 npm run tauri dev     # 开发模式，显示动画帧率
 npm run tauri build   # 编译发布版（生成上面的 exe）
 cd src-tauri && cargo test   # 文件安全的自动测试
+cd src-tauri && cargo run --example print_osu   # 打印 charts/ 里 osu! 谱的难度、靶子数、前 20 个靶子
 ```
 
 需要：Node.js、Rust（MSVC 工具链）、Visual Studio Build Tools（C++ 桌面开发：MSVC + Windows 11 SDK）。

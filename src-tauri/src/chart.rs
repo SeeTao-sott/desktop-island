@@ -583,48 +583,6 @@ mod tests {
         assert_eq!(lane_of(2.0), 2);
     }
 
-    /// 读 charts/ 里的 osu! 谱，打印每个难度的名称、靶子数量，再打印靶子最少那个难度的前 20 个靶子：
-    /// cargo test --release print_osu -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn print_osu() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../charts");
-        let songs: Vec<SongInfo> = list_songs(&root).into_iter().filter(|s| s.format == "osu").collect();
-        assert!(!songs.is_empty(), "charts/ 里没有 osu! 谱");
-        for song in songs {
-            println!("\n《{}》— {}（谱师 {}）BPM {:.0}，音频 {}，背景 {}", song.title, song.artist, song.mapper, song.bpm, song.song_file, song.cover_file);
-            let dir = root.join(&song.id);
-            let mut fewest: Option<(usize, crate::osu::OsuChart)> = None;
-            for d in &song.difficulties {
-                let c = crate::osu::load(&dir.join(&d.file)).unwrap();
-                let slider = c.hits.iter().filter(|h| h.slider).count();
-                println!(
-                    "  {:<18} 模式 {}  靶子 {:>4} 个（圈 {}、滑条起点 {}）  CS {}  AR {}（提前 {:.2} 秒）  OD {}{}",
-                    d.name,
-                    c.mode,
-                    d.count,
-                    d.count - slider,
-                    slider,
-                    c.cs,
-                    c.ar,
-                    c.preempt(),
-                    c.od,
-                    if d.note.is_empty() { String::new() } else { format!("  [{}]", d.note) }
-                );
-                if c.mode == 0 && fewest.as_ref().is_none_or(|(n, _)| d.count < *n) {
-                    fewest = Some((d.count, c));
-                }
-            }
-            if let Some((_, c)) = fewest {
-                println!("\n  前 20 个靶子（{}，靶子最少的难度）：", c.version);
-                println!("  序号   时间(秒)     x      y    类型");
-                for (i, h) in c.hits.iter().take(20).enumerate() {
-                    println!("  {:>3}   {:>8.3}   {:>4.0}   {:>4.0}   {}", i + 1, h.t, h.x, h.y, if h.slider { "滑条起点" } else { "圈" });
-                }
-            }
-        }
-    }
-
     /// 读 charts/ 里真实的谱，打印每首歌的信息和前 20 个音符：
     /// cargo test --release print_charts -- --ignored --nocapture
     #[test]
