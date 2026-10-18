@@ -476,7 +476,7 @@ function applyZoom() {
 
 function showInfo() {
   const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
-  infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}${delay}\nEsc 退出`;
+  infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}${delay}\n${song.on ? "Esc / P 暂停 · R 重开" : "Esc 退出"}`;
 }
 
 async function lock() {
@@ -495,22 +495,183 @@ async function lock() {
   }
   log(`鼠标锁定：${lockMode}`);
 }
-startEl.querySelector(".start-go")!.addEventListener("click", () => lock());
+startEl.querySelector(".start-back")!.addEventListener("click", () => showMenu(menuKind));
 
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === document.body;
   if (locked) {
     playing = true;
+    menuEl.hidden = true;
     startEl.hidden = true;
     crossEl.hidden = false;
-    if (song.on && !song.running && !song.finished && song.audio) showPrompt("按空格开始");
   } else if (playing) {
-    // 锁定中按 Esc：浏览器自己先释放锁定（这一下 Esc 页面收不到），当作退出
+    // 锁定中按 Esc（或 P）：浏览器自己先释放锁定（这一下 Esc 页面收不到）。
+    // 正在打 → 暂停；看结算时 → 退出；其他时候（开场动画中、测试模式）→ 回到菜单
     playing = false;
-    close();
+    crossEl.hidden = true;
+    if (song.running && !song.finished) pause();
+    else if (song.finished) close();
+    else {
+      intro++; // 开场动画放到一半：作废
+      if (openSpring.target < 1 && !closing) {
+        openSpring.cfg = OPEN_CFG;
+        openSpring.target = 1;
+      }
+      bannerEl.hidden = true;
+      showMenu("main");
+    }
   }
   showInfo();
 });
+
+// ---------------- 裂缝里的菜单、开场动画、暂停、重开 ----------------
+const menuEl = document.getElementById("menu")!;
+const bannerEl = document.getElementById("banner")!;
+type MenuKind = "main" | "pause";
+let menuKind: MenuKind = "main";
+/** 开场动画的编号：中途被打断（Esc、退出）时加一，正在跑的那一次看到编号变了就停下 */
+let intro = 0;
+let introBusy = false;
+const OPEN_CFG = { stiffness: 90, damping: 13, precision: 0.001 };
+const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+
+/** 菜单放在裂缝正中：标题（歌名 · 难度）+ 一排按钮 */
+function showMenu(kind: MenuKind, tip = "") {
+  menuKind = kind;
+  startEl.hidden = true;
+  showPrompt("");
+  const title = song.on ? `${song.meta?.title ?? song.pick?.id ?? ""} · ${song.pick?.difficulty ?? ""}` : "裂缝射击（测试）";
+  const loading = song.on && !song.audio && !song.error;
+  menuEl.querySelector(".menu-title")!.textContent =
+    kind === "pause" ? `暂停 · ${title}` : song.error ? `${title}：${song.error}` : loading ? `${title} · 载入中…` : title;
+  const bar = menuEl.querySelector(".menu-buttons")!;
+  bar.replaceChildren();
+  const btn = (text: string, fn: () => void, main = false, disabled = false) => {
+    const b = document.createElement("button");
+    b.textContent = text;
+    if (main) b.className = "main";
+    b.disabled = disabled;
+    b.addEventListener("click", fn);
+    bar.appendChild(b);
+  };
+  if (kind === "pause") {
+    btn("继续", resume, true);
+    btn("重开", () => gameStart());
+  } else {
+    btn("开始", () => gameStart(), true, !!song.error);
+  }
+  btn("设置", () => {
+    menuEl.hidden = true;
+    startEl.hidden = false;
+  });
+  btn("退出", close);
+  menuEl.querySelector(".menu-tip")!.textContent =
+    tip ||
+    (kind === "pause"
+      ? "点继续回到游戏"
+      : song.on
+        ? "鼠标转视角 · 左键射击 · 右键打金色一组 · Esc / P 暂停 · R 重开"
+        : "鼠标转视角 · 左键射击 · 数字键 1~4 换行数 · Esc 退出");
+  menuEl.hidden = false;
+}
+
+/** 开始 / 重开：锁鼠标 → 裂缝合上 → 闪出 GAME START → 裂缝再打开 → 放歌 */
+async function gameStart() {
+  if (introBusy || closing) return;
+  introBusy = true;
+  const my = ++intro;
+  const alive = () => my === intro && !closing;
+  try {
+    menuEl.hidden = true;
+    startEl.hidden = true;
+    resultEl.hidden = true;
+    if (!document.pointerLockElement) {
+      await lock();
+      if (!document.pointerLockElement) {
+        // 刚按过 Esc 的一小会儿浏览器不让马上再锁
+        showMenu(menuKind, "鼠标没锁上，再点一次");
+        return;
+      }
+    }
+    resetSong();
+    if (song.on) await songReady;
+    if (!alive()) return;
+    if (song.on && !song.audio) {
+      document.exitPointerLock();
+      return;
+    }
+    // 合上
+    openSpring.cfg = { stiffness: 220, damping: 30, precision: 0.001 };
+    openSpring.target = 0;
+    await sleep(300);
+    if (!alive()) return;
+    bannerEl.hidden = false;
+    await bannerEl.animate(
+      [
+        { opacity: 0, transform: "translate(-50%, -50%) scale(1.6)", letterSpacing: "0.6em" },
+        { opacity: 1, transform: "translate(-50%, -50%) scale(1)", letterSpacing: "0.25em", offset: 0.25 },
+        { opacity: 1, transform: "translate(-50%, -50%) scale(1.03)", letterSpacing: "0.28em", offset: 0.75 },
+        { opacity: 0, transform: "translate(-50%, -50%) scale(1.25)", letterSpacing: "0.5em" },
+      ],
+      { duration: 1000, easing: "ease-out" },
+    ).finished.catch(() => {});
+    bannerEl.hidden = true;
+    if (!alive()) return;
+    // 再撕开
+    openSpring.cfg = OPEN_CFG;
+    openSpring.target = 1;
+    await sleep(250);
+    if (!alive()) return;
+    if (song.on) await startSong();
+  } finally {
+    introBusy = false;
+  }
+}
+
+/** 停掉正在放的、清掉场上的靶子和数字（重开前） */
+function resetSong() {
+  stopSong();
+  song.paused = false;
+  song.finished = false;
+  for (const lt of song.live) dropTarget(lt);
+  song.live = [];
+  updateBeams();
+  comboEl.textContent = "";
+  liveEl.hidden = true;
+  resultEl.hidden = true;
+}
+
+/** 暂停：声音停住（音频时钟也跟着停），靶子定在原地，弹出暂停菜单 */
+function pause() {
+  if (!song.running || song.paused || !actx) return;
+  song.paused = true;
+  actx.suspend().catch(() => {});
+  nowPlaying(false);
+  showMenu("pause");
+}
+
+async function resume() {
+  if (!song.paused || !actx) return;
+  await lock();
+  if (!document.pointerLockElement) {
+    showMenu("pause", "鼠标没锁上，再点一次");
+    return;
+  }
+  await actx.resume();
+  song.paused = false;
+  nowPlaying(true);
+}
+
+/** 告诉音乐组件、灵动岛：放到哪了、是不是在放 */
+function nowPlaying(isPlaying: boolean) {
+  if (!song.pick || !song.audio || !actx) return;
+  invoke("rhythm_now_playing", {
+    id: song.pick.id,
+    positionMs: Math.round((actx.currentTime - song.startAt) * 1000),
+    durationMs: Math.round(song.audio.duration * 1000),
+    playing: isPlaying,
+  }).catch(() => {});
+}
 
 document.addEventListener("mousemove", (e) => {
   if (!playing) return;
@@ -607,6 +768,10 @@ const song = {
   running: false,
   starting: false,
   finished: false,
+  /** 暂停中（音频时钟停住，靶子不动） */
+  paused: false,
+  /** 读不了的原因（谱里没有靶子、歌读不了）；空 = 没问题 */
+  error: "",
   startAt: 0,
   offsetMs: 0,
   count: { perfect: 0, great: 0, miss: 0 },
@@ -639,7 +804,9 @@ function showPrompt(text: string) {
 /** 音频时钟此刻"正从扬声器出来"的位置（秒），getOutputTimestamp 已含输出延迟 */
 function audioNow() {
   const ts = actx!.getOutputTimestamp();
-  if (ts.contextTime !== undefined && ts.performanceTime) return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+  // 刚从暂停恢复时时间戳可能还是暂停前的：太旧就不用（不然会一下子跳过整段暂停时间）
+  if (ts.contextTime !== undefined && ts.performanceTime && performance.now() - ts.performanceTime < 200)
+    return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
   return actx!.currentTime - (actx!.outputLatency || actx!.baseLatency || 0);
 }
 /** 歌放到第几秒（扣掉偏移：偏移为正，靶子整体晚一点） */
@@ -649,7 +816,6 @@ async function loadSong(pick: Pick) {
   song.on = true;
   song.pick = pick;
   document.getElementById("test")!.hidden = true;
-  showPrompt("正在载入歌曲…");
   const list = await invoke<SongEntry[]>("rhythm_songs").catch(() => [] as SongEntry[]);
   song.meta = list.find((x) => x.id === pick.id) ?? null;
   song.offsetMs = song.meta?.offset_ms ?? 0;
@@ -702,16 +868,17 @@ async function loadSong(pick: Pick) {
     song.audio = await actx.decodeAudioData(bytes);
   } catch (e) {
     log(`歌读不了：${e}`);
+    song.error = "歌读不了";
   }
   setN(nAt(song.steps, -1));
   showInfo();
   if (song.targets.length === 0) {
     // 没有靶子就别开始（不然一放歌就直接结算）：把原因摆出来
     song.audio = null;
-    showPrompt(`这个难度没有读到靶子${shotsError ? `：${shotsError}` : ""}\nEsc 退出`);
-    return;
+    song.error = `没有读到靶子${shotsError ? `（${shotsError}）` : ""}`;
   }
-  showPrompt(document.pointerLockElement ? "按空格开始" : "");
+  // 菜单开着：标题从"载入中"换成歌名（或读不了的原因）
+  if (!menuEl.hidden && menuKind === "main") showMenu("main");
 }
 
 async function startSong() {
@@ -730,11 +897,7 @@ async function startSong() {
   // 先留一点时间：开头就有的靶子也能完整地收圈
   song.startAt = actx.currentTime + Math.max(1.5, LEAD + 0.5);
   source.start(song.startAt);
-  invoke("rhythm_now_playing", {
-    id: song.pick!.id,
-    positionMs: Math.round((actx.currentTime - song.startAt) * 1000),
-    durationMs: Math.round(song.audio.duration * 1000),
-  }).catch(() => {});
+  nowPlaying(true);
   Object.assign(song, {
     running: true,
     starting: false,
@@ -860,7 +1023,7 @@ function showResult() {
     rows.append(a, b);
   }
   resultEl.appendChild(rows);
-  add("r-tip", "甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · 空格再来一次 · Esc 退出");
+  add("r-tip", "甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · 空格 / R 再来一次 · Esc 退出");
   resultEl.hidden = false;
   liveEl.hidden = true;
   log(`结算：${score} 分，命中 ${(hitRate * 100).toFixed(1)}%，偏差 ${devText}，甩枪 ${flickText}${record ? "，新纪录" : ""}`);
@@ -868,7 +1031,7 @@ function showResult() {
 
 /** 每帧：出靶子、收圈、过期算 Miss、按高潮调 N */
 function updateSong(n: number, nowMs: number) {
-  if (!song.running) return;
+  if (!song.running || song.paused) return;
   const now = songTime();
   while (song.next < song.targets.length && song.targets[song.next].t - LEAD <= now) {
     const lt = takeTarget(song.targets[song.next]);
@@ -1082,8 +1245,11 @@ function close() {
   if (closing) return;
   closing = true;
   playing = false;
+  intro++;
   crossEl.hidden = true;
   startEl.hidden = true;
+  menuEl.hidden = true;
+  bannerEl.hidden = true;
   infoEl.hidden = true;
   if (document.pointerLockElement) document.exitPointerLock();
   stopSong();
@@ -1096,20 +1262,25 @@ function close() {
 }
 
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") close();
+  if (e.key === "Escape") {
+    // 设置里 → 回菜单；暂停菜单里不理（免得连按两下 Esc 直接退出）；其他时候退出
+    if (!startEl.hidden) showMenu(menuKind);
+    else if (!(menuKind === "pause" && !menuEl.hidden)) close();
+    return;
+  }
   // 在设置框里打字时不当快捷键
-  if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+  if ((e.target as HTMLElement)?.tagName === "INPUT" || e.repeat) return;
+  const k = e.key.toLowerCase();
+  // P：暂停（放开鼠标锁定，pointerlockchange 里弹出暂停菜单）
+  if (k === "p" && playing && song.running && !song.finished) {
+    document.exitPointerLock();
+    return;
+  }
   if (song.on) {
-    // 空格：开始放歌（先锁定鼠标）；结束后空格再来一次
-    if (e.key === " " && playing && !e.repeat) {
+    // R：重开；结算后空格也是再来一次
+    if (playing && (k === "r" || (e.key === " " && song.finished))) {
       e.preventDefault();
-      if (song.finished) {
-        stopSong();
-        for (const lt of song.live) dropTarget(lt);
-        song.live = [];
-        resultEl.hidden = true;
-      }
-      startSong();
+      gameStart();
     }
     // ← → 调延迟（靶子早了 / 晚了），每首歌分别记住；和下落模式共用同一个设置
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -1124,6 +1295,9 @@ window.addEventListener("keydown", (e) => {
 });
 document.querySelectorAll<HTMLButtonElement>("#test button").forEach((b) => b.addEventListener("click", () => setN(Number(b.dataset.n))));
 document.getElementById("test")!.hidden = false;
+
+/** 选歌进来时载入那首歌；开场动画要等它载完 */
+let songReady: Promise<void> = Promise.resolve();
 
 async function start() {
   const theme = await invoke<Theme | null>("widgets_theme_get").catch(() => null);
@@ -1141,8 +1315,8 @@ async function start() {
   } catch {
     // 没有就是测试模式
   }
-  if (pick) loadSong(pick);
-  startEl.hidden = false;
+  if (pick) songReady = loadSong(pick);
+  showMenu("main");
   infoEl.hidden = false;
   showInfo();
   log(`裂缝射击开始：屏幕 ${W}x${H}，格子 ${CELL_PX.toFixed(0)}px，画布高 ${CANVAS_H}`);

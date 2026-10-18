@@ -711,13 +711,13 @@ document.querySelector(".js-done")!.addEventListener("click", () => {
 });
 
 listen<boolean>("widgets-edit", (e) => setEditing(e.payload));
-// 全屏程序时、玩裂缝射击时，组件都暂停更新（裂缝射击要保证帧数）
+// 全屏程序时，组件都暂停更新。玩裂缝射击时只停每帧都在画的（律动组件、外框动画）保证帧数；
+// 音乐、时钟这些一秒才动一次的照常走（音乐组件要显示正在放的歌和进度）
 let riftActive = false;
 function applyPause() {
-  const p = paused || riftActive;
   for (const l of live) {
-    l.model.setPaused(p);
-    l.frame?.setPaused(p);
+    l.model.setPaused(paused || (riftActive && l.mod.kind === "audio"));
+    l.frame?.setPaused(paused || riftActive);
   }
 }
 listen<boolean>("widgets-paused", (e) => {

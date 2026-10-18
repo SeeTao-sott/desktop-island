@@ -105,27 +105,28 @@ body {
 .start[hidden] {
   display: none;
 }
+.start-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
 .start-title {
   font-size: 20px;
   font-weight: 800;
-  margin-bottom: 12px;
 }
-.start-go {
-  width: 100%;
+.start-back {
   font: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  padding: 10px;
-  border-radius: 12px;
-  border: none;
-  background: var(--w-accent);
+  font-size: 13px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
   color: #fff;
   cursor: pointer;
 }
-.start-tip {
-  font-size: 12px;
-  opacity: 0.65;
-  margin: 8px 0 12px;
+.start-back:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 .settings {
   display: grid;
@@ -191,6 +192,96 @@ body {
 }
 .rf-row input[type="checkbox"] {
   justify-self: start;
+}
+
+/* 裂缝里的菜单：贴着裂缝正中，没有底框，只有一排发光的按钮 */
+.menu {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+  animation: menu-in 0.35s ease-out 0.25s both;
+}
+.menu[hidden] {
+  display: none;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+}
+.menu-title {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.85;
+  max-width: 70vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-buttons {
+  display: flex;
+  gap: 10px;
+}
+.menu-buttons button {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  min-width: 92px;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.menu-buttons button:hover:not(:disabled) {
+  border-color: var(--w-accent);
+  box-shadow: 0 0 14px var(--w-accent);
+}
+.menu-buttons button.main {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+  box-shadow: 0 0 18px var(--w-accent);
+}
+.menu-buttons button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.menu-tip {
+  font-size: 11px;
+  opacity: 0.6;
+}
+/* 开场：裂缝合上时，那条光线上闪出的 GAME START */
+.banner {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 54px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.25em;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow:
+    0 0 12px var(--w-accent),
+    0 0 36px var(--w-accent),
+    0 0 80px var(--w-accent);
+}
+.banner[hidden] {
+  display: none;
 }
 
 .info {
