@@ -10,12 +10,15 @@ import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Spring } from "../spring";
-import { buildSettings, drawCrosshair, loadSettings, saveSettings } from "./hud";
+import { buildSettings, drawCrosshair, flushStore, loadStore, saveStore } from "./hud";
 import { capSteps, densitySchedule, nAt, planTargets, type NStep, type Shot, type Target } from "./plan";
 
 // ---------------- 可调的参数 ----------------
-/** N = 4 时裂缝占屏幕高度的比例（以后放进设置） */
-const MAX_FRAC = loadSettings().maxFrac;
+/** 设置、模式、最高分（存在 rift.json 里） */
+const store = await loadStore();
+const settings = store.settings;
+/** N = 4 时裂缝占屏幕高度的比例 */
+const MAX_FRAC = settings.maxFrac;
 /** 裂缝上下各留多少像素（格子到裂缝边） */
 const MARGIN = 26;
 /** 裂缝边缘参差的幅度（像素） */
@@ -23,12 +26,11 @@ const JAG = 16;
 /** 发光带的宽度（像素） */
 const GLOW = 30;
 /** 水平视野（度），和 Valorant 默认一样 */
-const HFOV = loadSettings().fov;
+const HFOV = settings.fov;
 /** 靶墙离眼睛多远（米） */
 const WALL_Z = 14;
 /** 房间按最多 9 列的宽度建；实际列数在设置里（默认 6） */
 const MAX_COLS = 9;
-const settings = loadSettings();
 let COLS = settings.cols;
 /** 镜头距离倍数：镜头往后拉，靶墙在屏幕上变小（裂缝、视角范围都跟着缩） */
 let ZOOM = settings.zoom;
@@ -419,7 +421,7 @@ const flashEl = document.getElementById("flash")!;
 const startEl = document.getElementById("start")!;
 const infoEl = document.getElementById("info")!;
 drawCrosshair(crossEl, settings);
-buildSettings(document.getElementById("settings")!, settings, (st) => {
+buildSettings(document.getElementById("settings")!, store, (st) => {
   drawCrosshair(crossEl, st);
   if (st.cols !== COLS) {
     COLS = st.cols;
@@ -439,7 +441,7 @@ buildSettings(document.getElementById("settings")!, settings, (st) => {
       } catch {
         // 记不住就回到测试模式
       }
-      location.reload();
+      flushStore().finally(() => location.reload());
     }, 900);
   }
   // 最多行数改了：按新上限重排时间表（还没开始时裂缝马上跟着变）
@@ -447,7 +449,7 @@ buildSettings(document.getElementById("settings")!, settings, (st) => {
     song.steps = capSteps(song.rawSteps, st.rows);
     setN(nAt(song.steps, -1));
   }
-  saveSettings(st);
+  saveStore(store);
   showInfo();
 });
 
@@ -801,14 +803,6 @@ function showLive() {
   liveEl.textContent = `准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
 }
 
-const BEST_KEY = "rift-best";
-function bestScores(): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(BEST_KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
 
 function showResult() {
   const c = song.count;
@@ -820,16 +814,12 @@ function showResult() {
   const flick = mean(song.flicks) * 1000;
   // 最高分：按"歌 + 难度"记
   const key = `${song.pick?.id}|${song.pick?.difficulty}`;
-  const best = bestScores();
+  const best = store.best;
   const prev = best[key] ?? 0;
   const record = score > prev;
   if (record) {
     best[key] = score;
-    try {
-      localStorage.setItem(BEST_KEY, JSON.stringify(best));
-    } catch {
-      // 存不了就算了
-    }
+    saveStore(store);
   }
   const devText = Number.isNaN(dev) ? "—" : Math.abs(dev) < 3 ? "很准（±3ms 内）" : `平均偏${dev < 0 ? "早" : "晚"} ${Math.abs(dev).toFixed(0)}ms`;
   const flickText = Number.isNaN(flick) ? "—" : `${flick.toFixed(0)}ms`;
@@ -1074,7 +1064,7 @@ function frame(now: number) {
     fpsT = now;
   }
   if (closing && open < 0.01) {
-    invoke("rift_close").catch(() => {});
+    flushStore().finally(() => invoke("rift_close").catch(() => {}));
     return;
   }
   requestAnimationFrame(frame);

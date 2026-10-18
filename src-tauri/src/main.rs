@@ -551,6 +551,8 @@ fn main() {
             rift::rift_open,
             rift::rift_pending,
             rift::rift_hit,
+            rift::rift_store_get,
+            rift::rift_store_set,
             rhythm_shots,
             edge_enabled,
             edge_active,
