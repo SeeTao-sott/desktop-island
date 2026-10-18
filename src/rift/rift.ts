@@ -1269,16 +1269,17 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   // 在设置框里打字时不当快捷键
-  if ((e.target as HTMLElement)?.tagName === "INPUT" || e.repeat) return;
+  if ((e.target as HTMLElement)?.tagName === "INPUT") return;
   const k = e.key.toLowerCase();
   // P：暂停（放开鼠标锁定，pointerlockchange 里弹出暂停菜单）
-  if (k === "p" && playing && song.running && !song.finished) {
+  if (k === "p" && playing && song.running && !song.finished && !e.repeat) {
     document.exitPointerLock();
     return;
   }
   if (song.on) {
     // R：重开；结算后空格也是再来一次
-    if (playing && (k === "r" || (e.key === " " && song.finished))) {
+    // （按住不放时的自动连发不算，只有 ← → 可以按住连续调）
+    if (playing && !e.repeat && (k === "r" || (e.key === " " && song.finished))) {
       e.preventDefault();
       gameStart();
     }
