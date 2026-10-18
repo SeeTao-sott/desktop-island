@@ -15,6 +15,7 @@ mod hotkey;
 mod hover;
 mod icons;
 mod media;
+mod osu;
 mod pomodoro;
 mod rift;
 mod shelf;

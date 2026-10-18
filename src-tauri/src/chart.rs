@@ -1,4 +1,5 @@
-//! 音游：读 BeatSaver 下载的谱（zip 解压后的文件夹）。
+//! 音游：读谱：BeatSaver 下载的谱（zip 解压后的文件夹，有 Info.dat），
+//! 也认 osu! 谱（.osz 改成 .zip 解压，文件夹里有 .osu；解析在 osu.rs）。
 //!
 //! 一首歌一个文件夹，里面有 Info.dat（歌名、歌手、BPM、难度列表）和每个难度一个谱文件。
 //! 谱文件有三种写法，这里都认：
@@ -20,15 +21,21 @@ use serde_json::Value;
 pub struct Difficulty {
     /// 谱的类型，一般是 "Standard"（还有 OneSaber、NoArrows 等）
     pub characteristic: String,
-    /// Easy / Normal / Hard / Expert / ExpertPlus
+    /// Easy / Normal / Hard / Expert / ExpertPlus；osu! 是难度名（Version）
     pub name: String,
     pub file: String,
+    /// 不能玩的原因（比如"mania，暂不支持"）；空 = 能玩
+    pub note: String,
+    /// 靶子数量（osu! 谱读的时候就数好；BeatSaver 是 0 = 没数）
+    pub count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SongInfo {
     /// 文件夹名，用来指认这首歌
     pub id: String,
+    /// "beatsaver" 或 "osu"
+    pub format: String,
     pub title: String,
     pub sub_title: String,
     pub artist: String,
@@ -84,6 +91,7 @@ fn read_json(path: &Path) -> Result<Value, String> {
 pub fn parse_info(id: &str, v: &Value) -> SongInfo {
     let mut info = SongInfo {
         id: id.to_string(),
+        format: "beatsaver".into(),
         title: String::new(),
         sub_title: String::new(),
         artist: String::new(),
@@ -109,6 +117,8 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
                 characteristic: s(d, "characteristic"),
                 name: s(d, "difficulty"),
                 file: s(d, "beatmapDataFilename"),
+                note: String::new(),
+                count: 0,
             });
             if info.mapper.is_empty() {
                 let authors = d.get("beatmapAuthors").map(|a| arr(a, "mappers")).unwrap_or(&[]);
@@ -132,6 +142,8 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
                     characteristic: ch.clone(),
                     name: s(d, "_difficulty"),
                     file: s(d, "_beatmapFilename"),
+                    note: String::new(),
+                    count: 0,
                 });
             }
         }
@@ -145,11 +157,58 @@ pub fn parse_info(id: &str, v: &Value) -> SongInfo {
     info
 }
 
-/// 读一首歌的 Info.dat
+/// 读一首歌：有 Info.dat 是 BeatSaver，有 .osu 是 osu!
 pub fn load_info(dir: &Path) -> Result<SongInfo, String> {
     let id = dir.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-    let path = find_file(dir, "Info.dat").ok_or_else(|| format!("{} 里没有 Info.dat", dir.display()))?;
-    Ok(parse_info(&id, &read_json(&path)?))
+    if let Some(path) = find_file(dir, "Info.dat") {
+        return Ok(parse_info(&id, &read_json(&path)?));
+    }
+    let files = crate::osu::files_in(dir);
+    if !files.is_empty() {
+        return Ok(osu_info(&id, &files));
+    }
+    Err(format!("{} 里既没有 Info.dat 也没有 .osu", dir.display()))
+}
+
+/// osu! 谱：每个 .osu 是一个难度。歌名、歌手、音频、BPM、背景取第一个 standard 难度的
+fn osu_info(id: &str, files: &[PathBuf]) -> SongInfo {
+    let charts: Vec<(String, crate::osu::OsuChart)> = files
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?.to_string();
+            crate::osu::load(p).map_err(|e| eprintln!("跳过这个难度：{e}")).ok().map(|c| (name, c))
+        })
+        .collect();
+    let main = charts.iter().find(|(_, c)| c.mode == 0).or(charts.first()).map(|(_, c)| c.clone()).unwrap_or_default();
+    let mut info = SongInfo {
+        id: id.to_string(),
+        format: "osu".into(),
+        title: if main.title.is_empty() { id.to_string() } else { main.title.clone() },
+        sub_title: String::new(),
+        artist: main.artist.clone(),
+        mapper: main.creator.clone(),
+        bpm: if main.bpm > 0.0 { main.bpm } else { 120.0 },
+        offset: 0.0,
+        difficulties: Vec::new(),
+        song_file: main.audio.clone(),
+        cover_file: main.background.clone(),
+    };
+    for (file, c) in &charts {
+        let (characteristic, note) = match c.mode {
+            0 => ("osu", ""),
+            3 => ("osu-mania", "mania，暂不支持"),
+            1 => ("osu-taiko", "taiko，暂不支持"),
+            _ => ("osu-catch", "catch，暂不支持"),
+        };
+        info.difficulties.push(Difficulty {
+            characteristic: characteristic.into(),
+            name: if c.version.is_empty() { file.clone() } else { c.version.clone() },
+            file: file.clone(),
+            note: note.into(),
+            count: c.hits.len(),
+        });
+    }
+    info
 }
 
 /// 读这首歌的音频文件。文件名来自 Info.dat，只认这首歌文件夹里直接放着的文件（不跟着 ..、子路径跑出去）
@@ -524,13 +583,55 @@ mod tests {
         assert_eq!(lane_of(2.0), 2);
     }
 
+    /// 读 charts/ 里的 osu! 谱，打印每个难度的名称、靶子数量，再打印靶子最少那个难度的前 20 个靶子：
+    /// cargo test --release print_osu -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn print_osu() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../charts");
+        let songs: Vec<SongInfo> = list_songs(&root).into_iter().filter(|s| s.format == "osu").collect();
+        assert!(!songs.is_empty(), "charts/ 里没有 osu! 谱");
+        for song in songs {
+            println!("\n《{}》— {}（谱师 {}）BPM {:.0}，音频 {}，背景 {}", song.title, song.artist, song.mapper, song.bpm, song.song_file, song.cover_file);
+            let dir = root.join(&song.id);
+            let mut fewest: Option<(usize, crate::osu::OsuChart)> = None;
+            for d in &song.difficulties {
+                let c = crate::osu::load(&dir.join(&d.file)).unwrap();
+                let slider = c.hits.iter().filter(|h| h.slider).count();
+                println!(
+                    "  {:<18} 模式 {}  靶子 {:>4} 个（圈 {}、滑条起点 {}）  CS {}  AR {}（提前 {:.2} 秒）  OD {}{}",
+                    d.name,
+                    c.mode,
+                    d.count,
+                    d.count - slider,
+                    slider,
+                    c.cs,
+                    c.ar,
+                    c.preempt(),
+                    c.od,
+                    if d.note.is_empty() { String::new() } else { format!("  [{}]", d.note) }
+                );
+                if c.mode == 0 && fewest.as_ref().is_none_or(|(n, _)| d.count < *n) {
+                    fewest = Some((d.count, c));
+                }
+            }
+            if let Some((_, c)) = fewest {
+                println!("\n  前 20 个靶子（{}，靶子最少的难度）：", c.version);
+                println!("  序号   时间(秒)     x      y    类型");
+                for (i, h) in c.hits.iter().take(20).enumerate() {
+                    println!("  {:>3}   {:>8.3}   {:>4.0}   {:>4.0}   {}", i + 1, h.t, h.x, h.y, if h.slider { "滑条起点" } else { "圈" });
+                }
+            }
+        }
+    }
+
     /// 读 charts/ 里真实的谱，打印每首歌的信息和前 20 个音符：
     /// cargo test --release print_charts -- --ignored --nocapture
     #[test]
     #[ignore]
     fn print_charts() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../charts");
-        let songs = list_songs(&root);
+        let songs: Vec<SongInfo> = list_songs(&root).into_iter().filter(|s| s.format == "beatsaver").collect();
         assert!(!songs.is_empty(), "charts/ 里没有歌");
         for song in songs {
             println!("\n《{}》{} — {}（谱师 {}）", song.title, song.sub_title, song.artist, song.mapper);
