@@ -503,7 +503,7 @@ document.addEventListener("pointerlockchange", () => {
     playing = true;
     startEl.hidden = true;
     crossEl.hidden = false;
-    if (song.on && !song.running && !song.finished) showPrompt(song.audio ? "按空格开始" : "正在载入歌曲…");
+    if (song.on && !song.running && !song.finished && song.audio) showPrompt("按空格开始");
   } else if (playing) {
     // 锁定中按 Esc：浏览器自己先释放锁定（这一下 Esc 页面收不到），当作退出
     playing = false;
@@ -654,10 +654,12 @@ async function loadSong(pick: Pick) {
   song.meta = list.find((x) => x.id === pick.id) ?? null;
   song.offsetMs = song.meta?.offset_ms ?? 0;
   let shots: Shot[] = [];
+  let shotsError = "";
   try {
     shots = await invoke<Shot[]>("rhythm_shots", { id: pick.id, characteristic: pick.characteristic, difficulty: pick.difficulty });
   } catch (e) {
-    log(`读谱失败：${e}`);
+    shotsError = String(e);
+    log(`读谱失败（${pick.characteristic} / ${pick.difficulty}）：${e}`);
   }
   const bpm = song.meta?.bpm ?? 120;
   song.rawSteps = densitySchedule(shots, bpm);
@@ -703,6 +705,12 @@ async function loadSong(pick: Pick) {
   }
   setN(nAt(song.steps, -1));
   showInfo();
+  if (song.targets.length === 0) {
+    // 没有靶子就别开始（不然一放歌就直接结算）：把原因摆出来
+    song.audio = null;
+    showPrompt(`这个难度没有读到靶子${shotsError ? `：${shotsError}` : ""}\nEsc 退出`);
+    return;
+  }
   showPrompt(document.pointerLockElement ? "按空格开始" : "");
 }
 
