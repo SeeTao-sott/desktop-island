@@ -14,11 +14,20 @@
     <div id="cross" class="cross" hidden></div>
     <!-- 枪口闪光 -->
     <div id="flash" class="flash"></div>
-    <!-- 开始前：点开始锁定鼠标；顺便调灵敏度和准星 -->
+    <!-- 裂缝里的菜单：开始 / 设置 / 退出；暂停时换成 继续 / 重开 / 退出 -->
+    <div id="menu" class="menu" hidden>
+      <div class="menu-title"></div>
+      <div class="menu-buttons"></div>
+      <div class="menu-tip"></div>
+    </div>
+    <!-- 开始时裂缝合上一下，中间闪出 GAME START -->
+    <div id="banner" class="banner" hidden>GAME START</div>
+    <!-- 设置：调灵敏度、准星、模式…… -->
     <div id="start" class="start" hidden>
-      <div class="start-title">裂缝射击</div>
-      <button class="start-go">点这里开始（锁定鼠标）</button>
-      <div class="start-tip">鼠标转视角 · 左键射击 · 数字键 1~4 换行数（测试）· Esc 随时退出</div>
+      <div class="start-head">
+        <div class="start-title">设置</div>
+        <button class="start-back">返回</button>
+      </div>
       <div id="settings" class="settings"></div>
     </div>
     <div id="info" class="info" hidden></div>

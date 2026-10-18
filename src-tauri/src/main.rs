@@ -262,9 +262,9 @@ fn rhythm_prefs_set(app: AppHandle, id: String, offset_ms: Option<i32>, speed: O
 }
 
 /// 音游自己放歌时，让音乐组件和灵动岛显示这首歌（歌名、歌手、谱里的封面、进度）；
-/// id 为空 = 放完了，换回真实的播放状态
+/// id 为空 = 放完了，换回真实的播放状态；playing = false 是暂停中（进度停住），不给当作在放
 #[tauri::command]
-fn rhythm_now_playing(tx: State<'_, media::MediaTx>, id: String, position_ms: i64, duration_ms: i64) {
+fn rhythm_now_playing(tx: State<'_, media::MediaTx>, id: String, position_ms: i64, duration_ms: i64, playing: Option<bool>) {
     if id.is_empty() {
         let _ = tx.0.send(media::Msg::Override(None));
         return;
@@ -279,7 +279,7 @@ fn rhythm_now_playing(tx: State<'_, media::MediaTx>, id: String, position_ms: i6
         title: song.title.clone(),
         artist: if song.artist.is_empty() { "音游".into() } else { song.artist.clone() },
         source: "音游".into(),
-        playing: true,
+        playing: playing.unwrap_or(true),
         position_ms,
         duration_ms,
         // 音游的歌不能用播放 / 切歌按钮控制（Esc 退出就停）
