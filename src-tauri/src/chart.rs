@@ -351,8 +351,41 @@ pub fn parse_shots(v: &Value, bpm: f64, offset: f64) -> Vec<Shot> {
     out
 }
 
+/// osu! 的靶子换成和 BeatSaver 一样的音符，后面排靶子、高潮检测、判定全部照旧：
+///   x 0–512：左半边红、右半边蓝，各自那半边再细分成 4 列（lineIndex 0~3）
+///   y 0–384（向下）：分成 3 层，屏幕上方 = 上层（lineLayer 2）
+///   时间已经是从歌开头算的秒数，直接用
+pub fn osu_shots(chart: &crate::osu::OsuChart) -> Vec<Shot> {
+    let mut out: Vec<Shot> = chart
+        .hits
+        .iter()
+        .map(|h| {
+            let x = h.x.clamp(0.0, 512.0);
+            let c = if x < 256.0 { 0 } else { 1 };
+            let u = if c == 0 { x / 256.0 } else { (x - 256.0) / 256.0 };
+            let lane = (u * 4.0).floor().clamp(0.0, 3.0) as u8;
+            let row = (h.y.clamp(0.0, 384.0) / 384.0 * 3.0).floor().clamp(0.0, 2.0) as u8;
+            Shot { t: h.t, x: lane, y: 2 - row, c }
+        })
+        .collect();
+    out.sort_by(|a, b| a.t.total_cmp(&b.t).then(a.c.cmp(&b.c)).then(a.x.cmp(&b.x)));
+    out
+}
+
+/// 读 osu! 的某个难度（只认 standard；mania 等直接说不支持）
+fn load_osu(dir: &Path, diff: &Difficulty) -> Result<crate::osu::OsuChart, String> {
+    if !diff.note.is_empty() {
+        return Err(diff.note.clone());
+    }
+    let path = find_file(dir, &diff.file).ok_or_else(|| format!("找不到谱文件 {}", diff.file))?;
+    crate::osu::load(&path)
+}
+
 /// 读某首歌某个难度的裂缝射击音符
 pub fn load_shots(dir: &Path, info: &SongInfo, diff: &Difficulty) -> Result<Vec<Shot>, String> {
+    if info.format == "osu" {
+        return Ok(osu_shots(&load_osu(dir, diff)?));
+    }
     let path = find_file(dir, &diff.file).ok_or_else(|| format!("找不到谱文件 {}", diff.file))?;
     let v = read_json(&path)?;
     Ok(parse_shots(&v, info.bpm, info.offset))
@@ -402,6 +435,14 @@ pub fn parse_notes(v: &Value, bpm: f64, offset: f64) -> Vec<Note> {
 
 /// 读某首歌某个难度的音符
 pub fn load_notes(dir: &Path, info: &SongInfo, diff: &Difficulty) -> Result<Vec<Note>, String> {
+    if info.format == "osu" {
+        // 下落 4 键：x 0–512 平均分成 4 条轨道
+        let chart = load_osu(dir, diff)?;
+        let mut notes: Vec<Note> =
+            chart.hits.iter().map(|h| Note { t: h.t, lane: (h.x / 128.0).floor().clamp(0.0, 3.0) as u8 }).collect();
+        notes.dedup_by(|b, a| a.lane == b.lane && (b.t - a.t).abs() < 0.001);
+        return Ok(notes);
+    }
     let path = find_file(dir, &diff.file).ok_or_else(|| format!("找不到谱文件 {}", diff.file))?;
     let v = read_json(&path)?;
     // v4 的变速写在单独的音频数据文件里（audio.audioDataFilename），这里只用 Info 里的 BPM
@@ -573,6 +614,30 @@ mod tests {
             0.0,
         );
         assert_eq!(v4, vec![Shot { t: 4.0, x: 2, y: 2, c: 0 }]);
+    }
+
+    #[test]
+    fn osu_hits_become_shots() {
+        use crate::osu::{OsuChart, OsuHit};
+        let hit = |x: f64, y: f64, t: f64| OsuHit { x, y, t, slider: false };
+        let chart = OsuChart {
+            hits: vec![hit(0.0, 0.0, 1.0), hit(255.0, 383.0, 2.0), hit(256.0, 192.0, 3.0), hit(512.0, 384.0, 4.0), hit(130.0, 200.0, 5.0)],
+            ..Default::default()
+        };
+        assert_eq!(
+            osu_shots(&chart),
+            vec![
+                // 左上角：红、半边里第 0 列、上层
+                Shot { t: 1.0, x: 0, y: 2, c: 0 },
+                // 左半边最右、最下：红、第 3 列、下层
+                Shot { t: 2.0, x: 3, y: 0, c: 0 },
+                // 正中间：蓝、第 0 列、中层
+                Shot { t: 3.0, x: 0, y: 1, c: 1 },
+                // 右下角（坐标在边上）：蓝、第 3 列、下层
+                Shot { t: 4.0, x: 3, y: 0, c: 1 },
+                Shot { t: 5.0, x: 2, y: 1, c: 0 },
+            ]
+        );
     }
 
     #[test]

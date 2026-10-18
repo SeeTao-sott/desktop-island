@@ -51,9 +51,20 @@ fn main() {
         }
         if let Some((_, c)) = fewest {
             println!("\n  前 20 个靶子（{}，靶子最少的难度）：", c.version);
-            println!("  序号   时间(毫秒)     x      y    类型");
-            for (i, h) in c.hits.iter().take(20).enumerate() {
-                println!("  {:>3}   {:>9.0}   {:>4.0}   {:>4.0}   {}", i + 1, h.t * 1000.0, h.x, h.y, if h.slider { "滑条起点" } else { "圈" });
+            println!("  序号   时间(毫秒)     x      y    类型        → 裂缝射击");
+            let shots = chart::osu_shots(&c);
+            for (i, (h, s)) in c.hits.iter().zip(&shots).take(20).enumerate() {
+                println!(
+                    "  {:>3}   {:>9.0}   {:>4.0}   {:>4.0}   {:<8}  {} 第 {} 列 {}",
+                    i + 1,
+                    h.t * 1000.0,
+                    h.x,
+                    h.y,
+                    if h.slider { "滑条起点" } else { "圈" },
+                    if s.c == 0 { "红" } else { "蓝" },
+                    s.x + 1,
+                    ["下层", "中层", "上层"][s.y as usize]
+                );
             }
         }
     }
