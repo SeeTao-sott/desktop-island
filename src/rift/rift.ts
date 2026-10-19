@@ -94,6 +94,25 @@ function partnerHue(h: number) {
   return (((p0 + d * k) % 1) + 1) % 1;
 }
 const pairColors = () => settings.colorMode === "pair";
+const hueDist = (a: number, b: number) => {
+  const d = Math.abs(a - b) % 1;
+  return Math.min(d, 1 - d);
+};
+/** 挑一个色相：想要的那个（pref）离要避开的颜色都够远就用它；不然在色环上找离它们最远、又尽量靠近 pref 的 */
+function pickHue(pref: number, avoid: number[]) {
+  const far = (h: number) => Math.min(...avoid.map((a) => hueDist(h, a)));
+  if (far(pref) >= 0.14) return pref;
+  let best = pref;
+  let bestScore = -Infinity;
+  for (let h = 0; h < 1; h += 0.005) {
+    const score = Math.min(far(h), 0.2) - 0.3 * hueDist(h, pref);
+    if (score > bestScore) {
+      bestScore = score;
+      best = h;
+    }
+  }
+  return best;
+}
 
 function applyTheme(t: Theme | null) {
   if (t) accent.setRGB(t.accent[0] / 255, t.accent[1] / 255, t.accent[2] / 255, THREE.SRGBColorSpace);
@@ -116,8 +135,15 @@ function applyTheme(t: Theme | null) {
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
   // 副色：经典撞色时用配色表里的搭档色；单色时只把色相往前转一点（原来的样子）。裂缝外面的光焰、撕口用它
-  partner.setHSL(pairColors() ? partnerHue(hsl.h) : (hsl.h + 0.17) % 1, 0.9, 0.56);
+  const ph = pairColors() ? partnerHue(hsl.h) : (hsl.h + 0.17) % 1;
+  partner.setHSL(ph, 0.9, 0.56);
   glowMat.uniforms.color2.value = partner.clone();
+  for (const r of rows) r.edge2.color = (pairColors() ? partner : accent).clone();
+  // 「可以打」和「金色组」的颜色：尽量是绿色、金色，但和主色 / 搭档色太像时换成离它们最远的颜色
+  const avoid = pairColors() ? [hsl.h, ph] : [hsl.h];
+  const readyH = pickHue(0.36, avoid);
+  GREEN.setHSL(readyH, 1, 0.6);
+  GOLD.setHSL(pickHue(0.115, [...avoid, readyH]), 1, 0.62);
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
   embers.material.uniforms.uColor.value.copy(accent);
   embers.material.uniforms.uColor2.value.copy(pairColors() ? partner : accent);
@@ -242,7 +268,8 @@ if (dust) scene.add(dust.points);
 // 列数 × 4 行格子：每行一组，行的位置和透明度跟着 N 的弹簧走
 // 绘制顺序固定：格子 → 靶子 → 特效。半透明物体默认按"离相机多远"排顺序，
 // 靠边的靶子会被排到格子前面先画、再被格子盖住（看不见但打得到），所以写死顺序，格子也不写深度
-const rows: { group: THREE.Group; cell: THREE.MeshStandardMaterial; edge: THREE.MeshBasicMaterial }[] = [];
+/** 每行一组；格子边框分左右两种（经典撞色时左半主色、右半搭档色，和靶子的左右颜色对上） */
+const rows: { group: THREE.Group; cell: THREE.MeshStandardMaterial; edge: THREE.MeshBasicMaterial; edge2: THREE.MeshBasicMaterial }[] = [];
 const cellGeo = new THREE.PlaneGeometry(CELL * 0.86, CELL * 0.86);
 const edgeGeo = new THREE.EdgesGeometry(cellGeo);
 for (let r = 0; r < 4; r++) {
@@ -250,9 +277,10 @@ for (let r = 0; r < 4; r++) {
   const cell = mats.cell.clone();
   cell.depthWrite = false;
   const edge = mats.cellEdge.clone();
+  const edge2 = mats.cellEdge.clone();
   group.position.z = -WALL_Z;
   scene.add(group);
-  rows.push({ group, cell, edge });
+  rows.push({ group, cell, edge, edge2 });
 }
 /** 按现在的列数摆格子（设置里改了列数会重新摆） */
 function buildCells() {
@@ -264,7 +292,7 @@ function buildCells() {
       m.position.set((c - (COLS - 1) / 2) * CELL, 0, 0.01);
       m.renderOrder = 0;
       r.group.add(m);
-      const e = new THREE.LineSegments(edgeGeo, r.edge);
+      const e = new THREE.LineSegments(edgeGeo, c > (COLS - 1) / 2 ? r.edge2 : r.edge);
       e.position.copy(m.position).setZ(0.02);
       e.renderOrder = 1;
       r.group.add(e);
@@ -1146,7 +1174,7 @@ function layoutRows(n: number) {
     row.group.visible = vis > 0.01;
     row.group.scale.setScalar(0.85 + 0.15 * vis);
     row.cell.opacity = vis;
-    row.edge.opacity = vis * 0.9;
+    row.edge.opacity = row.edge2.opacity = vis * 0.9;
   }
   rowCenter = fixed && sumW > 0 ? sumY / sumW : 0;
 }
@@ -1833,8 +1861,9 @@ function updateSong(n: number, nowMs: number) {
     }
     lt.group.scale.setScalar(settings.size);
     const appear = Math.min(1, (LEAD - left) / 0.15); // 出现时淡入
-    // 能打的那一段变绿（外圈也一起）
-    const ready = left <= greatW() && left >= -lateW(tg);
+    // 快到拍点时变绿（外圈也一起）：Perfect 窗口和提前量的 3 成取小的那个，
+    // 判定窗口设得大、提前量设得短时，也不会外圈才缩一半就变绿（Great 的判定范围不变，提前打照样算）
+    const ready = left <= Math.min(perfectW(), LEAD * 0.3) && left >= -lateW(tg);
     // 一组的靶子：平时金色，能打时圆盘变绿、外圈保持金色（看得出是一组）
     const linked = tg.group >= 0 && (aliveInGroup.get(tg.group) ?? 0) >= 2;
     // 经典撞色：左半边（红）用主色、右半边（蓝）用搭档色
@@ -1884,7 +1913,9 @@ function updateBeams() {
       beam.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, a.z - 0.01);
       beam.scale.x = Math.hypot(b.x - a.x, b.y - a.y);
       beam.rotation.z = Math.atan2(b.y - a.y, b.x - a.x);
-      (beam.material as THREE.MeshBasicMaterial).opacity = 0.85 * Math.min(g[i].discMat.opacity, g[i + 1].discMat.opacity);
+      const bm = beam.material as THREE.MeshBasicMaterial;
+      bm.color.copy(GOLD); // 金色跟着配色变
+      bm.opacity = 0.85 * Math.min(g[i].discMat.opacity, g[i + 1].discMat.opacity);
       beam.visible = true;
       k++;
     }
