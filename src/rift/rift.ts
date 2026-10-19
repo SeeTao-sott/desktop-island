@@ -367,23 +367,66 @@ const seeded = (seed: number) => {
   let s = seed;
   return () => ((s = (s * 16807) % 2147483647) / 2147483647) * 2 - 1;
 };
-/** 撕裂样式的边：大弧度、连贯的起伏为主（像撕开的纸边），只有一点细毛边；
- *  偶尔一处断口 / 尖角（占三四个点，不是一根针） */
+/** 撕裂样式的边：像玻璃 / 地面的裂纹——一段一段直线连起来，转折处是硬角，每段长短不一；
+ *  只叠一点点细毛边。返回每个点的偏移和转折点的位置（分叉的细裂纹从转折点长出去） */
 function tearProfile(seed: number) {
   const rnd = seeded(seed);
-  const big = smoothLayer(rnd, 44);
-  const mid = smoothLayer(rnd, 15);
-  const fine = smoothLayer(rnd, 5);
-  const v = Array.from({ length: P }, (_, i) => big(i) * 0.62 + mid(i) * 0.3 + fine(i) * 0.07);
-  for (let i = 2; i < P - 2; i++) {
-    if (Math.abs(rnd()) < 0.975) continue;
-    const a = (0.45 + Math.abs(rnd()) * 0.45) * (rnd() < 0 ? -1 : 1);
-    v[i - 1] += a * 0.45;
-    v[i] += a;
-    v[i + 1] += a * 0.55;
-    v[i + 2] += a * 0.15;
+  const knots: number[] = [];
+  for (let i = 0; i < P - 1; i += 5 + Math.floor(Math.abs(rnd()) * 22)) knots.push(i);
+  knots.push(P - 1);
+  const vals: number[] = [];
+  let y = rnd() * 0.6;
+  for (let k = 0; k < knots.length; k++) {
+    // 大多数转折只偏一点，偶尔猛地一折
+    y = Math.abs(rnd()) > 0.85 ? rnd() * 1.2 : Math.min(1.15, Math.max(-1.15, y + rnd() * 0.8));
+    vals.push(y);
   }
-  return v;
+  const fine = smoothLayer(rnd, 3);
+  const v = new Array<number>(P);
+  for (let k = 0; k + 1 < knots.length; k++) {
+    const a = knots[k];
+    const b = knots[k + 1];
+    for (let i = a; i <= b; i++) v[i] = vals[k] + ((vals[k + 1] - vals[k]) * (i - a)) / (b - a) + fine(i) * 0.035;
+  }
+  return { v, knots };
+}
+/** 从转折点往裂缝外长出去的细裂纹：每条 2~4 节、越往外越细越淡，偶尔再分一次叉。
+ *  坐标是相对转折点的像素（y 往裂缝外为正） */
+interface Branch {
+  k: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  w0: number;
+  w1: number;
+  f0: number;
+  f1: number;
+}
+function crackBranches(knots: number[], seed: number): Branch[] {
+  const rnd = seeded(seed);
+  const out: Branch[] = [];
+  const grow = (k: number, x: number, y: number, ang: number, w: number, f: number, n: number, canFork: boolean) => {
+    for (let j = 0; j < n; j++) {
+      const len = 14 + Math.abs(rnd()) * 30;
+      ang = Math.max(-1.4, Math.min(1.4, ang + rnd() * 0.7));
+      const nx = x + Math.sin(ang) * len;
+      const ny = y + Math.cos(ang) * len;
+      const nw = w * 0.66;
+      const nf = f * 0.7;
+      out.push({ k, ax: x, ay: y, bx: nx, by: ny, w0: w, w1: nw, f0: f, f1: nf });
+      if (canFork && j === 1 && Math.abs(rnd()) > 0.65) grow(k, nx, ny, ang + (rnd() < 0 ? -0.9 : 0.9), nw, nf, 2, false);
+      x = nx;
+      y = ny;
+      w = nw;
+      f = nf;
+    }
+  };
+  for (const k of knots) {
+    if (k < 3 || k > P - 4 || Math.abs(rnd()) < 0.45) continue;
+    grow(k, 0, 0, rnd() * 1.1, 2.2 + Math.abs(rnd()) * 1.2, 1, 2 + Math.floor(Math.abs(rnd()) * 3), true);
+  }
+  return out;
 }
 /** 经典样式的边（原来那条）：120 个点的锯齿，平滑两遍再叠一点尖刺；插值到 P 个点 */
 function classicProfile(seed: number) {
@@ -398,15 +441,25 @@ function classicProfile(seed: number) {
     return base[k] + (base[k + 1] - base[k]) * (f - k);
   });
 }
-/** 撕裂样式：沿横向宽窄不一（0.55 ~ WIDE_MAX 倍），上下两条各自变 */
+/** 撕裂样式：沿横向宽窄不一（0.55 ~ WIDE_MAX 倍），上下两条各自变。
+ *  也是一段段直线连起来（和边上的折线叠在一起，整条裂缝都是硬折角，不会变回平滑的波浪） */
 function widthProfile(seed: number) {
   const rnd = seeded(seed);
-  const w = smoothLayer(rnd, 62);
-  const w2 = smoothLayer(rnd, 23);
-  return Array.from({ length: P }, (_, i) => Math.min(WIDE_MAX, Math.max(0.55, 0.97 + w(i) * 0.36 + w2(i) * 0.1)));
+  const knots: number[] = [];
+  for (let i = 0; i < P - 1; i += 18 + Math.floor(Math.abs(rnd()) * 40)) knots.push(i);
+  knots.push(P - 1);
+  const vals = knots.map(() => Math.min(WIDE_MAX, Math.max(0.55, 0.97 + rnd() * 0.42)));
+  const out = new Array<number>(P);
+  for (let k = 0; k + 1 < knots.length; k++)
+    for (let i = knots[k]; i <= knots[k + 1]; i++) out[i] = vals[k] + ((vals[k + 1] - vals[k]) * (i - knots[k])) / (knots[k + 1] - knots[k]);
+  return out;
 }
-const tearTop = tearProfile(9137);
-const tearBot = tearProfile(4211);
+const tearTopP = tearProfile(9137);
+const tearBotP = tearProfile(4211);
+const tearTop = tearTopP.v;
+const tearBot = tearBotP.v;
+const branchesTop = crackBranches(tearTopP.knots, 5501);
+const branchesBot = crackBranches(tearBotP.knots, 8803);
 const classicTop = classicProfile(9137);
 const classicBot = classicProfile(4211);
 const wideTop = widthProfile(733);
@@ -544,6 +597,81 @@ const glowMat = new THREE.ShaderMaterial({
 });
 overlay.add(new THREE.Mesh(glowGeo, glowMat));
 
+// 分叉的细裂纹：每节一个细长四边形，aSide 横跨宽度（-1 ~ 1，中间亮），aFade 往外越来越淡
+const allBranches = [...branchesTop.map((b) => ({ b, top: true })), ...branchesBot.map((b) => ({ b, top: false }))];
+const branchGeo = new THREE.BufferGeometry();
+const branchPos = new Float32Array(allBranches.length * 4 * 3);
+const branchSide = new Float32Array(allBranches.length * 4);
+const branchFade = new Float32Array(allBranches.length * 4);
+const branchIdx: number[] = [];
+allBranches.forEach(({ b }, n) => {
+  branchSide.set([1, -1, 1, -1], n * 4);
+  branchFade.set([b.f0, b.f0, b.f1, b.f1], n * 4);
+  branchIdx.push(n * 4, n * 4 + 1, n * 4 + 2, n * 4 + 1, n * 4 + 3, n * 4 + 2);
+});
+branchGeo.setAttribute("position", new THREE.BufferAttribute(branchPos, 3).setUsage(THREE.DynamicDrawUsage));
+branchGeo.setAttribute("aSide", new THREE.BufferAttribute(branchSide, 1));
+branchGeo.setAttribute("aFade", new THREE.BufferAttribute(branchFade, 1));
+branchGeo.setIndex(branchIdx);
+const branchMat = new THREE.ShaderMaterial({
+  uniforms: { color: glowMat.uniforms.color, strength: { value: 0 } },
+  vertexShader: /* glsl */ `
+    attribute float aSide;
+    attribute float aFade;
+    varying float vSide;
+    varying float vFade;
+    void main() {
+      vSide = aSide;
+      vFade = aFade;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform vec3 color;
+    uniform float strength;
+    varying float vSide;
+    varying float vFade;
+    void main() {
+      float s2 = vSide * vSide;
+      float core = exp(-s2 * 18.0);
+      float a = clamp((core + exp(-s2 * 3.0) * 0.45) * vFade * strength, 0.0, 1.0);
+      gl_FragColor = vec4(mix(color, vec3(1.0), core * 0.85) * a, a);
+    }`,
+  transparent: true,
+  depthTest: false,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  blending: THREE.CustomBlending,
+  blendSrc: THREE.OneFactor,
+  blendDst: THREE.OneMinusSrcAlphaFactor,
+});
+const branchMesh = new THREE.Mesh(branchGeo, branchMat);
+branchMesh.frustumCulled = false;
+overlay.add(branchMesh);
+/** 细裂纹跟着这一帧的裂缝边走（grow：长出来的比例，裂缝刚撕开时从短到长） */
+function updateBranches(grow: number) {
+  const dirTmp = { x: 0, y: 0 };
+  allBranches.forEach(({ b, top }, n) => {
+    const x0 = (b.k / (P - 1)) * W;
+    const y0 = top ? edgeTop[b.k] : edgeBot[b.k];
+    const sy = top ? -1 : 1;
+    const ax = x0 + b.ax * grow;
+    const ay = y0 + sy * b.ay * grow;
+    const bx = x0 + b.bx * grow;
+    const by = y0 + sy * b.by * grow;
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    dirTmp.x = -(by - ay) / len;
+    dirTmp.y = (bx - ax) / len;
+    // 四边形比线宽 2.5 倍，留出光晕
+    const h0 = b.w0 * 2.5;
+    const h1 = b.w1 * 2.5;
+    branchPos.set(
+      [ax + dirTmp.x * h0, ay + dirTmp.y * h0, 0, ax - dirTmp.x * h0, ay - dirTmp.y * h0, 0, bx + dirTmp.x * h1, by + dirTmp.y * h1, 0, bx - dirTmp.x * h1, by - dirTmp.y * h1, 0],
+      n * 12,
+    );
+  });
+  branchGeo.attributes.position.needsUpdate = true;
+}
+
 // 裂缝边飘出去的火星
 const embers = new Embers(380, renderer.getPixelRatio());
 if (PARTICLES) overlay.add(embers.points);
@@ -562,28 +690,35 @@ function updateRift(half: number, open: number) {
   const bot: number[] = [];
   const tear = settings.riftStyle === "tear";
   const t = fxTime;
-  const jag = JAG * Math.min(1, open * 1.5) * (tear ? 1 : 16 / JAG);
+  // 撕裂样式的折线幅度大一些，折角才看得出来
+  const jag = JAG * Math.min(1, open * 1.5) * (tear ? 1.6 : 16 / JAG);
   // 边上细细地抖（能量在噼啪作响）；经典样式不抖
   const buzz = tear ? 1.6 * Math.min(1, open * 2) : 0;
   // 中间靶子那一段（加一点边）不让它变窄，免得把靶子切掉
   const gridHalf = (COLS / 2) * (CELL_PX / ZOOM) + 70;
-  const maxH = cy - JAG - 6;
+  const maxH = cy - JAG * 1.6 - 6;
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
     const taper = 0.72 + 0.28 * Math.sin(Math.PI * u);
     let wt = 1;
     let wb = 1;
+    let jt = (tear ? tearTop : classicTop)[i];
+    let jb = (tear ? tearBot : classicBot)[i];
     if (tear) {
       const m = 1 - smoothstep(gridHalf, gridHalf + 160, Math.abs(u * W - W / 2));
       wt = wideTop[i] * (1 - m) + Math.max(1, wideTop[i] * 0.3 + 0.75) * m;
       wb = wideBot[i] * (1 - m) + Math.max(1, wideBot[i] * 0.3 + 0.75) * m;
+      // 靶子那一段：折角只能往外折，不往里压到格子
+      jt = jt * (1 - m) + Math.min(jt, 0.12) * m;
+      jb = jb * (1 - m) + Math.max(jb, -0.12) * m;
     }
     const h = half * taper;
-    const j1 = buzz && Math.sin(i * 1.73 + t * 9) * Math.sin(i * 0.37 - t * 5.3) * buzz;
-    const j2 = buzz && Math.sin(i * 2.11 - t * 8.1) * Math.sin(i * 0.53 + t * 4.7) * buzz;
-    top.push(cy - Math.min(maxH, h * wt) + (tear ? tearTop : classicTop)[i] * jag + j1);
-    bot.push(cy + Math.min(maxH, h * wb) + (tear ? tearBot : classicBot)[i] * jag + j2);
+    // 抖动沿横向很平缓：直的一段整段一起晃，不会被抖弯
+    const j1 = buzz && Math.sin(i * 0.045 + t * 6) * Math.sin(i * 0.013 - t * 2.3) * buzz;
+    const j2 = buzz && Math.sin(i * 0.052 - t * 5.4) * Math.sin(i * 0.017 + t * 2.1) * buzz;
+    top.push(cy - Math.min(maxH, h * wt) + jt * jag + j1);
+    bot.push(cy + Math.min(maxH, h * wb) + jb * jag + j2);
   }
   // 合上时上下边重合成一条线，不能交叉
   for (let i = 0; i < P; i++) if (top[i] > bot[i]) top[i] = bot[i] = (top[i] + bot[i]) / 2;
@@ -1449,6 +1584,12 @@ function frame(now: number) {
   fxTime += dt * settings.fxSpeed;
   glowMat.uniforms.classic.value = settings.riftStyle === "tear" ? 0 : 1;
   updateRift(half, open);
+  const tearOn = settings.riftStyle === "tear";
+  branchMesh.visible = tearOn;
+  if (tearOn) {
+    updateBranches(Math.min(1, Math.max(0, (open - 0.2) / 0.8)));
+    branchMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.85 + 0.15 * Math.sin(fxTime * 3));
+  }
   if (PARTICLES) {
     // 裂缝越大冒得越多
     embers.update(dt, open, 55 + 25 * n, W, edgeY);
@@ -1461,8 +1602,8 @@ function frame(now: number) {
   renderer.clear();
   // 3D 靶场只画裂缝实际占的那一段（上下再多几像素给参差），外面的像素不画，省显卡
   const cy = CY - CANVAS_TOP;
-  const y0 = Math.max(0, Math.floor(Math.min(cy - half, riftTop) - JAG - 2));
-  const y1 = Math.min(CANVAS_H, Math.ceil(Math.max(cy + half, riftBot) + JAG + 2));
+  const y0 = Math.max(0, Math.floor(Math.min(cy - half, riftTop) - 2));
+  const y1 = Math.min(CANVAS_H, Math.ceil(Math.max(cy + half, riftBot) + 2));
   if (y1 > y0) {
     renderer.setScissorTest(true);
     renderer.setScissor(0, CANVAS_H - y1, W, y1 - y0); // WebGL 的 y 从下往上数
