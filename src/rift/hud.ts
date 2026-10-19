@@ -35,7 +35,7 @@ export interface AimSettings {
   scene: string;
   /** 裂缝边飘出的粒子、裂缝里的浮尘 */
   particles: boolean;
-  /** 裂缝边的样子："tear" 撕裂（双色光焰、电弧）、"classic" 经典（一条发光边） */
+  /** 裂缝边的样子："tear" 撕裂（大锯齿、发亮的撕口）、"crack" 裂纹（折线 + 分叉、双色光焰和电弧）、"classic" 经典（一条发光边） */
   riftStyle: string;
   /** 裂缝边特效（光焰流动、电弧、抖动）的速度倍数 */
   fxSpeed: number;
@@ -43,6 +43,7 @@ export interface AimSettings {
 
 export const RIFT_STYLES: [string, string][] = [
   ["tear", "撕裂"],
+  ["crack", "裂纹"],
   ["classic", "经典"],
 ];
 
@@ -300,7 +301,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.riftStyle = styleSel.value;
     onChange(s);
   });
-  row("裂缝样式", styleSel, "撕裂：宽窄不一、双色光焰和电弧；经典：一条整齐的发光边");
+  row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：折线加分叉、光焰和电弧；经典：一条整齐的发光边");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   row("准星颜色", color);

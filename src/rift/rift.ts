@@ -390,6 +390,28 @@ function tearProfile(seed: number) {
   }
   return { v, knots };
 }
+/** 撕裂样式的边：大块的缺口和突起 + 中等的齿 + 细碎的边（都是直线折角），像纸 / 空间被硬撕开 */
+function tornProfile(seed: number) {
+  const rnd = seeded(seed);
+  const poly = (minStep: number, extra: number, amp: number, walk: boolean) => {
+    const knots: number[] = [];
+    for (let i = 0; i < P - 1; i += minStep + Math.floor(Math.abs(rnd()) * extra)) knots.push(i);
+    knots.push(P - 1);
+    let y = 0;
+    const vals = knots.map(() => (y = walk ? Math.max(-1, Math.min(1, y * 0.4 + rnd())) : rnd()) * amp);
+    const out = new Array<number>(P);
+    for (let k = 0; k + 1 < knots.length; k++)
+      for (let i = knots[k]; i <= knots[k + 1]; i++) out[i] = vals[k] + ((vals[k + 1] - vals[k]) * (i - knots[k])) / (knots[k + 1] - knots[k]);
+    return out;
+  };
+  const chunks = poly(7, 24, 0.75, true);
+  const teeth = poly(2, 5, 0.32, false);
+  const crumbs = poly(1, 2, 0.1, false);
+  return chunks.map((v, i) => v + teeth[i] + crumbs[i]);
+}
+const tornTop = tornProfile(6151);
+const tornBot = tornProfile(2777);
+
 /** 从转折点往裂缝外长出去的细裂纹：每条 2~4 节、越往外越细越淡，偶尔再分一次叉。
  *  坐标是相对转折点的像素（y 往裂缝外为正） */
 interface Branch {
@@ -408,14 +430,14 @@ function crackBranches(knots: number[], seed: number): Branch[] {
   const out: Branch[] = [];
   const grow = (k: number, x: number, y: number, ang: number, w: number, f: number, n: number, canFork: boolean) => {
     for (let j = 0; j < n; j++) {
-      const len = 14 + Math.abs(rnd()) * 30;
+      const len = 22 + Math.abs(rnd()) * 38;
       ang = Math.max(-1.4, Math.min(1.4, ang + rnd() * 0.7));
       const nx = x + Math.sin(ang) * len;
       const ny = y + Math.cos(ang) * len;
-      const nw = w * 0.66;
-      const nf = f * 0.7;
+      const nw = w * 0.78;
+      const nf = f * 0.86;
       out.push({ k, ax: x, ay: y, bx: nx, by: ny, w0: w, w1: nw, f0: f, f1: nf });
-      if (canFork && j === 1 && Math.abs(rnd()) > 0.65) grow(k, nx, ny, ang + (rnd() < 0 ? -0.9 : 0.9), nw, nf, 2, false);
+      if (canFork && j >= 1 && Math.abs(rnd()) > 0.6) grow(k, nx, ny, ang + (rnd() < 0 ? -0.9 : 0.9), nw * 0.8, nf, 2 + Math.floor(Math.abs(rnd()) * 2), false);
       x = nx;
       y = ny;
       w = nw;
@@ -424,7 +446,7 @@ function crackBranches(knots: number[], seed: number): Branch[] {
   };
   for (const k of knots) {
     if (k < 3 || k > P - 4 || Math.abs(rnd()) < 0.45) continue;
-    grow(k, 0, 0, rnd() * 1.1, 2.2 + Math.abs(rnd()) * 1.2, 1, 2 + Math.floor(Math.abs(rnd()) * 3), true);
+    grow(k, 0, 0, rnd() * 1.1, 3.2 + Math.abs(rnd()) * 1.6, 1, 2 + Math.floor(Math.abs(rnd()) * 3), true);
   }
   return out;
 }
@@ -502,7 +524,8 @@ const glowMat = new THREE.ShaderMaterial({
     time: { value: 0 },
     outW: { value: GLOW },
     inW: { value: GLOW_IN },
-    classic: { value: 0 },
+    /** 0 裂纹、1 经典、2 撕裂 */
+    mode: { value: 0 },
   },
   vertexShader: /* glsl */ `
     attribute float aDist;
@@ -523,7 +546,7 @@ const glowMat = new THREE.ShaderMaterial({
     uniform float time;
     uniform float outW;
     uniform float inW;
-    uniform float classic;
+    uniform float mode;
     varying float vDist;
     varying float vX;
     varying float vEdge;
@@ -550,7 +573,27 @@ const glowMat = new THREE.ShaderMaterial({
     }
     void main() {
       float d = vDist;
-      if (classic > 0.5) {
+      if (mode > 1.5) {
+        // 撕裂：紧贴裂缝外侧一圈发亮的撕口（白 → 淡紫，粗细不均、有碎屑感），上面闪着星点；
+        // 外面一层柔和的副色光晕，里面一层薄薄的主题色光
+        float xs = vX + vEdge * 913.0;
+        float rimW = 6.0 + 14.0 * fbm(vec2(xs * 0.04, vEdge * 3.0));
+        float rim = d < 0.0 ? smoothstep(rimW + 2.0, rimW * 0.3, -d) * (0.75 + 0.45 * noise(vec2(xs * 0.35, d * 0.35))) : 0.0;
+        vec2 cellp = floor(vec2(xs, d) / 2.5);
+        float hs = hash(cellp + vEdge * 17.0);
+        float spark = d < 0.0 ? step(0.88, hs) * (0.5 + 0.5 * sin(time * 4.0 + hs * 60.0)) * smoothstep(rimW * 2.6, 0.0, -d) * 1.2 : 0.0;
+        float glowO = d < 0.0 ? exp(d / 26.0) * 0.5 : 0.0;
+        float glowI = d > 0.0 ? exp(-d / inW * 3.0) * 0.55 : 0.0;
+        float core1 = exp(-d * d / 2.0) * 0.8;
+        // 撕口：贴边几乎是白的，往外带一点淡紫
+        vec3 lav = mix(mix(color2, vec3(1.0), 0.55), vec3(1.0), smoothstep(rimW * 0.6, 0.0, -d) * 0.7);
+        vec3 sum = lav * rim + vec3(1.0) * (spark + core1) + color2 * glowO + color * glowI;
+        float a1 = clamp((rim + spark + core1 + glowO + glowI) * strength, 0.0, 1.0);
+        vec3 c1 = sum / max(rim + spark + core1 + glowO + glowI, 1e-4);
+        gl_FragColor = vec4(c1 * a1, a1);
+        return;
+      }
+      if (mode > 0.5) {
         // 经典：贴边一条白芯，往外很快暗下去，往里稍微多留一点光
         float dn = d < 0.0 ? -d / 19.0 : d / 24.0;
         float core0 = exp(-dn * dn * 60.0);
@@ -614,7 +657,7 @@ branchGeo.setAttribute("aSide", new THREE.BufferAttribute(branchSide, 1));
 branchGeo.setAttribute("aFade", new THREE.BufferAttribute(branchFade, 1));
 branchGeo.setIndex(branchIdx);
 const branchMat = new THREE.ShaderMaterial({
-  uniforms: { color: glowMat.uniforms.color, strength: { value: 0 } },
+  uniforms: { color: glowMat.uniforms.color, color2: glowMat.uniforms.color2, strength: { value: 0 } },
   vertexShader: /* glsl */ `
     attribute float aSide;
     attribute float aFade;
@@ -627,14 +670,19 @@ const branchMat = new THREE.ShaderMaterial({
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 color;
+    uniform vec3 color2;
     uniform float strength;
     varying float vSide;
     varying float vFade;
     void main() {
+      // 和主裂缝一样的光：白芯 → 主题色 → 外面一圈副色光晕，沿着裂纹一路连续
       float s2 = vSide * vSide;
-      float core = exp(-s2 * 18.0);
-      float a = clamp((core + exp(-s2 * 3.0) * 0.45) * vFade * strength, 0.0, 1.0);
-      gl_FragColor = vec4(mix(color, vec3(1.0), core * 0.85) * a, a);
+      float core = exp(-s2 * 40.0);
+      float mid = exp(-s2 * 9.0);
+      float halo = exp(-s2 * 2.2);
+      float a = clamp((core + mid * 0.7 + halo * 0.4) * vFade * strength, 0.0, 1.0);
+      vec3 c = mix(mix(color2, color, mid), vec3(1.0), core * 0.85);
+      gl_FragColor = vec4(c * a, a);
     }`,
   transparent: true,
   depthTest: false,
@@ -661,9 +709,9 @@ function updateBranches(grow: number) {
     const len = Math.hypot(bx - ax, by - ay) || 1;
     dirTmp.x = -(by - ay) / len;
     dirTmp.y = (bx - ax) / len;
-    // 四边形比线宽 2.5 倍，留出光晕
-    const h0 = b.w0 * 2.5;
-    const h1 = b.w1 * 2.5;
+    // 四边形比线宽 4 倍，留出光晕
+    const h0 = b.w0 * 4;
+    const h1 = b.w1 * 4;
     branchPos.set(
       [ax + dirTmp.x * h0, ay + dirTmp.y * h0, 0, ax - dirTmp.x * h0, ay - dirTmp.y * h0, 0, bx + dirTmp.x * h1, by + dirTmp.y * h1, 0, bx - dirTmp.x * h1, by - dirTmp.y * h1, 0],
       n * 12,
@@ -688,24 +736,30 @@ function updateRift(half: number, open: number) {
   const cy = CY - CANVAS_TOP;
   const top: number[] = [];
   const bot: number[] = [];
-  const tear = settings.riftStyle === "tear";
+  const style = settings.riftStyle;
+  const torn = style === "tear";
+  const crack = style === "crack";
+  const varied = torn || crack;
   const t = fxTime;
-  // 撕裂样式的折线幅度大一些，折角才看得出来
-  const jag = JAG * Math.min(1, open * 1.5) * (tear ? 1.6 : 16 / JAG);
-  // 边上细细地抖（能量在噼啪作响）；经典样式不抖
-  const buzz = tear ? 1.6 * Math.min(1, open * 2) : 0;
+  // 撕裂的锯齿最大、裂纹的折线其次，经典照原来
+  const fac = torn ? 2.6 : crack ? 1.6 : 16 / JAG;
+  const jag = JAG * Math.min(1, open * 1.5) * fac;
+  // 裂纹的边细细地抖（能量在噼啪作响）；撕裂、经典不抖
+  const buzz = crack ? 1.6 * Math.min(1, open * 2) : 0;
+  const profTop = torn ? tornTop : crack ? tearTop : classicTop;
+  const profBot = torn ? tornBot : crack ? tearBot : classicBot;
   // 中间靶子那一段（加一点边）不让它变窄，免得把靶子切掉
   const gridHalf = (COLS / 2) * (CELL_PX / ZOOM) + 70;
-  const maxH = cy - JAG * 1.6 - 6;
+  const maxH = cy - JAG * fac - 6;
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
     const taper = 0.72 + 0.28 * Math.sin(Math.PI * u);
     let wt = 1;
     let wb = 1;
-    let jt = (tear ? tearTop : classicTop)[i];
-    let jb = (tear ? tearBot : classicBot)[i];
-    if (tear) {
+    let jt = profTop[i];
+    let jb = profBot[i];
+    if (varied) {
       const m = 1 - smoothstep(gridHalf, gridHalf + 160, Math.abs(u * W - W / 2));
       wt = wideTop[i] * (1 - m) + Math.max(1, wideTop[i] * 0.3 + 0.75) * m;
       wb = wideBot[i] * (1 - m) + Math.max(1, wideBot[i] * 0.3 + 0.75) * m;
@@ -1582,9 +1636,9 @@ function frame(now: number) {
   updateFx(now);
   updateSong(n, now);
   fxTime += dt * settings.fxSpeed;
-  glowMat.uniforms.classic.value = settings.riftStyle === "tear" ? 0 : 1;
+  glowMat.uniforms.mode.value = settings.riftStyle === "tear" ? 2 : settings.riftStyle === "crack" ? 0 : 1;
   updateRift(half, open);
-  const tearOn = settings.riftStyle === "tear";
+  const tearOn = settings.riftStyle === "crack";
   branchMesh.visible = tearOn;
   if (tearOn) {
     updateBranches(Math.min(1, Math.max(0, (open - 0.2) / 0.8)));
