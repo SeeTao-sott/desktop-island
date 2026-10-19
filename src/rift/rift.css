@@ -128,6 +128,35 @@ body {
 .start-back:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+/* 设置的三个标签页 */
+.rf-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.rf-tabs button {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.rf-tabs button.on {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+}
+.rf-page {
+  display: grid;
+  gap: 6px;
+}
+.rf-page[hidden] {
+  display: none;
+}
 .settings {
   display: grid;
   gap: 6px;
