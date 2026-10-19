@@ -31,6 +31,8 @@ export interface AimSettings {
   window: number;
   /** 同一时刻的一对靶子，晚打的那个额外多给多少毫秒 */
   pairGrace: number;
+  /** 裂缝变大变小时："follow" 靶子跟着上下移动（各行一直居中）、"fixed" 靶子不动（裂缝自己挪一点） */
+  rowMode: string;
   /** 裂缝里的场景："range" 靶场、"sky" 天空之岛 */
   scene: string;
   /** 裂缝边飘出的粒子、裂缝里的浮尘 */
@@ -54,11 +56,11 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
-export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace"] as const;
+export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace", "rowMode"] as const;
 type ModeKey = (typeof MODE_KEYS)[number];
 export interface Mode {
   name: string;
@@ -91,6 +93,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.window = Math.min(250, Math.max(60, Number(s.window) || DEFAULTS.window));
     s.pairGrace = Math.min(500, Math.max(0, Number.isFinite(Number(s.pairGrace)) ? Number(s.pairGrace) : DEFAULTS.pairGrace));
     if (!SCENES.some(([k]) => k === s.scene)) s.scene = DEFAULTS.scene;
+    if (s.rowMode !== "fixed") s.rowMode = "follow";
     s.particles = s.particles !== false;
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
@@ -289,6 +292,17 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   row("◆ 出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
   row("◆ 判定窗口（ms）", num("window", 60, 250, 10), "拍点前后多少毫秒内算 Great，Perfect 是它的一半");
   row("◆ 同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
+  const rowSel = document.createElement("select");
+  for (const [k, label] of [
+    ["follow", "跟着裂缝移动"],
+    ["fixed", "固定不动"],
+  ])
+    rowSel.add(new Option(label, k, false, k === s.rowMode));
+  rowSel.addEventListener("change", () => {
+    s.rowMode = rowSel.value;
+    onChange(s);
+  });
+  row("◆ 靶子位置", rowSel, "裂缝变大变小时：跟着移动 = 各行一直居中、靶子会上下挪；固定不动 = 靶子留在原处，裂缝自己挪一点");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   const sceneSel = document.createElement("select");

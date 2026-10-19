@@ -313,6 +313,8 @@ interface LiveTarget {
   /** 出现的时刻、准星第一次落到它上面的时刻（歌曲秒） */
   spawnAt: number;
   seenAt: number | null;
+  /** 固定模式下这个靶子待在哪一格（从下往上 0~3），出现时定好，之后不变 */
+  slot: number;
 }
 const targetLayer = new THREE.Group();
 scene.add(targetLayer);
@@ -333,7 +335,7 @@ function takeTarget(tg: Target): LiveTarget {
     core.renderOrder = 11;
     ring.renderOrder = 12;
     group.add(disc, core, ring);
-    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null };
+    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null, slot: 1 };
   }
   lt.tg = tg;
   lt.gone = 0;
@@ -977,8 +979,11 @@ const edgeY = (x: number, top: boolean) => {
 };
 
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
+/** 裂缝中心在屏幕上往上挪了多少像素（固定模式下跟着露出来的那几行走） */
+const crackShift = () => (rowCenter / CELL) * (CELL_PX / ZOOM);
+
 function updateRift(half: number, open: number) {
-  const cy = CY - CANVAS_TOP;
+  const cy = CY - CANVAS_TOP - crackShift();
   const top: number[] = [];
   const bot: number[] = [];
   const style = settings.riftStyle;
@@ -995,7 +1000,7 @@ function updateRift(half: number, open: number) {
   const profBot = torn ? tornBot : crack ? tearBot : classicBot;
   // 中间靶子那一段（加一点边）不让它变窄，免得把靶子切掉
   const gridHalf = (COLS / 2) * (CELL_PX / ZOOM) + 70;
-  const maxH = cy - JAG * fac - 6;
+  const maxH = Math.min(cy, CANVAS_H - cy) - JAG * fac - 6;
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
@@ -1087,11 +1092,26 @@ function setN(n: number) {
   document.querySelectorAll<HTMLButtonElement>("#test button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === n));
 }
 
+/** 「靶子位置：固定不动」时，4 行在靶墙上的位置固定（从下往上第 0~3 格），
+ *  裂缝变大时按这个顺序一行一行露出来：先中间偏下那行，再上面、再下面、再最上面（尽量对称地往两边长） */
+const ROW_ORDER = [1, 2, 0, 3];
+const rowFixed = () => settings.rowMode === "fixed";
+/** N 行时露出来的是哪几格（从下往上排好） */
+const activeSlots = (n: number) => ROW_ORDER.slice(0, Math.max(1, Math.min(4, n))).sort((a, b) => a - b);
+/** 露出来的那几行的中心高度（米，靶墙上，往上为正）：固定模式下裂缝和准星范围跟着它挪；跟着移动模式下一直是 0 */
+let rowCenter = 0;
+
 function layoutRows(n: number) {
+  const fixed = rowFixed();
+  let sumY = 0;
+  let sumW = 0;
   for (let r = 0; r < 4; r++) {
-    // 第 r 行（从上往下），所有行整体居中在视线高度
-    const y = ((n - 1) / 2 - r) * CELL;
-    const vis = Math.min(1, Math.max(0, n - r));
+    // 第 r 行（从上往下）。跟着移动：所有行整体居中在视线高度；固定：每行待在自己那一格
+    const slot = 3 - r;
+    const y = fixed ? (slot - 1.5) * CELL : ((n - 1) / 2 - r) * CELL;
+    const vis = Math.min(1, Math.max(0, n - (fixed ? ROW_ORDER.indexOf(slot) : r)));
+    sumY += y * vis;
+    sumW += vis;
     const row = rows[r];
     row.group.position.y = y;
     row.group.visible = vis > 0.01;
@@ -1099,6 +1119,7 @@ function layoutRows(n: number) {
     row.cell.opacity = vis;
     row.edge.opacity = vis * 0.9;
   }
+  rowCenter = fixed && sumW > 0 ? sumY / sumW : 0;
 }
 
 // ---------------- 瞄准：鼠标锁定、视角、射击 ----------------
@@ -1723,6 +1744,9 @@ function updateSong(n: number, nowMs: number) {
   while (song.next < song.targets.length && song.targets[song.next].t - LEAD <= now) {
     const lt = takeTarget(song.targets[song.next]);
     lt.spawnAt = now;
+    // 排靶时这个靶子是按"出现那一刻的 N 行"里的第 rb 行排的：换成那 N 行对应的固定格
+    const slots = activeSlots(nAt(song.steps, lt.tg.t - LEAD));
+    lt.slot = slots[Math.min(slots.length - 1, lt.tg.rb)];
     song.live.push(lt);
     song.next++;
   }
@@ -1745,7 +1769,9 @@ function updateSong(n: number, nowMs: number) {
     const lt = song.live[i];
     const tg = lt.tg;
     // 跟着自己那一行走（行的位置随 N 变）
-    lt.group.position.set((tg.col - (COLS - 1) / 2 + tg.dx) * CELL, (tg.rb - (n - 1) / 2 + tg.dy) * CELL, -WALL_Z + 0.06);
+    // 跟着移动：跟着自己那一行走（行的位置随 N 变）；固定：一直待在自己那一格
+    const rowY = rowFixed() ? lt.slot - 1.5 : tg.rb - (n - 1) / 2;
+    lt.group.position.set((tg.col - (COLS - 1) / 2 + tg.dx) * CELL, (rowY + tg.dy) * CELL, -WALL_Z + 0.06);
     if (lt.gone) {
       const k = (nowMs - lt.gone) / 220;
       if (k >= 1) {
@@ -1758,7 +1784,7 @@ function updateSong(n: number, nowMs: number) {
       lt.ringMat.opacity = 0;
       continue;
     }
-    needRows = Math.max(needRows, tg.rb + 1);
+    needRows = Math.max(needRows, rowFixed() ? ROW_ORDER.indexOf(lt.slot) + 1 : tg.rb + 1);
     const left = tg.t - now; // 离拍点还有几秒
     if (left < -lateW(tg)) {
       // 没打：Miss，变暗淡出
@@ -1893,7 +1919,9 @@ function frame(now: number) {
   layoutRows(n);
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
   const pm = pitchMax(n);
-  aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  // 固定模式下露出来的几行不一定正好在视线高度：上下范围以它们的中心为准
+  const pc = Math.atan(rowCenter / (WALL_Z * ZOOM));
+  aimPitch = Math.min(pc + pm, Math.max(pc - pm, aimPitch));
   recoil *= Math.exp(-dt / 0.07);
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
@@ -1928,7 +1956,7 @@ function frame(now: number) {
 
   renderer.clear();
   // 3D 靶场只画裂缝实际占的那一段（上下再多几像素给参差），外面的像素不画，省显卡
-  const cy = CY - CANVAS_TOP;
+  const cy = CY - CANVAS_TOP - crackShift();
   const y0 = Math.max(0, Math.floor(Math.min(cy - half, riftTop, fisTop) - 12));
   const y1 = Math.min(CANVAS_H, Math.ceil(Math.max(cy + half, riftBot, fisBot) + 12));
   if (y1 > y0) {
