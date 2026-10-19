@@ -24,9 +24,10 @@ const MAX_FRAC = settings.maxFrac;
 /** 裂缝上下各留多少像素（格子到裂缝边） */
 const MARGIN = 26;
 /** 裂缝边缘参差的幅度（像素） */
-const JAG = 16;
-/** 发光带的宽度（像素） */
-const GLOW = 30;
+const JAG = 22;
+/** 发光带往裂缝外、往裂缝里各伸多远（像素）：外面是参差的丝状光焰，里面是一层薄光 */
+const GLOW = 64;
+const GLOW_IN = 26;
 /** 水平视野（度），和 Valorant 默认一样 */
 const HFOV = settings.fov;
 /** 靶墙离眼睛多远（米） */
@@ -80,6 +81,8 @@ function applyTheme(t: Theme | null) {
   hemi.groundColor = tint(0.4, 0.05);
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
+  // 副色：色相往前转一点（蓝 → 品红、青 → 蓝紫……），裂缝外面的光焰用它，和主题色撞出层次
+  glowMat.uniforms.color2.value = new THREE.Color().setHSL((hsl.h + 0.17) % 1, 0.9, 0.56);
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
   embers.material.uniforms.uColor.value.copy(accent);
   dust?.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.5);
@@ -346,19 +349,34 @@ function dropTarget(lt: LiveTarget) {
 const overlay = new THREE.Scene();
 const ortho = new THREE.OrthographicCamera(0, W, 0, CANVAS_H, -1, 1);
 
-const P = 120; // 沿水平方向的点数
-/** 固定的参差形状（同一次运行里不变），上下两条不一样 */
+const P = 260; // 沿水平方向的点数
+/** 固定的撕裂形状（同一次运行里不变），上下两条不一样：
+ *  大、中、小三层起伏叠在一起（像纸撕开时的大弯、小折、毛边），再随机戳出一些尖角碎片 */
 function jagProfile(seed: number) {
   let s = seed;
   const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647) * 2 - 1;
-  const raw = Array.from({ length: P }, rnd);
-  // 平滑两遍，再叠一点尖刺，像撕开的边
-  const out = raw.map((_, i) => (raw[Math.max(0, i - 1)] + raw[i] * 2 + raw[Math.min(P - 1, i + 1)]) / 4);
-  return out.map((v, i) => v * 0.75 + (i % 7 === 3 ? rnd() * 0.5 : 0));
+  const layer = (period: number) => {
+    const knots = Array.from({ length: Math.ceil(P / period) + 2 }, rnd);
+    return (i: number) => {
+      const f = i / period;
+      const k = Math.floor(f);
+      const t = f - k;
+      const sm = t * t * (3 - 2 * t);
+      return knots[k] * (1 - sm) + knots[k + 1] * sm;
+    };
+  };
+  const big = layer(26);
+  const mid = layer(8);
+  const small = layer(2.5);
+  return Array.from({ length: P }, (_, i) => {
+    let v = big(i) * 0.55 + mid(i) * 0.3 + small(i) * 0.18;
+    // 尖角碎片：只顶出一个点，左右两边陡峭
+    if (Math.abs(rnd()) > 0.93) v += rnd() * 0.9;
+    return v;
+  });
 }
 const jagTop = jagProfile(9137);
 const jagBot = jagProfile(4211);
-
 // 擦除：上下两块（画布顶到上边缘、下边缘到画布底），写入完全透明
 const eraseGeo = new THREE.BufferGeometry();
 const erasePos = new Float32Array((P - 1) * 2 * 6 * 3);
@@ -367,37 +385,106 @@ eraseGeo.setAttribute("position", new THREE.BufferAttribute(erasePos, 3));
 const eraseMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, blending: THREE.NoBlending, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
 overlay.add(new THREE.Mesh(eraseGeo, eraseMat));
 
-// 发光带：每条边一条三角形带子，side 从 -1（外）到 1（里）
+// 发光带：每条边一条三角形带子。aDist 是到裂缝边的距离（像素，负 = 裂缝外、正 = 裂缝里），aEdge 分上下两条
 const glowGeo = new THREE.BufferGeometry();
 const glowPos = new Float32Array(2 * P * 2 * 3);
-const glowSide = new Float32Array(2 * P * 2);
+const glowDist = new Float32Array(2 * P * 2);
+const glowEdge = new Float32Array(2 * P * 2);
 const glowIdx: number[] = [];
 for (let e = 0; e < 2; e++)
   for (let i = 0; i < P - 1; i++) {
     const a = e * P * 2 + i * 2;
     glowIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
   }
-for (let e = 0; e < 2; e++) for (let i = 0; i < P; i++) glowSide.set([-1, 1], e * P * 2 + i * 2);
+for (let e = 0; e < 2; e++)
+  for (let i = 0; i < P; i++) {
+    glowDist.set([-GLOW, GLOW_IN], e * P * 2 + i * 2);
+    glowEdge.set([e, e], e * P * 2 + i * 2);
+  }
 glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
-glowGeo.setAttribute("side", new THREE.BufferAttribute(glowSide, 1));
+glowGeo.setAttribute("aDist", new THREE.BufferAttribute(glowDist, 1));
+glowGeo.setAttribute("aEdge", new THREE.BufferAttribute(glowEdge, 1));
 glowGeo.setIndex(glowIdx);
 const glowMat = new THREE.ShaderMaterial({
-  uniforms: { color: { value: new THREE.Color() }, strength: { value: 1 } },
+  uniforms: {
+    color: { value: new THREE.Color() },
+    color2: { value: new THREE.Color() },
+    strength: { value: 1 },
+    time: { value: 0 },
+    outW: { value: GLOW },
+    inW: { value: GLOW_IN },
+  },
   vertexShader: /* glsl */ `
-    attribute float side;
-    varying float vSide;
-    void main() { vSide = side; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    attribute float aDist;
+    attribute float aEdge;
+    varying float vDist;
+    varying float vX;
+    varying float vEdge;
+    void main() {
+      vDist = aDist;
+      vX = position.x;
+      vEdge = aEdge;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
   fragmentShader: /* glsl */ `
     uniform vec3 color;
+    uniform vec3 color2;
     uniform float strength;
-    varying float vSide;
+    uniform float time;
+    uniform float outW;
+    uniform float inW;
+    varying float vDist;
+    varying float vX;
+    varying float vEdge;
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    }
+    float fbm(vec2 p) {
+      float v = 0.0;
+      float a = 0.5;
+      for (int k = 0; k < 4; k++) {
+        v += a * noise(p);
+        p *= 2.03;
+        a *= 0.5;
+      }
+      return v;
+    }
     void main() {
-      // 贴边那一线最亮（白芯），往外很快暗下去，往里（裂缝内）稍微多留一点光
-      float d = vSide < 0.0 ? -vSide * 1.6 : vSide;
-      float core = exp(-d * d * 60.0);
-      float halo = exp(-d * 3.2) * 0.75;
-      float a = clamp((core + halo) * strength, 0.0, 1.0);
-      vec3 c = mix(color, vec3(1.0), core * 0.8);
+      float d = vDist;
+      float x = vX + vEdge * 913.0;
+      float t = time;
+      // 裂缝外：一缕一缕往外飘的丝状光焰，伸出去多远沿着边起伏
+      float reach = outW * (0.3 + 0.8 * fbm(vec2(x * 0.012, t * 0.35)));
+      float fib = fbm(vec2(x * 0.09, d * 0.045 + t * 1.2));
+      float fib2 = noise(vec2(x * 0.25, d * 0.02 + t * 2.0));
+      float outA = 0.0;
+      if (d < 0.0) {
+        float k = clamp(-d / reach, 0.0, 1.0);
+        // 贴着边一层浓的、边缘参差的色带（像撕开处烧焦发光的毛边）
+        float band = 10.0 + 14.0 * fbm(vec2(x * 0.06, t * 0.8));
+        float thick = smoothstep(band, band * 0.45, -d) * 0.85;
+        outA = (1.0 - k) * (1.0 - k) * smoothstep(0.28, 0.75, fib * 0.8 + fib2 * 0.35) * 1.6 + thick + exp(d * 0.08) * 0.35;
+      }
+      // 裂缝里：一层主题色的光
+      float inA = d > 0.0 ? exp(-d / inW * 2.4) * 0.9 : 0.0;
+      // 贴边的白热芯线
+      float core = exp(-d * d / 3.0);
+      // 电弧：沿着边乱跳的细线，一段一段地闪
+      float off = (fbm(vec2(x * 0.05, t * 5.0)) - 0.5) * 20.0;
+      float seg = step(0.6, noise(vec2(x * 0.015, floor(t * 14.0) + vEdge * 7.0)));
+      float arc = exp(-(d - off) * (d - off) / 1.4) * seg;
+      float a = clamp((core * 1.2 + arc * 0.9 + outA + inA) * strength, 0.0, 1.0);
+      // 颜色：外面是副色（色相偏一点），靠近边和里面是主题色，芯线、电弧发白
+      vec3 c = d < 0.0 ? mix(color, color2, smoothstep(1.0, 9.0, -d)) : color;
+      c = mix(c, vec3(1.0), clamp(core * 0.9 + arc * 0.8, 0.0, 1.0));
       gl_FragColor = vec4(c * a, a); // 预乘透明度：裂缝外面（透明处）也能看到光
     }`,
   transparent: true,
@@ -422,18 +509,23 @@ const edgeY = (x: number, top: boolean) => {
 };
 
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
-function updateRift(half: number, open: number) {
+function updateRift(half: number, open: number, now: number) {
   const cy = CY - CANVAS_TOP;
   const top: number[] = [];
   const bot: number[] = [];
+  const t = now / 1000;
+  const jag = JAG * Math.min(1, open * 1.5);
+  // 边上细细地抖（能量在噼啪作响）
+  const buzz = 2.2 * Math.min(1, open * 2);
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
     const taper = 0.72 + 0.28 * Math.sin(Math.PI * u);
     const h = half * taper;
-    const jag = JAG * Math.min(1, open * 1.5);
-    top.push(cy - h + jagTop[i] * jag);
-    bot.push(cy + h + jagBot[i] * jag);
+    const j1 = Math.sin(i * 1.73 + t * 9) * Math.sin(i * 0.37 - t * 5.3) * buzz;
+    const j2 = Math.sin(i * 2.11 - t * 8.1) * Math.sin(i * 0.53 + t * 4.7) * buzz;
+    top.push(cy - h + jagTop[i] * jag + j1);
+    bot.push(cy + h + jagBot[i] * jag + j2);
   }
   // 合上时上下边重合成一条线，不能交叉
   for (let i = 0; i < P; i++) if (top[i] > bot[i]) top[i] = bot[i] = (top[i] + bot[i]) / 2;
@@ -453,10 +545,8 @@ function updateRift(half: number, open: number) {
   eraseGeo.attributes.position.needsUpdate = true;
   for (let i = 0; i < P; i++) {
     const x = (i / (P - 1)) * W;
-    const t = e0(0, i);
-    glowPos.set([x, top[i] - GLOW, 0, x, top[i] + GLOW * 0.6, 0], t);
-    const b = e0(1, i);
-    glowPos.set([x, bot[i] + GLOW, 0, x, bot[i] - GLOW * 0.6, 0], b);
+    glowPos.set([x, top[i] - GLOW, 0, x, top[i] + GLOW_IN, 0], e0(0, i));
+    glowPos.set([x, bot[i] + GLOW, 0, x, bot[i] - GLOW_IN, 0], e0(1, i));
   }
   glowGeo.attributes.position.needsUpdate = true;
 }
@@ -1289,7 +1379,7 @@ function frame(now: number) {
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
   updateFx(now);
   updateSong(n, now);
-  updateRift(half, open);
+  updateRift(half, open, now);
   if (PARTICLES) {
     // 裂缝越大冒得越多
     embers.update(dt, open, 55 + 25 * n, W, edgeY);
@@ -1297,6 +1387,7 @@ function frame(now: number) {
   }
   sky?.update(now / 1000);
   glowMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.9 + 0.1 * Math.sin(now / 160));
+  glowMat.uniforms.time.value = now / 1000;
 
   renderer.clear();
   // 3D 靶场只画裂缝实际占的那一段（上下再多几像素给参差），外面的像素不画，省显卡
