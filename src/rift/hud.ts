@@ -383,7 +383,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.colorMode = colorSel.value;
     onChange(s);
   });
-  row("配色", colorSel, "经典撞色：按壁纸主色找经典搭档色（红配蓝、橙配青、黄配紫……），右半边的靶子、裂缝外圈、一部分火星用它；单色：全用壁纸主色");
+  row("配色", colorSel, "经典撞色：按壁纸主色找经典搭档色（红配蓝、橙配青、黄配紫……），裂缝里的场景、格子、靶子都换成它（红色壁纸 → 蓝色靶场），裂缝外圈、一部分火星也用它；单色：全用壁纸主色");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   page("aim");

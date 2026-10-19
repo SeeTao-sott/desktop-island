@@ -66,8 +66,10 @@ interface Theme {
   bg: Rgba;
 }
 const accent = new THREE.Color(0x8caaff);
-/** 搭档色：经典撞色时，右半边的靶子、裂缝外圈、一部分火星用它 */
+/** 搭档色：经典撞色时裂缝外圈、一部分火星用它 */
 const partner = new THREE.Color(0xff5fd2);
+/** 裂缝里的颜色：场景、格子、靶子都用它（经典撞色 = 搭档色，单色 = 主色） */
+const rift = new THREE.Color(0x8caaff);
 /** 经典配色表：主色色相 → 搭档色色相（0~1）。中间的颜色按相邻两项平滑过渡，壁纸色稍微变一点不会突然跳色 */
 const PAIRS: [number, number][] = [
   [0.0, 0.56], // 红 → 蓝（红蓝对撞）
@@ -120,25 +122,27 @@ function applyTheme(t: Theme | null) {
   accent.getHSL(hsl);
   // 主题色调亮调艳一点，压在深色靶场里才显眼
   accent.setHSL(hsl.h, Math.max(0.7, hsl.s), Math.min(0.62, Math.max(0.5, hsl.l)));
-  const tint = (s: number, l: number) => new THREE.Color().setHSL(hsl.h, s, l);
+  // 副色：经典撞色时用配色表里的搭档色；单色时只把色相往前转一点（原来的样子）。裂缝外面的光焰、撕口用它
+  const ph = pairColors() ? partnerHue(hsl.h) : (hsl.h + 0.17) % 1;
+  partner.setHSL(ph, 0.9, 0.56);
+  // 裂缝里的颜色（场景、格子、靶子）：经典撞色时是搭档色（红色壁纸 → 蓝色的靶场），单色时是壁纸主色
+  const ih = pairColors() ? ph : hsl.h;
+  rift.setHSL(ih, accent.getHSL({ h: 0, s: 0, l: 0 }).s, Math.min(0.62, Math.max(0.5, hsl.l)));
+  const tint = (s: number, l: number) => new THREE.Color().setHSL(ih, s, l);
   mats.floor.color = tint(0.22, 0.06);
   mats.side.color = tint(0.28, 0.09);
   mats.wall.color = tint(0.3, 0.07);
   for (const r of rows) {
     r.cell.color = tint(0.32, 0.14);
-    r.cell.emissive = accent.clone().multiplyScalar(0.06);
-    r.edge.color = accent.clone();
+    r.cell.emissive = rift.clone().multiplyScalar(0.06);
+    r.edge.color = rift.clone();
   }
-  mats.strip.color = accent.clone();
+  mats.strip.color = rift.clone();
   hemi.color = tint(0.4, 0.75);
   hemi.groundColor = tint(0.4, 0.05);
-  key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
+  key.color = rift.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
-  // 副色：经典撞色时用配色表里的搭档色；单色时只把色相往前转一点（原来的样子）。裂缝外面的光焰、撕口用它
-  const ph = pairColors() ? partnerHue(hsl.h) : (hsl.h + 0.17) % 1;
-  partner.setHSL(ph, 0.9, 0.56);
   glowMat.uniforms.color2.value = partner.clone();
-  for (const r of rows) r.edge2.color = (pairColors() ? partner : accent).clone();
   // 「可以打」和「金色组」的颜色：尽量是绿色、金色，但和主色 / 搭档色太像时换成离它们最远的颜色
   const avoid = pairColors() ? [hsl.h, ph] : [hsl.h];
   const readyH = pickHue(0.36, avoid);
@@ -147,7 +151,7 @@ function applyTheme(t: Theme | null) {
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
   embers.material.uniforms.uColor.value.copy(accent);
   embers.material.uniforms.uColor2.value.copy(pairColors() ? partner : accent);
-  dust?.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.5);
+  dust?.material.color.copy(rift).lerp(new THREE.Color(0xffffff), 0.5);
   if (sky) {
     // 天空之岛：亮的天光、远处才起雾（地平线的颜色）；靶墙石板保持深色，靶子才显眼
     hemi.color.set(0xffffff);
@@ -268,8 +272,7 @@ if (dust) scene.add(dust.points);
 // 列数 × 4 行格子：每行一组，行的位置和透明度跟着 N 的弹簧走
 // 绘制顺序固定：格子 → 靶子 → 特效。半透明物体默认按"离相机多远"排顺序，
 // 靠边的靶子会被排到格子前面先画、再被格子盖住（看不见但打得到），所以写死顺序，格子也不写深度
-/** 每行一组；格子边框分左右两种（经典撞色时左半主色、右半搭档色，和靶子的左右颜色对上） */
-const rows: { group: THREE.Group; cell: THREE.MeshStandardMaterial; edge: THREE.MeshBasicMaterial; edge2: THREE.MeshBasicMaterial }[] = [];
+const rows: { group: THREE.Group; cell: THREE.MeshStandardMaterial; edge: THREE.MeshBasicMaterial }[] = [];
 const cellGeo = new THREE.PlaneGeometry(CELL * 0.86, CELL * 0.86);
 const edgeGeo = new THREE.EdgesGeometry(cellGeo);
 for (let r = 0; r < 4; r++) {
@@ -277,10 +280,9 @@ for (let r = 0; r < 4; r++) {
   const cell = mats.cell.clone();
   cell.depthWrite = false;
   const edge = mats.cellEdge.clone();
-  const edge2 = mats.cellEdge.clone();
   group.position.z = -WALL_Z;
   scene.add(group);
-  rows.push({ group, cell, edge, edge2 });
+  rows.push({ group, cell, edge });
 }
 /** 按现在的列数摆格子（设置里改了列数会重新摆） */
 function buildCells() {
@@ -292,7 +294,7 @@ function buildCells() {
       m.position.set((c - (COLS - 1) / 2) * CELL, 0, 0.01);
       m.renderOrder = 0;
       r.group.add(m);
-      const e = new THREE.LineSegments(edgeGeo, c > (COLS - 1) / 2 ? r.edge2 : r.edge);
+      const e = new THREE.LineSegments(edgeGeo, r.edge);
       e.position.copy(m.position).setZ(0.02);
       e.renderOrder = 1;
       r.group.add(e);
@@ -400,8 +402,8 @@ function takeTarget(tg: Target): LiveTarget {
   lt.gone = 0;
   lt.seenAt = null;
   // 颜色每帧在 updateSong 里定（一组里两个都还在才是金色）
-  lt.discMat.color.copy(accent);
-  lt.ringMat.color.copy(accent);
+  lt.discMat.color.copy(rift);
+  lt.ringMat.color.copy(rift);
   lt.group.scale.setScalar(1);
   targetLayer.add(lt.group);
   return lt;
@@ -1182,7 +1184,7 @@ function layoutRows(n: number) {
     row.group.visible = vis > 0.01;
     row.group.scale.setScalar(0.85 + 0.15 * vis);
     row.cell.opacity = vis;
-    row.edge.opacity = row.edge2.opacity = vis * 0.9;
+    row.edge.opacity = vis * 0.9;
   }
   rowCenter = fixed && sumW > 0 ? sumY / sumW : 0;
 }
@@ -1492,7 +1494,7 @@ function shoot(whole = false) {
     spawnFx(holeGeo, new THREE.Color(0x050505), p, 2500, 0, false);
     if (hit) {
       // 打中格子：一圈亮环往外扩 + 一团光
-      spawnFx(ringGeo, accent.clone().lerp(shotColor, 0.35), p.clone().setZ(p.z + 0.02), 380, 2.4, true);
+      spawnFx(ringGeo, rift.clone().lerp(shotColor, 0.35), p.clone().setZ(p.z + 0.02), 380, 2.4, true);
       spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.03), 180, 1.0, true);
     }
   }
@@ -1863,7 +1865,7 @@ function updateSong(n: number, nowMs: number) {
     if (left < -lateW(tg)) {
       // 没打：Miss，变暗淡出
       lt.gone = nowMs;
-      lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
+      lt.discMat.color.copy(DIM.copy(rift).multiplyScalar(0.35));
       judge("miss");
       continue;
     }
@@ -1874,11 +1876,10 @@ function updateSong(n: number, nowMs: number) {
     const ready = left <= Math.min(perfectW(), LEAD * 0.3) && left >= -lateW(tg);
     // 一组的靶子：平时金色，能打时圆盘变绿、外圈保持金色（看得出是一组）
     const linked = tg.group >= 0 && (aliveInGroup.get(tg.group) ?? 0) >= 2;
-    // 经典撞色：左半边（红）用主色、右半边（蓝）用搭档色
-    const own = pairColors() && tg.color === 1 ? partner : accent;
-    const base = linked ? GOLD : own;
+    // 所有靶子同一个颜色（裂缝里的颜色）；金色组、可以打的另外上色
+    const base = linked ? GOLD : rift;
     lt.discMat.color.copy(ready ? GREEN : base);
-    lt.ringMat.color.copy(linked ? GOLD : ready ? GREEN : own);
+    lt.ringMat.color.copy(linked ? GOLD : ready ? GREEN : rift);
     lt.discMat.opacity = 0.92 * appear;
     lt.coreMat.opacity = appear;
     lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
@@ -1950,7 +1951,7 @@ function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = t
     const p = (at ?? lt.group.position).clone().setZ(-WALL_Z + 0.12);
     spawnFx(ringGeo, GREEN.clone().lerp(shotColor, 0.3), p, 420, 3.2, true);
     spawnFx(ringGeo, shotColor, p.clone().setZ(p.z + 0.01), 200, 1.6, true);
-  } else lt.discMat.color.copy(DIM.copy(accent).multiplyScalar(0.35));
+  } else lt.discMat.color.copy(DIM.copy(rift).multiplyScalar(0.35));
   judge(j);
   return j;
 }
