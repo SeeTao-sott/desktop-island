@@ -31,6 +31,10 @@ export interface AimSettings {
   window: number;
   /** 同一时刻的一对靶子，晚打的那个额外多给多少毫秒 */
   pairGrace: number;
+  /** 裂缝变大变小时："follow" 靶子跟着上下移动（各行一直居中）、"fixed" 靶子不动（裂缝自己挪一点） */
+  rowMode: string;
+  /** 行的布局变了（裂缝变大变小）时，视角自动跟着挪，准星一直停在原来瞄着的那一格上 */
+  aimFollow: boolean;
   /** 裂缝里的场景："range" 靶场、"sky" 天空之岛 */
   scene: string;
   /** 裂缝边飘出的粒子、裂缝里的浮尘 */
@@ -54,11 +58,11 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
-export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace"] as const;
+export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace", "rowMode", "aimFollow"] as const;
 type ModeKey = (typeof MODE_KEYS)[number];
 export interface Mode {
   name: string;
@@ -91,6 +95,8 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.window = Math.min(250, Math.max(60, Number(s.window) || DEFAULTS.window));
     s.pairGrace = Math.min(500, Math.max(0, Number.isFinite(Number(s.pairGrace)) ? Number(s.pairGrace) : DEFAULTS.pairGrace));
     if (!SCENES.some(([k]) => k === s.scene)) s.scene = DEFAULTS.scene;
+    if (s.rowMode !== "fixed") s.rowMode = "follow";
+    s.aimFollow = s.aimFollow !== false;
     s.particles = s.particles !== false;
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
@@ -176,11 +182,56 @@ export function drawCrosshair(el: HTMLElement, s: AimSettings) {
   if (s.dot) bar(-half, -half, t, t);
 }
 
-/** 设置面板：改了就立刻生效并保存。最上面是模式：切换、新建、改名、删除 */
+/** 设置分三页；记住上次停在哪一页（只是本机的小方便，存不了也没关系） */
+const TABS: [string, string][] = [
+  ["play", "玩法"],
+  ["aim", "瞄准"],
+  ["look", "画面"],
+];
+const TAB_KEY = "rift-settings-tab";
+let currentTab = (() => {
+  try {
+    const t = localStorage.getItem(TAB_KEY);
+    return TABS.some(([k]) => k === t) ? t! : "play";
+  } catch {
+    return "play";
+  }
+})();
+
+/** 设置面板：改了就立刻生效并保存。分「玩法 / 瞄准 / 画面」三页；玩法页最上面是模式：切换、新建、改名、删除 */
 export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s: AimSettings) => void) {
   panel.replaceChildren();
   const s = store.settings;
   const rebuild = () => buildSettings(panel, store, onChange);
+  // 标签页按钮 + 每页一个容器；下面的 row() 加到"当前在写的那一页"
+  const tabBar = document.createElement("div");
+  tabBar.className = "rf-tabs";
+  panel.appendChild(tabBar);
+  const pages = new Map<string, HTMLElement>();
+  for (const [key, label] of TABS) {
+    const page = document.createElement("div");
+    page.className = "rf-page";
+    page.hidden = key !== currentTab;
+    pages.set(key, page);
+    panel.appendChild(page);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.classList.toggle("on", key === currentTab);
+    b.addEventListener("click", () => {
+      currentTab = key;
+      try {
+        localStorage.setItem(TAB_KEY, key);
+      } catch {
+        // 记不住就算了
+      }
+      for (const [k, pg] of pages) pg.hidden = k !== key;
+      tabBar.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    });
+    tabBar.appendChild(b);
+  }
+  let target = pages.get("play")!;
+  const page = (key: string) => (target = pages.get(key)!);
   const row = (label: string, input: HTMLElement, note?: string) => {
     const r = document.createElement("label");
     r.className = "rf-row";
@@ -192,7 +243,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
       n.textContent = note;
       r.appendChild(n);
     }
-    panel.appendChild(r);
+    target.appendChild(r);
   };
   const num = (
     key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov" | "window" | "pairGrace" | "fxSpeed",
@@ -214,7 +265,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot" | "particles" | "arcs") => {
+  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -268,7 +319,8 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   });
   del.disabled = store.modes.length <= 1;
   modeBar.append(sel, add, del);
-  row("模式", modeBar, "下面带 ◆ 的几项每个模式各存一份，改了自动记到当前模式里");
+  page("play");
+  row("模式", modeBar, "这一页带 ◆ 的几项每个模式各存一份，改了自动记到当前模式里");
   const name = document.createElement("input");
   name.type = "text";
   name.maxLength = 20;
@@ -281,7 +333,6 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   });
   row("模式名字", name);
 
-  row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
   row("◆ 靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
   row("◆ 最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");
   row("◆ 镜头距离", num("zoom", 1, 2.5, 0.1), "1~2.5 倍；越大靶墙越小、越集中在准星附近");
@@ -289,6 +340,19 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   row("◆ 出现提前量（秒）", num("lead", 0.5, 2, 0.1), "靶子提前多久出现、外圈收多久");
   row("◆ 判定窗口（ms）", num("window", 60, 250, 10), "拍点前后多少毫秒内算 Great，Perfect 是它的一半");
   row("◆ 同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
+  const rowSel = document.createElement("select");
+  for (const [k, label] of [
+    ["follow", "跟着裂缝移动"],
+    ["fixed", "固定不动"],
+  ])
+    rowSel.add(new Option(label, k, false, k === s.rowMode));
+  rowSel.addEventListener("change", () => {
+    s.rowMode = rowSel.value;
+    onChange(s);
+  });
+  row("◆ 靶子位置", rowSel, "裂缝变大变小时：跟着移动 = 各行一直居中、靶子会上下挪；固定不动 = 整面靶墙一起平移，靶子之间不相对滑动");
+  row("◆ 准星跟着格子", check("aimFollow"), "行的位置变了时视角自动跟着挪，准星一直停在原来瞄着的那一格；那一行收起来了就停在最近的一行");
+  page("look");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   const sceneSel = document.createElement("select");
@@ -304,10 +368,12 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.riftStyle = styleSel.value;
     onChange(s);
   });
-  row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：主裂缝裂开几道大口子、带光焰；经典：一条整齐的发光边");
+  row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：主裂缝裂出几道窄而曲折的分支、带光焰；经典：一条整齐的发光边");
   row("边缘电弧", check("arcs"), "沿着裂缝边一段一段跳动的电弧（三种样式都能开）");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
+  page("aim");
+  row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));

@@ -92,9 +92,11 @@ body {
   top: 50%;
   transform: translate(-50%, -50%);
   width: 420px;
-  /* 设置项多了屏幕放不下：面板最高到屏幕边，里面滚动 */
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
+  /* 固定高度：每页内容多少不一样，面板（连同顶部的标签按钮）也不会跟着上下跳；内容多的页在里面滚动 */
+  height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   padding: 18px 22px;
   border-radius: 18px;
   background: rgba(10, 10, 16, 0.86);
@@ -128,9 +130,45 @@ body {
 .start-back:hover {
   background: rgba(255, 255, 255, 0.12);
 }
-.settings {
-  display: grid;
+/* 设置的三个标签页 */
+.rf-tabs {
+  display: flex;
   gap: 6px;
+  margin-bottom: 6px;
+}
+.rf-tabs button {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.rf-tabs button.on {
+  background: var(--w-accent);
+  border-color: var(--w-accent);
+}
+.rf-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding-right: 4px;
+}
+.rf-page[hidden] {
+  display: none;
+}
+.settings {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .rf-row {
   display: grid;

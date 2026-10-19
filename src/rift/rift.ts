@@ -313,6 +313,8 @@ interface LiveTarget {
   /** 出现的时刻、准星第一次落到它上面的时刻（歌曲秒） */
   spawnAt: number;
   seenAt: number | null;
+  /** 固定模式下这个靶子待在哪一格（从下往上 0~3），出现时定好，之后不变 */
+  slot: number;
 }
 const targetLayer = new THREE.Group();
 scene.add(targetLayer);
@@ -333,7 +335,7 @@ function takeTarget(tg: Target): LiveTarget {
     core.renderOrder = 11;
     ring.renderOrder = 12;
     group.add(disc, core, ring);
-    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null };
+    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null, slot: 1 };
   }
   lt.tg = tg;
   lt.gone = 0;
@@ -977,6 +979,7 @@ const edgeY = (x: number, top: boolean) => {
 };
 
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
+
 function updateRift(half: number, open: number) {
   const cy = CY - CANVAS_TOP;
   const top: number[] = [];
@@ -1087,11 +1090,26 @@ function setN(n: number) {
   document.querySelectorAll<HTMLButtonElement>("#test button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === n));
 }
 
+/** 「靶子位置：固定不动」时，4 行在靶墙上的位置固定（从下往上第 0~3 格），
+ *  裂缝变大时按这个顺序一行一行露出来：先中间偏下那行，再上面、再下面、再最上面（尽量对称地往两边长） */
+const ROW_ORDER = [1, 2, 0, 3];
+const rowFixed = () => settings.rowMode === "fixed";
+/** N 行时露出来的是哪几格（从下往上排好） */
+const activeSlots = (n: number) => ROW_ORDER.slice(0, Math.max(1, Math.min(4, n))).sort((a, b) => a - b);
+/** 露出来的那几行的中心高度（米，靶墙上，往上为正）：固定模式下镜头跟着它上下平移；跟着移动模式下一直是 0 */
+let rowCenter = 0;
+
 function layoutRows(n: number) {
+  const fixed = rowFixed();
+  let sumY = 0;
+  let sumW = 0;
   for (let r = 0; r < 4; r++) {
-    // 第 r 行（从上往下），所有行整体居中在视线高度
-    const y = ((n - 1) / 2 - r) * CELL;
-    const vis = Math.min(1, Math.max(0, n - r));
+    // 第 r 行（从上往下）。跟着移动：所有行整体居中在视线高度；固定：每行待在自己那一格
+    const slot = 3 - r;
+    const y = fixed ? (slot - 1.5) * CELL : ((n - 1) / 2 - r) * CELL;
+    const vis = Math.min(1, Math.max(0, n - (fixed ? ROW_ORDER.indexOf(slot) : r)));
+    sumY += y * vis;
+    sumW += vis;
     const row = rows[r];
     row.group.position.y = y;
     row.group.visible = vis > 0.01;
@@ -1099,6 +1117,7 @@ function layoutRows(n: number) {
     row.cell.opacity = vis;
     row.edge.opacity = vis * 0.9;
   }
+  rowCenter = fixed && sumW > 0 ? sumY / sumW : 0;
 }
 
 // ---------------- 瞄准：鼠标锁定、视角、射击 ----------------
@@ -1140,6 +1159,9 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
 });
 
 let reloadTimer = 0;
+/** 上一帧的 N 和靶子位置模式（准星跟着格子用） */
+let lastN = 1;
+let lastFixed = false;
 /** 准星指向（弧度）：yaw 左右、pitch 上下（往上为正） */
 let aimYaw = 0;
 let aimPitch = 0;
@@ -1723,6 +1745,9 @@ function updateSong(n: number, nowMs: number) {
   while (song.next < song.targets.length && song.targets[song.next].t - LEAD <= now) {
     const lt = takeTarget(song.targets[song.next]);
     lt.spawnAt = now;
+    // 排靶时这个靶子是按"出现那一刻的 N 行"里的第 rb 行排的：换成那 N 行对应的固定格
+    const slots = activeSlots(nAt(song.steps, lt.tg.t - LEAD));
+    lt.slot = slots[Math.min(slots.length - 1, lt.tg.rb)];
     song.live.push(lt);
     song.next++;
   }
@@ -1745,7 +1770,9 @@ function updateSong(n: number, nowMs: number) {
     const lt = song.live[i];
     const tg = lt.tg;
     // 跟着自己那一行走（行的位置随 N 变）
-    lt.group.position.set((tg.col - (COLS - 1) / 2 + tg.dx) * CELL, (tg.rb - (n - 1) / 2 + tg.dy) * CELL, -WALL_Z + 0.06);
+    // 跟着移动：跟着自己那一行走（行的位置随 N 变）；固定：一直待在自己那一格
+    const rowY = rowFixed() ? lt.slot - 1.5 : tg.rb - (n - 1) / 2;
+    lt.group.position.set((tg.col - (COLS - 1) / 2 + tg.dx) * CELL, (rowY + tg.dy) * CELL, -WALL_Z + 0.06);
     if (lt.gone) {
       const k = (nowMs - lt.gone) / 220;
       if (k >= 1) {
@@ -1758,7 +1785,7 @@ function updateSong(n: number, nowMs: number) {
       lt.ringMat.opacity = 0;
       continue;
     }
-    needRows = Math.max(needRows, tg.rb + 1);
+    needRows = Math.max(needRows, rowFixed() ? ROW_ORDER.indexOf(lt.slot) + 1 : tg.rb + 1);
     const left = tg.t - now; // 离拍点还有几秒
     if (left < -lateW(tg)) {
       // 没打：Miss，变暗淡出
@@ -1890,10 +1917,26 @@ function frame(now: number) {
   const open = Math.max(0, openSpring.value);
   const half = ((n * CELL_PX) / ZOOM / 2 + MARGIN) * open;
   halfNow = half;
+  // 准星跟着格子：布局变之前，先记下准星指在"第几行的哪个位置"（行坐标，从下往上，0 = 最下面那行的中心）
+  const D = WALL_Z * ZOOM;
+  const fixed = rowFixed();
+  const yw = camera.position.y + Math.tan(aimPitch) * D;
+  const q = fixed ? yw / CELL + 1.5 : yw / CELL + (lastN - 1) / 2;
   layoutRows(n);
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
   const pm = pitchMax(n);
   aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  // 固定模式：镜头跟着露出来那几行的中心上下平移，裂缝、准星、文字都留在屏幕正中；
+  // 行数变化时整面靶墙连同靶子一起平滑地挪（最多半行），靶子之间不会相对滑动
+  camera.position.y = rowCenter;
+  // 布局变了：视角跟着挪，让准星回到同一行的同一个位置（再按新的上下范围夹一下）
+  if (settings.aimFollow && playing && (n !== lastN || fixed !== lastFixed)) {
+    const yw2 = (fixed ? q - 1.5 : q - (n - 1) / 2) * CELL;
+    aimPitch = Math.atan((yw2 - rowCenter) / D);
+    aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  }
+  lastN = n;
+  lastFixed = fixed;
   recoil *= Math.exp(-dt / 0.07);
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
