@@ -351,7 +351,9 @@ function dropTarget(lt: LiveTarget) {
 const overlay = new THREE.Scene();
 const ortho = new THREE.OrthographicCamera(0, W, 0, CANVAS_H, -1, 1);
 
-const P = 260; // 沿水平方向的点数
+const P = 520; // 沿水平方向的点数（裂纹分支的尖角要够细）
+/** 下面按"点数"写的长度都是按 260 个点调的，点数变了按比例放大 */
+const PS = P / 260;
 /** 平滑的随机起伏：每隔 period 个点一个随机值，中间用 smoothstep 连起来 */
 function smoothLayer(rnd: () => number, period: number) {
   const knots = Array.from({ length: Math.ceil(P / period) + 2 }, rnd);
@@ -372,7 +374,7 @@ const seeded = (seed: number) => {
 function tearProfile(seed: number) {
   const rnd = seeded(seed);
   const knots: number[] = [];
-  for (let i = 0; i < P - 1; i += 5 + Math.floor(Math.abs(rnd()) * 22)) knots.push(i);
+  for (let i = 0; i < P - 1; i += Math.round((5 + Math.abs(rnd()) * 22) * PS)) knots.push(i);
   knots.push(P - 1);
   const vals: number[] = [];
   let y = rnd() * 0.6;
@@ -381,7 +383,7 @@ function tearProfile(seed: number) {
     y = Math.abs(rnd()) > 0.85 ? rnd() * 1.2 : Math.min(1.15, Math.max(-1.15, y + rnd() * 0.8));
     vals.push(y);
   }
-  const fine = smoothLayer(rnd, 3);
+  const fine = smoothLayer(rnd, 3 * PS);
   const v = new Array<number>(P);
   for (let k = 0; k + 1 < knots.length; k++) {
     const a = knots[k];
@@ -395,7 +397,7 @@ function tornProfile(seed: number) {
   const rnd = seeded(seed);
   const poly = (minStep: number, extra: number, amp: number, walk: boolean) => {
     const knots: number[] = [];
-    for (let i = 0; i < P - 1; i += minStep + Math.floor(Math.abs(rnd()) * extra)) knots.push(i);
+    for (let i = 0; i < P - 1; i += Math.max(1, Math.round((minStep + Math.abs(rnd()) * extra) * PS))) knots.push(i);
     knots.push(P - 1);
     let y = 0;
     const vals = knots.map(() => (y = walk ? Math.max(-1, Math.min(1, y * 0.4 + rnd())) : rnd()) * amp);
@@ -412,10 +414,44 @@ function tornProfile(seed: number) {
 const tornTop = tornProfile(6151);
 const tornBot = tornProfile(2777);
 
-/** 从转折点往裂缝外长出去的细裂纹：每条 2~4 节、越往外越细越淡，偶尔再分一次叉。
- *  坐标是相对转折点的像素（y 往裂缝外为正） */
+/** 裂纹样式：主裂缝往外裂开的 2~3 道大口子。每道是一个越往外越尖的楔形，两边是折线；
+ *  口子里也是开着的（看得到场景），主裂缝的边一路连到口子的边上。
+ *  u：在横向的位置（0~1），half：口子根部半宽（像素），len：伸出去多长（像素），lean：尖端往左右歪多少（-0.45 ~ 0.45 个半宽，
+ *  尖端一直在根部范围之内，口子才能用"每一列一个上沿"表示），side：两条边上的折线起伏 */
+interface Wedge {
+  top: boolean;
+  u: number;
+  half: number;
+  len: number;
+  lean: number;
+  side: number[];
+}
+function crackWedges(seed: number): Wedge[] {
+  const rnd = seeded(seed);
+  const n = Math.abs(rnd()) > 0.5 ? 3 : 2;
+  // 横向大致错开：左、中、右各一段里挑位置
+  const slots = [0.17, 0.5, 0.83].sort(() => rnd());
+  const out: Wedge[] = [];
+  for (let k = 0; k < n; k++) {
+    const side: number[] = [];
+    let y = 0;
+    for (let j = 0; j <= 12; j++) side.push((y = Math.max(-1, Math.min(1, y * 0.25 + rnd()))));
+    out.push({
+      top: k === 0 ? true : k === 1 ? false : rnd() < 0,
+      u: slots[k] + rnd() * 0.07,
+      half: 55 + Math.abs(rnd()) * 55,
+      len: 150 + Math.abs(rnd()) * 130,
+      lean: rnd() * 0.45,
+      side,
+    });
+  }
+  return out;
+}
+const wedges = crackWedges(4409);
+
+/** 口子尖端再往外延伸的一小段细裂纹（只有光，表示裂缝还在往外蔓延）：坐标相对尖端，y 往裂缝外为正 */
 interface Branch {
-  k: number;
+  w: Wedge;
   ax: number;
   ay: number;
   bx: number;
@@ -425,28 +461,27 @@ interface Branch {
   f0: number;
   f1: number;
 }
-function crackBranches(knots: number[], seed: number): Branch[] {
+function wedgeTips(ws: Wedge[], seed: number): Branch[] {
   const rnd = seeded(seed);
   const out: Branch[] = [];
-  const grow = (k: number, x: number, y: number, ang: number, w: number, f: number, n: number, canFork: boolean) => {
+  for (const w of ws) {
+    let ang = Math.atan2(w.lean * w.half, w.len);
+    let x = 0;
+    let y = 0;
+    let wd = 2.6;
+    let f = 1;
+    const n = 2 + Math.floor(Math.abs(rnd()) * 2);
     for (let j = 0; j < n; j++) {
-      const len = 22 + Math.abs(rnd()) * 38;
-      ang = Math.max(-1.4, Math.min(1.4, ang + rnd() * 0.7));
+      const len = 16 + Math.abs(rnd()) * 26;
+      ang += rnd() * 0.6;
       const nx = x + Math.sin(ang) * len;
       const ny = y + Math.cos(ang) * len;
-      const nw = w * 0.78;
-      const nf = f * 0.86;
-      out.push({ k, ax: x, ay: y, bx: nx, by: ny, w0: w, w1: nw, f0: f, f1: nf });
-      if (canFork && j >= 1 && Math.abs(rnd()) > 0.6) grow(k, nx, ny, ang + (rnd() < 0 ? -0.9 : 0.9), nw * 0.8, nf, 2 + Math.floor(Math.abs(rnd()) * 2), false);
+      out.push({ w, ax: x, ay: y, bx: nx, by: ny, w0: wd, w1: wd * 0.7, f0: f, f1: f * 0.7 });
       x = nx;
       y = ny;
-      w = nw;
-      f = nf;
+      wd *= 0.7;
+      f *= 0.7;
     }
-  };
-  for (const k of knots) {
-    if (k < 3 || k > P - 4 || Math.abs(rnd()) < 0.45) continue;
-    grow(k, 0, 0, rnd() * 1.1, 3.2 + Math.abs(rnd()) * 1.6, 1, 2 + Math.floor(Math.abs(rnd()) * 3), true);
   }
   return out;
 }
@@ -468,7 +503,7 @@ function classicProfile(seed: number) {
 function widthProfile(seed: number) {
   const rnd = seeded(seed);
   const knots: number[] = [];
-  for (let i = 0; i < P - 1; i += 18 + Math.floor(Math.abs(rnd()) * 40)) knots.push(i);
+  for (let i = 0; i < P - 1; i += Math.round((18 + Math.abs(rnd()) * 40) * PS)) knots.push(i);
   knots.push(P - 1);
   const vals = knots.map(() => Math.min(WIDE_MAX, Math.max(0.55, 0.97 + rnd() * 0.42)));
   const out = new Array<number>(P);
@@ -480,8 +515,7 @@ const tearTopP = tearProfile(9137);
 const tearBotP = tearProfile(4211);
 const tearTop = tearTopP.v;
 const tearBot = tearBotP.v;
-const branchesTop = crackBranches(tearTopP.knots, 5501);
-const branchesBot = crackBranches(tearBotP.knots, 8803);
+const tips = wedgeTips(wedges, 5501);
 const classicTop = classicProfile(9137);
 const classicBot = classicProfile(4211);
 const wideTop = widthProfile(733);
@@ -526,6 +560,8 @@ const glowMat = new THREE.ShaderMaterial({
     inW: { value: GLOW_IN },
     /** 0 裂纹、1 经典、2 撕裂 */
     mode: { value: 0 },
+    /** 边缘电弧开关 */
+    arcs: { value: 0 },
   },
   vertexShader: /* glsl */ `
     attribute float aDist;
@@ -547,6 +583,7 @@ const glowMat = new THREE.ShaderMaterial({
     uniform float outW;
     uniform float inW;
     uniform float mode;
+    uniform float arcs;
     varying float vDist;
     varying float vX;
     varying float vEdge;
@@ -571,8 +608,15 @@ const glowMat = new THREE.ShaderMaterial({
       }
       return v;
     }
+    /** 电弧：沿着边乱跳的细线，一段一段地闪（设置里打开才有） */
+    float arcAt(float d, float x) {
+      float off = (fbm(vec2(x * 0.05, time * 5.0)) - 0.5) * 20.0;
+      float seg = step(0.6, noise(vec2(x * 0.015, floor(time * 14.0) + vEdge * 7.0)));
+      return exp(-(d - off) * (d - off) / 1.4) * seg * arcs;
+    }
     void main() {
       float d = vDist;
+      float arc = arcAt(d, vX + vEdge * 913.0);
       if (mode > 1.5) {
         // 撕裂：紧贴裂缝外侧一圈发亮的撕口（白 → 淡紫，粗细不均、有碎屑感），上面闪着星点；
         // 外面一层柔和的副色光晕，里面一层薄薄的主题色光
@@ -587,9 +631,10 @@ const glowMat = new THREE.ShaderMaterial({
         float core1 = exp(-d * d / 2.0) * 0.8;
         // 撕口：贴边几乎是白的，往外带一点淡紫
         vec3 lav = mix(mix(color2, vec3(1.0), 0.55), vec3(1.0), smoothstep(rimW * 0.6, 0.0, -d) * 0.7);
-        vec3 sum = lav * rim + vec3(1.0) * (spark + core1) + color2 * glowO + color * glowI;
-        float a1 = clamp((rim + spark + core1 + glowO + glowI) * strength, 0.0, 1.0);
-        vec3 c1 = sum / max(rim + spark + core1 + glowO + glowI, 1e-4);
+        vec3 sum = lav * rim + vec3(1.0) * (spark + core1 + arc) + color2 * glowO + color * glowI;
+        float tot = rim + spark + core1 + arc + glowO + glowI;
+        float a1 = clamp(tot * strength, 0.0, 1.0);
+        vec3 c1 = sum / max(tot, 1e-4);
         gl_FragColor = vec4(c1 * a1, a1);
         return;
       }
@@ -598,8 +643,8 @@ const glowMat = new THREE.ShaderMaterial({
         float dn = d < 0.0 ? -d / 19.0 : d / 24.0;
         float core0 = exp(-dn * dn * 60.0);
         float halo0 = exp(-dn * 3.2) * 0.75;
-        float a0 = clamp((core0 + halo0) * strength, 0.0, 1.0);
-        gl_FragColor = vec4(mix(color, vec3(1.0), core0 * 0.8) * a0, a0);
+        float a0 = clamp((core0 + halo0 + arc) * strength, 0.0, 1.0);
+        gl_FragColor = vec4(mix(color, vec3(1.0), clamp(core0 * 0.8 + arc, 0.0, 1.0)) * a0, a0);
         return;
       }
       float x = vX + vEdge * 913.0;
@@ -620,10 +665,6 @@ const glowMat = new THREE.ShaderMaterial({
       float inA = d > 0.0 ? exp(-d / inW * 2.4) * 0.9 : 0.0;
       // 贴边的白热芯线
       float core = exp(-d * d / 3.0);
-      // 电弧：沿着边乱跳的细线，一段一段地闪
-      float off = (fbm(vec2(x * 0.05, t * 5.0)) - 0.5) * 20.0;
-      float seg = step(0.6, noise(vec2(x * 0.015, floor(t * 14.0) + vEdge * 7.0)));
-      float arc = exp(-(d - off) * (d - off) / 1.4) * seg;
       float a = clamp((core * 1.2 + arc * 0.9 + outA + inA) * strength, 0.0, 1.0);
       // 颜色：外面是副色（色相偏一点），靠近边和里面是主题色，芯线、电弧发白
       vec3 c = d < 0.0 ? mix(color, color2, smoothstep(1.0, 9.0, -d)) : color;
@@ -641,7 +682,7 @@ const glowMat = new THREE.ShaderMaterial({
 overlay.add(new THREE.Mesh(glowGeo, glowMat));
 
 // 分叉的细裂纹：每节一个细长四边形，aSide 横跨宽度（-1 ~ 1，中间亮），aFade 往外越来越淡
-const allBranches = [...branchesTop.map((b) => ({ b, top: true })), ...branchesBot.map((b) => ({ b, top: false }))];
+const allBranches = tips.map((b) => ({ b }));
 const branchGeo = new THREE.BufferGeometry();
 const branchPos = new Float32Array(allBranches.length * 4 * 3);
 const branchSide = new Float32Array(allBranches.length * 4);
@@ -695,13 +736,15 @@ const branchMat = new THREE.ShaderMaterial({
 const branchMesh = new THREE.Mesh(branchGeo, branchMat);
 branchMesh.frustumCulled = false;
 overlay.add(branchMesh);
-/** 细裂纹跟着这一帧的裂缝边走（grow：长出来的比例，裂缝刚撕开时从短到长） */
+/** 尖端的细裂纹跟着这一帧口子的尖端走（grow：长出来的比例，裂缝刚撕开时从短到长） */
 function updateBranches(grow: number) {
   const dirTmp = { x: 0, y: 0 };
-  allBranches.forEach(({ b, top }, n) => {
-    const x0 = (b.k / (P - 1)) * W;
-    const y0 = top ? edgeTop[b.k] : edgeBot[b.k];
-    const sy = top ? -1 : 1;
+  allBranches.forEach(({ b }, n) => {
+    const tip = wedgeTip.get(b.w);
+    if (!tip) return;
+    const x0 = tip.x;
+    const y0 = tip.y;
+    const sy = b.w.top ? -1 : 1;
     const ax = x0 + b.ax * grow;
     const ay = y0 + sy * b.ay * grow;
     const bx = x0 + b.bx * grow;
@@ -776,6 +819,12 @@ function updateRift(half: number, open: number) {
   }
   // 合上时上下边重合成一条线，不能交叉
   for (let i = 0; i < P; i++) if (top[i] > bot[i]) top[i] = bot[i] = (top[i] + bot[i]) / 2;
+  // 裂纹样式：主裂缝往外裂开的几道口子（口子长多长跟着裂缝开了多少）
+  wedgeTip.clear();
+  if (crack) {
+    const g = smoothstep(0.35, 1, open);
+    for (const w of wedges) if (g > 0.01) carveWedge(w, w.top ? top : bot, g);
+  }
   edgeTop.set(top);
   edgeBot.set(bot);
   riftTop = Math.min(...top);
@@ -792,12 +841,61 @@ function updateRift(half: number, open: number) {
     quad(x0, bot[i], CANVAS_H, x1, bot[i + 1], CANVAS_H);
   }
   eraseGeo.attributes.position.needsUpdate = true;
-  for (let i = 0; i < P; i++) {
-    const x = (i / (P - 1)) * W;
-    glowPos.set([x, top[i] - GLOW, 0, x, top[i] + GLOW_IN, 0], e0(0, i));
-    glowPos.set([x, bot[i] + GLOW, 0, x, bot[i] - GLOW_IN, 0], e0(1, i));
+  // 发光带沿着边的法线往外铺（不是竖直往外）：斜边、口子两侧的光也一样粗
+  const step = W / (P - 1);
+  for (let e = 0; e < 2; e++) {
+    const ys = e === 0 ? top : bot;
+    const out = e === 0 ? -1 : 1;
+    for (let i = 0; i < P; i++) {
+      const x = i * step;
+      // 用前后各 3 个点算方向，尖角处不会乱翻
+      const a = Math.max(0, i - 3);
+      const b = Math.min(P - 1, i + 3);
+      const tx = (b - a) * step;
+      const ty = ys[b] - ys[a];
+      const l = Math.hypot(tx, ty) || 1;
+      const nx = (-ty / l) * -out;
+      const ny = (tx / l) * out;
+      glowPos.set([x + nx * GLOW, ys[i] + ny * GLOW, 0, x - nx * GLOW_IN, ys[i] - ny * GLOW_IN, 0], e0(e, i));
+    }
   }
   glowGeo.attributes.position.needsUpdate = true;
+}
+
+/** 这一帧每道口子尖端的位置（细裂纹从这里接着往外长） */
+const wedgeTip = new Map<Wedge, { x: number; y: number }>();
+/** 把一道口子"挖"进这条边：根部两端接在当前的边上，往外收成一个尖；ys 是这条边每一列的 y */
+function carveWedge(w: Wedge, ys: number[], g: number) {
+  const step = W / (P - 1);
+  const out = w.top ? -1 : 1;
+  const cx = w.u * W;
+  const i0 = Math.max(1, Math.round((cx - w.half) / step));
+  const i1 = Math.min(P - 2, Math.round((cx + w.half) / step));
+  if (i1 - i0 < 4) return;
+  const yl = ys[i0];
+  const yr = ys[i1];
+  const ax = cx + w.lean * w.half;
+  // 尖端不伸出画布（留 40 像素给光）
+  const base = (yl + yr) / 2;
+  const room = out < 0 ? base - 40 : CANVAS_H - 40 - base;
+  const ay = base + out * Math.max(0, Math.min(w.len * g, room));
+  const ia = (ax - i0 * step) / ((i1 - i0) * step); // 尖端在根部范围里的比例
+  for (let i = i0; i <= i1; i++) {
+    const f = (i - i0) / (i1 - i0);
+    // 左边：根部左端 → 尖端；右边：尖端 → 根部右端；两条边上叠一点折线起伏（越靠尖端越小）
+    const left = f <= ia;
+    const k = left ? f / ia : (f - ia) / (1 - ia);
+    const y = left ? yl + (ay - yl) * k : ay + (yr - ay) * k;
+    // 两条边各 6 段折线，起伏在中段最大、根部和尖端收小（根部要接得上主裂缝，尖端要尖）
+    const sp = left ? k * 6 : 6 + k * 6;
+    const j = Math.min(11, Math.floor(sp));
+    const along = left ? k : 1 - k; // 0 根部 → 1 尖端
+    const env = Math.sin(Math.PI * Math.min(1, along * 1.15));
+    const jag = (w.side[j] + (w.side[j + 1] - w.side[j]) * (sp - j)) * 26 * g * env;
+    const yy = y + jag;
+    ys[i] = out < 0 ? Math.max(2, Math.min(ys[i], yy)) : Math.min(CANVAS_H - 2, Math.max(ys[i], yy));
+  }
+  wedgeTip.set(w, { x: ax, y: Math.max(2, Math.min(CANVAS_H - 2, ay)) });
 }
 const e0 = (edge: number, i: number) => (edge * P * 2 + i * 2) * 3;
 const smoothstep = (a: number, b: number, x: number) => {
@@ -1637,6 +1735,7 @@ function frame(now: number) {
   updateSong(n, now);
   fxTime += dt * settings.fxSpeed;
   glowMat.uniforms.mode.value = settings.riftStyle === "tear" ? 2 : settings.riftStyle === "crack" ? 0 : 1;
+  glowMat.uniforms.arcs.value = settings.arcs ? 1 : 0;
   updateRift(half, open);
   const tearOn = settings.riftStyle === "crack";
   branchMesh.visible = tearOn;

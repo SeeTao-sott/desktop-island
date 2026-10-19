@@ -39,6 +39,8 @@ export interface AimSettings {
   riftStyle: string;
   /** 裂缝边特效（光焰流动、电弧、抖动）的速度倍数 */
   fxSpeed: number;
+  /** 沿着裂缝边跳动的电弧 */
+  arcs: boolean;
 }
 
 export const RIFT_STYLES: [string, string][] = [
@@ -52,7 +54,7 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5 };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -92,6 +94,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.particles = s.particles !== false;
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
+    s.arcs = s.arcs === true;
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -211,7 +214,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot" | "particles") => {
+  const check = (key: "outline" | "dot" | "particles" | "arcs") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -301,7 +304,8 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.riftStyle = styleSel.value;
     onChange(s);
   });
-  row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：折线加分叉、光焰和电弧；经典：一条整齐的发光边");
+  row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：主裂缝裂开几道大口子、带光焰；经典：一条整齐的发光边");
+  row("边缘电弧", check("arcs"), "沿着裂缝边一段一段跳动的电弧（三种样式都能开）");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   row("准星颜色", color);
