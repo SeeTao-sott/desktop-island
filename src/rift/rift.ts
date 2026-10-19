@@ -437,7 +437,9 @@ function crackFissures(seed: number): Fissure[] {
   for (let k = 0; k < n; k++) {
     const total = 170 + Math.abs(rnd()) * 150;
     const baseW = 15 + Math.abs(rnd()) * 10;
-    const head = rnd() * 0.45;
+    const u = slots[k] + rnd() * 0.06;
+    // 整体朝向：左边的往左斜、右边的往右斜（像从中间往外裂开），中间的随便偏一点
+    const head = Math.abs(u - 0.5) < 0.15 ? rnd() * 0.3 : Math.sign(u - 0.5) * (0.55 + Math.abs(rnd()) * 0.35);
     let ang = head;
     let zig = rnd() < 0 ? -1 : 1;
     let x = 0;
@@ -459,7 +461,7 @@ function crackFissures(seed: number): Fissure[] {
       if (i > 0) acc += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
       return baseW * Math.pow(Math.max(0, 1 - acc / len), 0.85);
     });
-    out.push({ top: k === 0 ? true : k === 1 ? false : rnd() < 0, u: slots[k] + rnd() * 0.06, baseW, pts, widths });
+    out.push({ top: k === 0 ? true : k === 1 ? false : rnd() < 0, u, baseW, pts, widths });
   }
   return out;
 }
@@ -813,7 +815,15 @@ function updateFissures(g: number) {
     const out = f.top ? -1 : 1;
     const ax = f.u * W;
     const ai = Math.min(P - 1, Math.max(0, Math.round(ax / step)));
-    const ay = ys[ai];
+    // 缝从缝口一带主裂缝边最往外的位置开始：边在这里往里凹也不会在接口漏出一块
+    const wk0 = Math.min(1, g * 1.4);
+    const span = Math.round(((f.baseW * wk0) / 2 + 10) / step);
+    let ay = ys[ai];
+    let ayIn = ys[ai];
+    for (let i = Math.max(0, ai - span); i <= Math.min(P - 1, ai + span); i++) {
+      ay = out < 0 ? Math.min(ay, ys[i]) : Math.max(ay, ys[i]);
+      ayIn = out < 0 ? Math.max(ayIn, ys[i]) : Math.min(ayIn, ys[i]);
+    }
     // 不伸出画布：最往外的点超出就整道缝按比例缩短
     const far = Math.max(...f.pts.map((p) => p[1])) * g;
     const room = out < 0 ? ay - 30 : CANVAS_H - 30 - ay;
@@ -840,9 +850,10 @@ function updateFissures(g: number) {
       left.push({ x: W2[k].x + nx * hw, y: W2[k].y + ny * hw });
       right.push({ x: W2[k].x - nx * hw, y: W2[k].y - ny * hw });
     }
-    // 模板形状：缝口先往主裂缝里多伸 40 像素（保证和主裂缝连成一片），再沿着缝走到尖
-    const hw0 = (f.baseW * wk) / 2 + 4;
-    fisPos.set([ax - hw0, ay - out * 40, 0, ax + hw0, ay - out * 40, 0], vb * 3);
+    // 模板形状：缝口先往主裂缝里多伸一段、铺宽一点（盖住缝口一带边的起伏，和主裂缝连成一片），再沿着缝走到尖
+    const hw0 = (f.baseW * wk) / 2 + 12;
+    const inner = ayIn - out * 40;
+    fisPos.set([ax - hw0, inner, 0, ax + hw0, inner, 0], vb * 3);
     for (let k = 0; k < n; k++) fisPos.set([left[k].x, left[k].y, 0, right[k].x, right[k].y, 0], (vb + 2 + k * 2) * 3);
     vb += (n + 1) * 2;
     // 两条边上的光：法线朝缝外
