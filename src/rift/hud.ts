@@ -31,9 +31,18 @@ export interface AimSettings {
   window: number;
   /** 同一时刻的一对靶子，晚打的那个额外多给多少毫秒 */
   pairGrace: number;
+  /** 裂缝里的场景："range" 靶场、"sky" 天空之岛 */
+  scene: string;
+  /** 裂缝边飘出的粒子、裂缝里的浮尘 */
+  particles: boolean;
 }
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150 };
+export const SCENES: [string, string][] = [
+  ["range", "靶场"],
+  ["sky", "天空之岛"],
+];
+
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, scene: "range", particles: true };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -69,6 +78,8 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.fov = Math.min(120, Math.max(70, Number(s.fov) || DEFAULTS.fov));
     s.window = Math.min(250, Math.max(60, Number(s.window) || DEFAULTS.window));
     s.pairGrace = Math.min(500, Math.max(0, Number.isFinite(Number(s.pairGrace)) ? Number(s.pairGrace) : DEFAULTS.pairGrace));
+    if (!SCENES.some(([k]) => k === s.scene)) s.scene = DEFAULTS.scene;
+    s.particles = s.particles !== false;
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -188,7 +199,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot") => {
+  const check = (key: "outline" | "dot" | "particles") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -265,6 +276,14 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   row("◆ 同时靶子宽限（ms）", num("pairGrace", 0, 500, 10), "同时出现的两个靶子，晚打的那个多给这么久");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
+  const sceneSel = document.createElement("select");
+  for (const [k, label] of SCENES) sceneSel.add(new Option(label, k, false, k === s.scene));
+  sceneSel.addEventListener("change", () => {
+    s.scene = sceneSel.value;
+    onChange(s);
+  });
+  row("场景", sceneSel, "裂缝里的环境；改了会重新打开一下");
+  row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));

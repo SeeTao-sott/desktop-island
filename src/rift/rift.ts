@@ -12,6 +12,8 @@ import { listen } from "@tauri-apps/api/event";
 import { Spring } from "../spring";
 import { buildSettings, drawCrosshair, flushStore, loadStore, saveStore } from "./hud";
 import { capSteps, densitySchedule, nAt, planTargets, type NStep, type Shot, type Target } from "./plan";
+import { Dust, Embers } from "./embers";
+import { buildSky, type Sky } from "./sky";
 
 // ---------------- 可调的参数 ----------------
 /** 设置、模式、最高分（存在 rift.json 里） */
@@ -34,14 +36,19 @@ const MAX_COLS = 9;
 let COLS = settings.cols;
 /** 镜头距离倍数：镜头往后拉，靶墙在屏幕上变小（裂缝、视角范围都跟着缩） */
 let ZOOM = settings.zoom;
+/** 裂缝里的场景、粒子开关（改了要重新打开：画布大小、场景都在开头建好） */
+const SCENE = settings.scene;
+const PARTICLES = settings.particles;
+/** 裂缝上下给飘出去的火星留的空间（像素） */
+const PARTICLE_PAD = PARTICLES ? 150 : 0;
 
 const W = window.innerWidth;
 const H = window.innerHeight;
 const CY = H / 2;
 /** 一行格子在屏幕上的高度：N=4 时正好占满 MAX_FRAC */
 const CELL_PX = (H * MAX_FRAC - MARGIN * 2) / 4;
-/** 画布：裂缝最大时的高度 + 参差 + 发光的余量 */
-const CANVAS_H = Math.ceil(H * MAX_FRAC + (JAG + GLOW) * 2 + 8);
+/** 画布：裂缝最大时的高度 + 参差 + 发光 + 火星的余量（不超过屏幕） */
+const CANVAS_H = Math.min(H, Math.ceil(H * MAX_FRAC + (JAG + GLOW + PARTICLE_PAD) * 2 + 8));
 const CANVAS_TOP = Math.round(CY - CANVAS_H / 2);
 
 const log = (msg: string) => invoke("rift_log", { msg }).catch(() => {});
@@ -74,7 +81,15 @@ function applyTheme(t: Theme | null) {
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
-  scene.fog = new THREE.Fog(tint(0.3, 0.03), WALL_Z * ZOOM * 0.9, WALL_Z * (ZOOM + 1.6));
+  embers.material.uniforms.uColor.value.copy(accent);
+  dust?.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.5);
+  if (sky) {
+    // 天空之岛：亮的天光、远处才起雾（地平线的颜色）；靶墙石板保持深色，靶子才显眼
+    hemi.color.set(0xffffff);
+    hemi.groundColor.set(0x6b5a46);
+    hemi.intensity = 0.5;
+    scene.fog = new THREE.Fog(sky.fog, WALL_Z * 2.5, 420);
+  } else scene.fog = new THREE.Fog(tint(0.3, 0.03), WALL_Z * ZOOM * 0.9, WALL_Z * (ZOOM + 1.6));
 }
 
 // ---------------- 渲染器、相机 ----------------
@@ -88,7 +103,7 @@ renderer.setClearColor(0x000000, 0);
 
 const aspect = W / H;
 const vfov = (2 * Math.atan(Math.tan((HFOV * Math.PI) / 360) / aspect) * 180) / Math.PI;
-const camera = new THREE.PerspectiveCamera(vfov, aspect, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(vfov, aspect, 0.1, SCENE === "sky" ? 900 : 200);
 // 只画全屏画面里横带那一段：透视和全屏时完全一样
 camera.setViewOffset(W, H, 0, CANVAS_TOP, W, CANVAS_H);
 camera.position.set(0, 0, WALL_Z * (ZOOM - 1));
@@ -115,30 +130,74 @@ scene.add(key);
 const ROOM_W = CELL * MAX_COLS + CELL * 3;
 const ROOM_H = CELL * 4 + CELL * 2.2;
 const floorY = -ROOM_H / 2;
+/** 天空之岛的靶墙石板：比靶场的墙小，四周看得到天空 */
+const BOARD_W = CELL * MAX_COLS + CELL * 0.9;
+const BOARD_H = CELL * 4 + CELL * 0.9;
+const sky: Sky | null = SCENE === "sky" ? buildSky(scene, { cell: CELL, wallZ: WALL_Z, floorY, boardW: BOARD_W, boardH: BOARD_H }) : null;
+if (!sky) buildRoom();
 // 地面、侧墙往后多铺一段：镜头往后拉时也还在房间里
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, WALL_Z * 5), mats.floor);
-floor.rotation.x = -Math.PI / 2;
-floor.position.set(0, floorY, WALL_Z * 1.5);
-scene.add(floor);
-const ceil = floor.clone();
-ceil.rotation.x = Math.PI / 2;
-ceil.position.y = -floorY;
-scene.add(ceil);
-for (const sx of [-1, 1]) {
-  const side = new THREE.Mesh(new THREE.PlaneGeometry(WALL_Z * 5, ROOM_H), mats.side);
-  side.rotation.y = (-sx * Math.PI) / 2;
-  side.position.set((sx * ROOM_W) / 2, 0, WALL_Z * 1.5);
-  scene.add(side);
-  // 侧墙上两条灯带，往靶墙方向延伸
-  for (const sy of [-1, 1]) {
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, WALL_Z * 1.4), mats.strip);
-    strip.position.set(sx * (ROOM_W / 2 - 0.03), sy * CELL * 2.6, -WALL_Z * 0.7);
-    scene.add(strip);
+function buildRoom() {
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, WALL_Z * 5), mats.floor);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, floorY, WALL_Z * 1.5);
+  scene.add(floor);
+  const ceil = floor.clone();
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.y = -floorY;
+  scene.add(ceil);
+  for (const sx of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(WALL_Z * 5, ROOM_H), mats.side);
+    side.rotation.y = (-sx * Math.PI) / 2;
+    side.position.set((sx * ROOM_W) / 2, 0, WALL_Z * 1.5);
+    scene.add(side);
+    // 侧墙上两条灯带，往靶墙方向延伸
+    for (const sy of [-1, 1]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, WALL_Z * 1.4), mats.strip);
+      strip.position.set(sx * (ROOM_W / 2 - 0.03), sy * CELL * 2.6, -WALL_Z * 0.7);
+      scene.add(strip);
+    }
   }
 }
 const wall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_H), mats.wall);
 wall.position.z = -WALL_Z;
 scene.add(wall);
+/** 天空之岛：悬浮的石板（背面有厚度）+ 一圈主题色发光边框；宽度跟着列数（fitBoard） */
+const board = sky
+  ? (() => {
+      const t = CELL * 0.06;
+      const bar = (w: number, h: number) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), mats.strip);
+        m.position.z = -WALL_Z + t / 2;
+        scene.add(m);
+        return m;
+      };
+      const back = new THREE.Mesh(new THREE.BoxGeometry(1, BOARD_H, CELL * 0.3), mats.side);
+      back.position.z = -WALL_Z - CELL * 0.16;
+      scene.add(back);
+      return { t, top: bar(1, t), bottom: bar(1, t), left: bar(t, BOARD_H + t), right: bar(t, BOARD_H + t), back };
+    })()
+  : null;
+/** 石板宽度 = 现在的列数 + 一点边（两边空出来看得到天空） */
+function fitBoard() {
+  if (!board) return;
+  const bw = CELL * COLS + CELL * 0.9;
+  wall.scale.set(bw / ROOM_W, BOARD_H / ROOM_H, 1);
+  board.back.scale.x = bw;
+  board.top.scale.x = board.bottom.scale.x = bw + board.t;
+  board.top.position.y = BOARD_H / 2;
+  board.bottom.position.y = -BOARD_H / 2;
+  board.left.position.x = -bw / 2;
+  board.right.position.x = bw / 2;
+}
+// 裂缝里飘着的浮尘（靶墙前面到镜头之间）
+const dust = PARTICLES
+  ? new Dust(
+      SCENE === "sky" ? 160 : 120,
+      new THREE.Box3(new THREE.Vector3(-ROOM_W / 2, floorY, -WALL_Z + 0.5), new THREE.Vector3(ROOM_W / 2, -floorY, 2)),
+      CELL * 0.05,
+    )
+  : null;
+if (dust) scene.add(dust.points);
 
 // 列数 × 4 行格子：每行一组，行的位置和透明度跟着 N 的弹簧走
 // 绘制顺序固定：格子 → 靶子 → 特效。半透明物体默认按"离相机多远"排顺序，
@@ -157,6 +216,7 @@ for (let r = 0; r < 4; r++) {
 }
 /** 按现在的列数摆格子（设置里改了列数会重新摆） */
 function buildCells() {
+  fitBoard();
   for (const r of rows) {
     r.group.clear();
     for (let c = 0; c < COLS; c++) {
@@ -350,6 +410,17 @@ const glowMat = new THREE.ShaderMaterial({
 });
 overlay.add(new THREE.Mesh(glowGeo, glowMat));
 
+// 裂缝边飘出去的火星
+const embers = new Embers(380, renderer.getPixelRatio());
+if (PARTICLES) overlay.add(embers.points);
+/** 这一帧裂缝上下边的 y（画布像素），火星从这里冒出来 */
+const edgeTop = new Float32Array(P);
+const edgeBot = new Float32Array(P);
+const edgeY = (x: number, top: boolean) => {
+  const i = Math.min(P - 1, Math.max(0, Math.round((x / W) * (P - 1))));
+  return top ? edgeTop[i] : edgeBot[i];
+};
+
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
 function updateRift(half: number, open: number) {
   const cy = CY - CANVAS_TOP;
@@ -366,6 +437,8 @@ function updateRift(half: number, open: number) {
   }
   // 合上时上下边重合成一条线，不能交叉
   for (let i = 0; i < P; i++) if (top[i] > bot[i]) top[i] = bot[i] = (top[i] + bot[i]) / 2;
+  edgeTop.set(top);
+  edgeBot.set(bot);
   let k = 0;
   const quad = (x0: number, y0a: number, y0b: number, x1: number, y1a: number, y1b: number) => {
     erasePos.set([x0, y0a, 0, x1, y1a, 0, x1, y1b, 0, x0, y0a, 0, x1, y1b, 0, x0, y0b, 0], k);
@@ -397,7 +470,10 @@ const openSpring = new Spring(0, { stiffness: 90, damping: 13, precision: 0.001 
 let closing = false;
 
 function setN(n: number) {
-  nSpring.target = Math.min(4, Math.max(1, n));
+  const next = Math.min(4, Math.max(1, n));
+  // 裂缝变大：边上喷一阵火星
+  if (next > nSpring.target) embers.burst(28 * (next - nSpring.target));
+  nSpring.target = next;
   document.querySelectorAll<HTMLButtonElement>("#test button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === n));
 }
 
@@ -432,7 +508,7 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
     applyZoom();
   }
   LEAD = st.lead;
-  if (st.maxFrac !== MAX_FRAC || st.fov !== HFOV) {
+  if (st.maxFrac !== MAX_FRAC || st.fov !== HFOV || st.scene !== SCENE || st.particles !== PARTICLES) {
     // 裂缝最大高度、视野决定了整个画面的尺寸：停一下手再重新载入（这首歌记在 sessionStorage 里）
     window.clearTimeout(reloadTimer);
     reloadTimer = window.setTimeout(() => {
@@ -468,7 +544,7 @@ const pitchMax = (n: number) => Math.atan(((n / 2) * CELL * 0.92) / (WALL_Z * ZO
 /** 改了镜头距离：挪镜头、调雾 */
 function applyZoom() {
   camera.position.z = WALL_Z * (ZOOM - 1);
-  if (scene.fog instanceof THREE.Fog) {
+  if (!sky && scene.fog instanceof THREE.Fog) {
     scene.fog.near = WALL_Z * ZOOM * 0.9;
     scene.fog.far = WALL_Z * (ZOOM + 1.6);
   }
@@ -617,9 +693,10 @@ async function gameStart() {
     ).finished.catch(() => {});
     bannerEl.hidden = true;
     if (!alive()) return;
-    // 再撕开
+    // 再撕开：边上喷一大阵火星
     openSpring.cfg = OPEN_CFG;
     openSpring.target = 1;
+    embers.burst(110);
     await sleep(250);
     if (!alive()) return;
     if (song.on) await startSong();
@@ -1213,6 +1290,12 @@ function frame(now: number) {
   updateFx(now);
   updateSong(n, now);
   updateRift(half, open);
+  if (PARTICLES) {
+    // 裂缝越大冒得越多
+    embers.update(dt, open, 55 + 25 * n, W, edgeY);
+    dust?.update(dt);
+  }
+  sky?.update(now / 1000);
   glowMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.9 + 0.1 * Math.sin(now / 160));
 
   renderer.clear();
@@ -1308,6 +1391,7 @@ async function start() {
   setN(1);
   layoutRows(1);
   openSpring.target = 1;
+  embers.burst(80);
   // 从选歌菜单进来的：载入那首歌；托盘里打开的：测试模式（数字键切 N）
   let pick = await invoke<Pick | null>("rift_pending").catch(() => null);
   try {
