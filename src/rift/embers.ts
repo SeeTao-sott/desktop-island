@@ -9,16 +9,21 @@ import * as THREE from "three";
 const embersVert = /* glsl */ `
   attribute float aSize;
   attribute float aAlpha;
+  attribute float aMix;
   uniform float uScale;
   varying float vA;
+  varying float vMix;
   void main() {
     vA = aAlpha;
+    vMix = aMix;
     gl_PointSize = aSize * uScale;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 const embersFrag = /* glsl */ `
   uniform vec3 uColor;
+  uniform vec3 uColor2;
   varying float vA;
+  varying float vMix;
   void main() {
     vec2 p = gl_PointCoord * 2.0 - 1.0;
     float d = dot(p, p);
@@ -27,7 +32,7 @@ const embersFrag = /* glsl */ `
     float core = exp(-d * 7.0);
     float halo = (1.0 - d) * (1.0 - d) * 0.6;
     float a = clamp((core + halo) * vA, 0.0, 1.0);
-    vec3 c = mix(uColor, vec3(1.0), core * 0.75);
+    vec3 c = mix(mix(uColor, uColor2, vMix), vec3(1.0), core * 0.75);
     gl_FragColor = vec4(c * a, a);
   }`;
 
@@ -38,6 +43,8 @@ export class Embers {
   private readonly pos: Float32Array;
   private readonly size: Float32Array;
   private readonly alpha: Float32Array;
+  /** 0 用主色、1 用副色（经典撞色时一部分火星是搭档色） */
+  private readonly mixc: Float32Array;
   private readonly vx: Float32Array;
   private readonly vy: Float32Array;
   private readonly age: Float32Array;
@@ -55,6 +62,7 @@ export class Embers {
     this.pos = new Float32Array(max * 3);
     this.size = new Float32Array(max);
     this.alpha = new Float32Array(max);
+    this.mixc = new Float32Array(max);
     this.vx = new Float32Array(max);
     this.vy = new Float32Array(max);
     this.age = new Float32Array(max);
@@ -66,8 +74,9 @@ export class Embers {
     geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute("aSize", new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute("aAlpha", new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute("aMix", new THREE.BufferAttribute(this.mixc, 1).setUsage(THREE.DynamicDrawUsage));
     this.material = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0x8caaff) }, uScale: { value: pixelRatio } },
+      uniforms: { uColor: { value: new THREE.Color(0x8caaff) }, uColor2: { value: new THREE.Color(0x8caaff) }, uScale: { value: pixelRatio } },
       vertexShader: embersVert,
       fragmentShader: embersFrag,
       transparent: true,
@@ -103,6 +112,7 @@ export class Embers {
     const out = top ? -1 : 1; // 往裂缝外面：上边往上、下边往下
     const spark = Math.random() < 0.16;
     this.kind[i] = spark ? 1 : 0;
+    this.mixc[i] = Math.random() < 0.4 ? 1 : 0;
     this.pos[i * 3] = x;
     this.pos[i * 3 + 1] = edgeY(x, top) + out * (Math.random() * 6 - 2);
     this.pos[i * 3 + 2] = 0;
@@ -168,6 +178,7 @@ export class Embers {
     geo.attributes.position.needsUpdate = true;
     geo.attributes.aSize.needsUpdate = true;
     geo.attributes.aAlpha.needsUpdate = true;
+    geo.attributes.aMix.needsUpdate = true;
   }
 }
 

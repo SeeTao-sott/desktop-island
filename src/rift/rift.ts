@@ -66,6 +66,35 @@ interface Theme {
   bg: Rgba;
 }
 const accent = new THREE.Color(0x8caaff);
+/** 搭档色：经典撞色时，右半边的靶子、裂缝外圈、一部分火星用它 */
+const partner = new THREE.Color(0xff5fd2);
+/** 经典配色表：主色色相 → 搭档色色相（0~1）。中间的颜色按相邻两项平滑过渡，壁纸色稍微变一点不会突然跳色 */
+const PAIRS: [number, number][] = [
+  [0.0, 0.56], // 红 → 蓝（红蓝对撞）
+  [0.08, 0.52], // 橙 → 青（电影的青橙色调）
+  [0.15, 0.76], // 黄 → 紫罗兰（黄紫互补）
+  [0.33, 0.9], // 绿 → 粉品红
+  [0.5, 0.87], // 青 → 品红（赛博朋克霓虹）
+  [0.62, 0.8], // 蓝 → 紫品红
+  [0.68, 0.93], // 靛紫 → 粉红
+  [0.75, 0.2], // 紫 → 黄绿（霓虹紫配荧光绿；不用金黄，免得和金色组撞）
+  [0.9, 0.51], // 粉 → 青
+  [1.0, 0.56],
+];
+function partnerHue(h: number) {
+  h = ((h % 1) + 1) % 1;
+  const i = Math.max(0, PAIRS.findIndex(([a]) => a > h) - 1);
+  const [h0, p0] = PAIRS[i];
+  const [h1, p1] = PAIRS[i + 1];
+  const k = (h - h0) / (h1 - h0);
+  // 色相是一圈：从 p0 往 p1 走较短的那一边
+  let d = p1 - p0;
+  if (d > 0.5) d -= 1;
+  if (d < -0.5) d += 1;
+  return (((p0 + d * k) % 1) + 1) % 1;
+}
+const pairColors = () => settings.colorMode === "pair";
+
 function applyTheme(t: Theme | null) {
   if (t) accent.setRGB(t.accent[0] / 255, t.accent[1] / 255, t.accent[2] / 255, THREE.SRGBColorSpace);
   const hsl = { h: 0, s: 0, l: 0 };
@@ -86,10 +115,12 @@ function applyTheme(t: Theme | null) {
   hemi.groundColor = tint(0.4, 0.05);
   key.color = accent.clone().lerp(new THREE.Color(0xffffff), 0.6);
   glowMat.uniforms.color.value = accent.clone();
-  // 副色：色相往前转一点（蓝 → 品红、青 → 蓝紫……），裂缝外面的光焰用它，和主题色撞出层次
-  glowMat.uniforms.color2.value = new THREE.Color().setHSL((hsl.h + 0.17) % 1, 0.9, 0.56);
+  // 副色：经典撞色时用配色表里的搭档色；单色时只把色相往前转一点（原来的样子）。裂缝外面的光焰、撕口用它
+  partner.setHSL(pairColors() ? partnerHue(hsl.h) : (hsl.h + 0.17) % 1, 0.9, 0.56);
+  glowMat.uniforms.color2.value = partner.clone();
   document.documentElement.style.setProperty("--w-accent", `#${accent.getHexString()}`);
   embers.material.uniforms.uColor.value.copy(accent);
+  embers.material.uniforms.uColor2.value.copy(pairColors() ? partner : accent);
   dust?.material.color.copy(accent).lerp(new THREE.Color(0xffffff), 0.5);
   if (sky) {
     // 天空之岛：亮的天光、远处才起雾（地平线的颜色）；靶墙石板保持深色，靶子才显眼
@@ -1128,6 +1159,11 @@ const infoEl = document.getElementById("info")!;
 drawCrosshair(crossEl, settings);
 buildSettings(document.getElementById("settings")!, store, (st) => {
   drawCrosshair(crossEl, st);
+  // 配色换了：按现在的壁纸主色重新算一遍
+  if (st.colorMode !== lastColorMode) {
+    lastColorMode = st.colorMode;
+    applyTheme(null);
+  }
   if (st.cols !== COLS) {
     COLS = st.cols;
     buildCells();
@@ -1159,6 +1195,7 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
 });
 
 let reloadTimer = 0;
+let lastColorMode = settings.colorMode;
 /** 上一帧的 N 和靶子位置模式（准星跟着格子用） */
 let lastN = 1;
 let lastFixed = false;
@@ -1800,9 +1837,11 @@ function updateSong(n: number, nowMs: number) {
     const ready = left <= greatW() && left >= -lateW(tg);
     // 一组的靶子：平时金色，能打时圆盘变绿、外圈保持金色（看得出是一组）
     const linked = tg.group >= 0 && (aliveInGroup.get(tg.group) ?? 0) >= 2;
-    const base = linked ? GOLD : accent;
+    // 经典撞色：左半边（红）用主色、右半边（蓝）用搭档色
+    const own = pairColors() && tg.color === 1 ? partner : accent;
+    const base = linked ? GOLD : own;
     lt.discMat.color.copy(ready ? GREEN : base);
-    lt.ringMat.color.copy(linked ? GOLD : ready ? GREEN : accent);
+    lt.ringMat.color.copy(linked ? GOLD : ready ? GREEN : own);
     lt.discMat.opacity = 0.92 * appear;
     lt.coreMat.opacity = appear;
     lt.ring.scale.setScalar(1 + 1.8 * Math.max(0, left / LEAD));
