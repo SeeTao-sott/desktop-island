@@ -979,14 +979,9 @@ const edgeY = (x: number, top: boolean) => {
 };
 
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
-/** 裂缝中心在屏幕上往上挪了多少像素（固定模式下跟着露出来的那几行走） */
-const crackShift = () => (rowCenter / CELL) * (CELL_PX / ZOOM);
-/** 准星跟着裂缝往上挪了多少角度：开枪、瞄准的射线在镜头朝向上再加这一点 */
-const crossPitch = () => Math.atan(rowCenter / (WALL_Z * ZOOM));
-let lastCrossShift = NaN;
 
 function updateRift(half: number, open: number) {
-  const cy = CY - CANVAS_TOP - crackShift();
+  const cy = CY - CANVAS_TOP;
   const top: number[] = [];
   const bot: number[] = [];
   const style = settings.riftStyle;
@@ -1003,7 +998,7 @@ function updateRift(half: number, open: number) {
   const profBot = torn ? tornBot : crack ? tearBot : classicBot;
   // 中间靶子那一段（加一点边）不让它变窄，免得把靶子切掉
   const gridHalf = (COLS / 2) * (CELL_PX / ZOOM) + 70;
-  const maxH = Math.min(cy, CANVAS_H - cy) - JAG * fac - 6;
+  const maxH = cy - JAG * fac - 6;
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
@@ -1101,7 +1096,7 @@ const ROW_ORDER = [1, 2, 0, 3];
 const rowFixed = () => settings.rowMode === "fixed";
 /** N 行时露出来的是哪几格（从下往上排好） */
 const activeSlots = (n: number) => ROW_ORDER.slice(0, Math.max(1, Math.min(4, n))).sort((a, b) => a - b);
-/** 露出来的那几行的中心高度（米，靶墙上，往上为正）：固定模式下裂缝和准星范围跟着它挪；跟着移动模式下一直是 0 */
+/** 露出来的那几行的中心高度（米，靶墙上，往上为正）：固定模式下镜头跟着它上下平移；跟着移动模式下一直是 0 */
 let rowCenter = 0;
 
 function layoutRows(n: number) {
@@ -1405,7 +1400,7 @@ document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 function shoot(whole = false) {
   // 射线从眼睛沿准星方向（不含后坐）
-  aimEuler.set(aimPitch + crossPitch(), aimYaw, 0, "YXZ");
+  aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
   aimDir.set(0, 0, -1).applyEuler(aimEuler);
   ray.set(camera.position, aimDir);
   // 右键只对金色（还成对的一组）有效：没瞄着金色靶子就什么都不做（不开枪、不算 Miss）
@@ -1755,7 +1750,7 @@ function updateSong(n: number, nowMs: number) {
   }
   // 准星落到哪个靶子上（算甩枪时间）：沿准星方向的射线，不含后坐
   if (song.live.length) {
-    aimEuler.set(aimPitch + crossPitch(), aimYaw, 0, "YXZ");
+    aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
     aimDir.set(0, 0, -1).applyEuler(aimEuler);
     ray.set(camera.position, aimDir);
     const over = ray.intersectObjects(song.live.filter((l) => !l.gone && l.seenAt === null).map((l) => l.disc), false)[0];
@@ -1923,12 +1918,9 @@ function frame(now: number) {
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
   const pm = pitchMax(n);
   aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
-  // 固定模式：准星跟着裂缝挪到露出来那几行的正中间（靶子不动，准星和裂缝一起最多挪半行）
-  const shiftPx = crackShift();
-  if (shiftPx !== lastCrossShift) {
-    lastCrossShift = shiftPx;
-    crossEl.style.top = `${CY - shiftPx}px`;
-  }
+  // 固定模式：镜头跟着露出来那几行的中心上下平移，裂缝、准星、文字都留在屏幕正中；
+  // 行数变化时整面靶墙连同靶子一起平滑地挪（最多半行），靶子之间不会相对滑动
+  camera.position.y = rowCenter;
   recoil *= Math.exp(-dt / 0.07);
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
@@ -1963,7 +1955,7 @@ function frame(now: number) {
 
   renderer.clear();
   // 3D 靶场只画裂缝实际占的那一段（上下再多几像素给参差），外面的像素不画，省显卡
-  const cy = CY - CANVAS_TOP - crackShift();
+  const cy = CY - CANVAS_TOP;
   const y0 = Math.max(0, Math.floor(Math.min(cy - half, riftTop, fisTop) - 12));
   const y1 = Math.min(CANVAS_H, Math.ceil(Math.max(cy + half, riftBot, fisBot) + 12));
   if (y1 > y0) {
