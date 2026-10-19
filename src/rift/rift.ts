@@ -664,6 +664,8 @@ const glowMat = new THREE.ShaderMaterial({
     mode: { value: 0 },
     /** 边缘电弧开关 */
     arcs: { value: 0 },
+    /** 经典撞色（1）还是单色（0）：经典样式用它决定要不要带搭档色 */
+    pairOn: { value: 1 },
   },
   vertexShader: /* glsl */ `
     attribute float aDist;
@@ -689,6 +691,7 @@ const glowMat = new THREE.ShaderMaterial({
     uniform float inW;
     uniform float mode;
     uniform float arcs;
+    uniform float pairOn;
     varying float vDist;
     varying float vX;
     varying float vEdge;
@@ -746,12 +749,17 @@ const glowMat = new THREE.ShaderMaterial({
         return;
       }
       if (mode > 0.5) {
-        // 经典：贴边一条白芯，往外很快暗下去，往里稍微多留一点光
+        // 经典：贴边一条白芯，往外很快暗下去，往里稍微多留一点光；
+        // 裂缝里那一侧是主色，往外的光晕渐渐变成副色（经典撞色时是搭档色），电弧也带一点副色
         float dn = d < 0.0 ? -d / 19.0 : d / 24.0;
         float core0 = exp(-dn * dn * 60.0);
         float halo0 = exp(-dn * 3.2) * 0.75;
-        float a0 = clamp((core0 + halo0 + arc) * st, 0.0, 1.0);
-        gl_FragColor = vec4(mix(color, vec3(1.0), clamp(core0 * 0.8 + arc, 0.0, 1.0)) * a0, a0);
+        // 撞色时外面再多一层宽一点的搭档色光晕（单色时没有，和原来一样）
+        float halo2 = d < 0.0 ? exp(d / 22.0) * 0.6 * pairOn : 0.0;
+        float a0 = clamp((core0 + halo0 + halo2 + arc) * st, 0.0, 1.0);
+        vec3 c0 = d < 0.0 ? mix(color, color2, smoothstep(1.0, 10.0, -d) * pairOn) : color;
+        c0 = mix(c0, mix(vec3(1.0), color2, 0.35 * pairOn), clamp(arc, 0.0, 1.0));
+        gl_FragColor = vec4(mix(c0, vec3(1.0), core0 * 0.8) * a0, a0);
         return;
       }
       float x = vX + vEdge * 913.0;
@@ -2015,6 +2023,7 @@ function frame(now: number) {
   fxTime += dt * settings.fxSpeed;
   glowMat.uniforms.mode.value = settings.riftStyle === "tear" ? 2 : settings.riftStyle === "crack" ? 0 : 1;
   glowMat.uniforms.arcs.value = settings.arcs ? 1 : 0;
+  glowMat.uniforms.pairOn.value = pairColors() ? 1 : 0;
   updateRift(half, open);
   const tearOn = settings.riftStyle === "crack";
   branchMesh.visible = fisMesh.visible = sideMesh.visible = tearOn;
