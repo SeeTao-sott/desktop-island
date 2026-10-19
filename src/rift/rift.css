@@ -146,6 +146,7 @@ body {
 }
 .rf-row input[type="number"],
 .rf-row input[type="text"],
+.rf-row > select,
 .rf-modes select {
   font: inherit;
   padding: 3px 6px;
@@ -173,6 +174,7 @@ body {
   flex: 1;
   min-width: 0;
 }
+.rf-row > select option,
 .rf-modes select option {
   background: #14141c;
 }
