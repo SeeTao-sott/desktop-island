@@ -23,6 +23,8 @@ const settings = store.settings;
 const MAX_FRAC = settings.maxFrac;
 /** 裂缝上下各留多少像素（格子到裂缝边） */
 const MARGIN = 26;
+/** 撕裂样式：裂缝两侧最宽能比平均宽多少（中间靶子那段不变窄） */
+const WIDE_MAX = 1.35;
 /** 裂缝边缘参差的幅度（像素） */
 const JAG = 22;
 /** 发光带往裂缝外、往裂缝里各伸多远（像素）：外面是参差的丝状光焰，里面是一层薄光 */
@@ -49,7 +51,7 @@ const CY = H / 2;
 /** 一行格子在屏幕上的高度：N=4 时正好占满 MAX_FRAC */
 const CELL_PX = (H * MAX_FRAC - MARGIN * 2) / 4;
 /** 画布：裂缝最大时的高度 + 参差 + 发光 + 火星的余量（不超过屏幕） */
-const CANVAS_H = Math.min(H, Math.ceil(H * MAX_FRAC + (JAG + GLOW + PARTICLE_PAD) * 2 + 8));
+const CANVAS_H = Math.min(H, Math.ceil(H * MAX_FRAC * WIDE_MAX + (JAG + GLOW + PARTICLE_PAD) * 2 + 8));
 const CANVAS_TOP = Math.round(CY - CANVAS_H / 2);
 
 const log = (msg: string) => invoke("rift_log", { msg }).catch(() => {});
@@ -350,33 +352,67 @@ const overlay = new THREE.Scene();
 const ortho = new THREE.OrthographicCamera(0, W, 0, CANVAS_H, -1, 1);
 
 const P = 260; // 沿水平方向的点数
-/** 固定的撕裂形状（同一次运行里不变），上下两条不一样：
- *  大、中、小三层起伏叠在一起（像纸撕开时的大弯、小折、毛边），再随机戳出一些尖角碎片 */
-function jagProfile(seed: number) {
-  let s = seed;
-  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647) * 2 - 1;
-  const layer = (period: number) => {
-    const knots = Array.from({ length: Math.ceil(P / period) + 2 }, rnd);
-    return (i: number) => {
-      const f = i / period;
-      const k = Math.floor(f);
-      const t = f - k;
-      const sm = t * t * (3 - 2 * t);
-      return knots[k] * (1 - sm) + knots[k + 1] * sm;
-    };
+/** 平滑的随机起伏：每隔 period 个点一个随机值，中间用 smoothstep 连起来 */
+function smoothLayer(rnd: () => number, period: number) {
+  const knots = Array.from({ length: Math.ceil(P / period) + 2 }, rnd);
+  return (i: number) => {
+    const f = i / period;
+    const k = Math.floor(f);
+    const t = f - k;
+    const sm = t * t * (3 - 2 * t);
+    return knots[k] * (1 - sm) + knots[k + 1] * sm;
   };
-  const big = layer(26);
-  const mid = layer(8);
-  const small = layer(2.5);
+}
+const seeded = (seed: number) => {
+  let s = seed;
+  return () => ((s = (s * 16807) % 2147483647) / 2147483647) * 2 - 1;
+};
+/** 撕裂样式的边：大弧度、连贯的起伏为主（像撕开的纸边），只有一点细毛边；
+ *  偶尔一处断口 / 尖角（占三四个点，不是一根针） */
+function tearProfile(seed: number) {
+  const rnd = seeded(seed);
+  const big = smoothLayer(rnd, 44);
+  const mid = smoothLayer(rnd, 15);
+  const fine = smoothLayer(rnd, 5);
+  const v = Array.from({ length: P }, (_, i) => big(i) * 0.62 + mid(i) * 0.3 + fine(i) * 0.07);
+  for (let i = 2; i < P - 2; i++) {
+    if (Math.abs(rnd()) < 0.975) continue;
+    const a = (0.45 + Math.abs(rnd()) * 0.45) * (rnd() < 0 ? -1 : 1);
+    v[i - 1] += a * 0.45;
+    v[i] += a;
+    v[i + 1] += a * 0.55;
+    v[i + 2] += a * 0.15;
+  }
+  return v;
+}
+/** 经典样式的边（原来那条）：120 个点的锯齿，平滑两遍再叠一点尖刺；插值到 P 个点 */
+function classicProfile(seed: number) {
+  const N = 120;
+  const rnd = seeded(seed);
+  const raw = Array.from({ length: N }, rnd);
+  const sm = raw.map((_, i) => (raw[Math.max(0, i - 1)] + raw[i] * 2 + raw[Math.min(N - 1, i + 1)]) / 4);
+  const base = sm.map((v, i) => v * 0.75 + (i % 7 === 3 ? rnd() * 0.5 : 0));
   return Array.from({ length: P }, (_, i) => {
-    let v = big(i) * 0.55 + mid(i) * 0.3 + small(i) * 0.18;
-    // 尖角碎片：只顶出一个点，左右两边陡峭
-    if (Math.abs(rnd()) > 0.93) v += rnd() * 0.9;
-    return v;
+    const f = (i / (P - 1)) * (N - 1);
+    const k = Math.min(N - 2, Math.floor(f));
+    return base[k] + (base[k + 1] - base[k]) * (f - k);
   });
 }
-const jagTop = jagProfile(9137);
-const jagBot = jagProfile(4211);
+/** 撕裂样式：沿横向宽窄不一（0.55 ~ WIDE_MAX 倍），上下两条各自变 */
+function widthProfile(seed: number) {
+  const rnd = seeded(seed);
+  const w = smoothLayer(rnd, 62);
+  const w2 = smoothLayer(rnd, 23);
+  return Array.from({ length: P }, (_, i) => Math.min(WIDE_MAX, Math.max(0.55, 0.97 + w(i) * 0.36 + w2(i) * 0.1)));
+}
+const tearTop = tearProfile(9137);
+const tearBot = tearProfile(4211);
+const classicTop = classicProfile(9137);
+const classicBot = classicProfile(4211);
+const wideTop = widthProfile(733);
+const wideBot = widthProfile(1907);
+/** 撕裂样式的边上光焰、电弧走的时间（按"特效速度"累积，改速度时不会跳） */
+let fxTime = 0;
 // 擦除：上下两块（画布顶到上边缘、下边缘到画布底），写入完全透明
 const eraseGeo = new THREE.BufferGeometry();
 const erasePos = new Float32Array((P - 1) * 2 * 6 * 3);
@@ -413,6 +449,7 @@ const glowMat = new THREE.ShaderMaterial({
     time: { value: 0 },
     outW: { value: GLOW },
     inW: { value: GLOW_IN },
+    classic: { value: 0 },
   },
   vertexShader: /* glsl */ `
     attribute float aDist;
@@ -433,6 +470,7 @@ const glowMat = new THREE.ShaderMaterial({
     uniform float time;
     uniform float outW;
     uniform float inW;
+    uniform float classic;
     varying float vDist;
     varying float vX;
     varying float vEdge;
@@ -459,6 +497,15 @@ const glowMat = new THREE.ShaderMaterial({
     }
     void main() {
       float d = vDist;
+      if (classic > 0.5) {
+        // 经典：贴边一条白芯，往外很快暗下去，往里稍微多留一点光
+        float dn = d < 0.0 ? -d / 19.0 : d / 24.0;
+        float core0 = exp(-dn * dn * 60.0);
+        float halo0 = exp(-dn * 3.2) * 0.75;
+        float a0 = clamp((core0 + halo0) * strength, 0.0, 1.0);
+        gl_FragColor = vec4(mix(color, vec3(1.0), core0 * 0.8) * a0, a0);
+        return;
+      }
       float x = vX + vEdge * 913.0;
       float t = time;
       // 裂缝外：一缕一缕往外飘的丝状光焰，伸出去多远沿着边起伏
@@ -509,28 +556,41 @@ const edgeY = (x: number, top: boolean) => {
 };
 
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
-function updateRift(half: number, open: number, now: number) {
+function updateRift(half: number, open: number) {
   const cy = CY - CANVAS_TOP;
   const top: number[] = [];
   const bot: number[] = [];
-  const t = now / 1000;
-  const jag = JAG * Math.min(1, open * 1.5);
-  // 边上细细地抖（能量在噼啪作响）
-  const buzz = 2.2 * Math.min(1, open * 2);
+  const tear = settings.riftStyle === "tear";
+  const t = fxTime;
+  const jag = JAG * Math.min(1, open * 1.5) * (tear ? 1 : 16 / JAG);
+  // 边上细细地抖（能量在噼啪作响）；经典样式不抖
+  const buzz = tear ? 1.6 * Math.min(1, open * 2) : 0;
+  // 中间靶子那一段（加一点边）不让它变窄，免得把靶子切掉
+  const gridHalf = (COLS / 2) * (CELL_PX / ZOOM) + 70;
+  const maxH = cy - JAG - 6;
   for (let i = 0; i < P; i++) {
     const u = i / (P - 1);
     // 两头稍微收窄一点，像从中间撕开
     const taper = 0.72 + 0.28 * Math.sin(Math.PI * u);
+    let wt = 1;
+    let wb = 1;
+    if (tear) {
+      const m = 1 - smoothstep(gridHalf, gridHalf + 160, Math.abs(u * W - W / 2));
+      wt = wideTop[i] * (1 - m) + Math.max(1, wideTop[i] * 0.3 + 0.75) * m;
+      wb = wideBot[i] * (1 - m) + Math.max(1, wideBot[i] * 0.3 + 0.75) * m;
+    }
     const h = half * taper;
-    const j1 = Math.sin(i * 1.73 + t * 9) * Math.sin(i * 0.37 - t * 5.3) * buzz;
-    const j2 = Math.sin(i * 2.11 - t * 8.1) * Math.sin(i * 0.53 + t * 4.7) * buzz;
-    top.push(cy - h + jagTop[i] * jag + j1);
-    bot.push(cy + h + jagBot[i] * jag + j2);
+    const j1 = buzz && Math.sin(i * 1.73 + t * 9) * Math.sin(i * 0.37 - t * 5.3) * buzz;
+    const j2 = buzz && Math.sin(i * 2.11 - t * 8.1) * Math.sin(i * 0.53 + t * 4.7) * buzz;
+    top.push(cy - Math.min(maxH, h * wt) + (tear ? tearTop : classicTop)[i] * jag + j1);
+    bot.push(cy + Math.min(maxH, h * wb) + (tear ? tearBot : classicBot)[i] * jag + j2);
   }
   // 合上时上下边重合成一条线，不能交叉
   for (let i = 0; i < P; i++) if (top[i] > bot[i]) top[i] = bot[i] = (top[i] + bot[i]) / 2;
   edgeTop.set(top);
   edgeBot.set(bot);
+  riftTop = Math.min(...top);
+  riftBot = Math.max(...bot);
   let k = 0;
   const quad = (x0: number, y0a: number, y0b: number, x1: number, y1a: number, y1b: number) => {
     erasePos.set([x0, y0a, 0, x1, y1a, 0, x1, y1b, 0, x0, y0a, 0, x1, y1b, 0, x0, y0b, 0], k);
@@ -551,6 +611,13 @@ function updateRift(half: number, open: number, now: number) {
   glowGeo.attributes.position.needsUpdate = true;
 }
 const e0 = (edge: number, i: number) => (edge * P * 2 + i * 2) * 3;
+const smoothstep = (a: number, b: number, x: number) => {
+  const k = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return k * k * (3 - 2 * k);
+};
+/** 这一帧裂缝最上、最下到哪（画布像素）：3D 场景只画这一段 */
+let riftTop = 0;
+let riftBot = 0;
 
 // ---------------- N 和开合 ----------------
 /** N 的连续值：裂缝高度、各行位置都跟着它（临界阻尼，约 0.5 秒到位） */
@@ -1379,7 +1446,9 @@ function frame(now: number) {
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
   updateFx(now);
   updateSong(n, now);
-  updateRift(half, open, now);
+  fxTime += dt * settings.fxSpeed;
+  glowMat.uniforms.classic.value = settings.riftStyle === "tear" ? 0 : 1;
+  updateRift(half, open);
   if (PARTICLES) {
     // 裂缝越大冒得越多
     embers.update(dt, open, 55 + 25 * n, W, edgeY);
@@ -1387,13 +1456,13 @@ function frame(now: number) {
   }
   sky?.update(now / 1000);
   glowMat.uniforms.strength.value = Math.min(1, open * 1.4) * (0.9 + 0.1 * Math.sin(now / 160));
-  glowMat.uniforms.time.value = now / 1000;
+  glowMat.uniforms.time.value = fxTime;
 
   renderer.clear();
   // 3D 靶场只画裂缝实际占的那一段（上下再多几像素给参差），外面的像素不画，省显卡
   const cy = CY - CANVAS_TOP;
-  const y0 = Math.max(0, Math.floor(cy - half - JAG - 2));
-  const y1 = Math.min(CANVAS_H, Math.ceil(cy + half + JAG + 2));
+  const y0 = Math.max(0, Math.floor(Math.min(cy - half, riftTop) - JAG - 2));
+  const y1 = Math.min(CANVAS_H, Math.ceil(Math.max(cy + half, riftBot) + JAG + 2));
   if (y1 > y0) {
     renderer.setScissorTest(true);
     renderer.setScissor(0, CANVAS_H - y1, W, y1 - y0); // WebGL 的 y 从下往上数
