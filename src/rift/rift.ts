@@ -981,6 +981,9 @@ const edgeY = (x: number, top: boolean) => {
 /** 按当前裂缝的半高更新擦除区域和发光带（open：0 合上 ~ 1 全开） */
 /** 裂缝中心在屏幕上往上挪了多少像素（固定模式下跟着露出来的那几行走） */
 const crackShift = () => (rowCenter / CELL) * (CELL_PX / ZOOM);
+/** 准星跟着裂缝往上挪了多少角度：开枪、瞄准的射线在镜头朝向上再加这一点 */
+const crossPitch = () => Math.atan(rowCenter / (WALL_Z * ZOOM));
+let lastCrossShift = NaN;
 
 function updateRift(half: number, open: number) {
   const cy = CY - CANVAS_TOP - crackShift();
@@ -1402,7 +1405,7 @@ document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 function shoot(whole = false) {
   // 射线从眼睛沿准星方向（不含后坐）
-  aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
+  aimEuler.set(aimPitch + crossPitch(), aimYaw, 0, "YXZ");
   aimDir.set(0, 0, -1).applyEuler(aimEuler);
   ray.set(camera.position, aimDir);
   // 右键只对金色（还成对的一组）有效：没瞄着金色靶子就什么都不做（不开枪、不算 Miss）
@@ -1752,7 +1755,7 @@ function updateSong(n: number, nowMs: number) {
   }
   // 准星落到哪个靶子上（算甩枪时间）：沿准星方向的射线，不含后坐
   if (song.live.length) {
-    aimEuler.set(aimPitch, aimYaw, 0, "YXZ");
+    aimEuler.set(aimPitch + crossPitch(), aimYaw, 0, "YXZ");
     aimDir.set(0, 0, -1).applyEuler(aimEuler);
     ray.set(camera.position, aimDir);
     const over = ray.intersectObjects(song.live.filter((l) => !l.gone && l.seenAt === null).map((l) => l.disc), false)[0];
@@ -1919,9 +1922,13 @@ function frame(now: number) {
   layoutRows(n);
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
   const pm = pitchMax(n);
-  // 固定模式下露出来的几行不一定正好在视线高度：上下范围以它们的中心为准
-  const pc = Math.atan(rowCenter / (WALL_Z * ZOOM));
-  aimPitch = Math.min(pc + pm, Math.max(pc - pm, aimPitch));
+  aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  // 固定模式：准星跟着裂缝挪到露出来那几行的正中间（靶子不动，准星和裂缝一起最多挪半行）
+  const shiftPx = crackShift();
+  if (shiftPx !== lastCrossShift) {
+    lastCrossShift = shiftPx;
+    crossEl.style.top = `${CY - shiftPx}px`;
+  }
   recoil *= Math.exp(-dt / 0.07);
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
