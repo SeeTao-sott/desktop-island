@@ -33,6 +33,8 @@ export interface AimSettings {
   pairGrace: number;
   /** 裂缝变大变小时："follow" 靶子跟着上下移动（各行一直居中）、"fixed" 靶子不动（裂缝自己挪一点） */
   rowMode: string;
+  /** 行的布局变了（裂缝变大变小）时，视角自动跟着挪，准星一直停在原来瞄着的那一格上 */
+  aimFollow: boolean;
   /** 裂缝里的场景："range" 靶场、"sky" 天空之岛 */
   scene: string;
   /** 裂缝边飘出的粒子、裂缝里的浮尘 */
@@ -56,11 +58,11 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
-export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace", "rowMode"] as const;
+export const MODE_KEYS = ["cols", "rows", "zoom", "size", "lead", "window", "pairGrace", "rowMode", "aimFollow"] as const;
 type ModeKey = (typeof MODE_KEYS)[number];
 export interface Mode {
   name: string;
@@ -94,6 +96,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.pairGrace = Math.min(500, Math.max(0, Number.isFinite(Number(s.pairGrace)) ? Number(s.pairGrace) : DEFAULTS.pairGrace));
     if (!SCENES.some(([k]) => k === s.scene)) s.scene = DEFAULTS.scene;
     if (s.rowMode !== "fixed") s.rowMode = "follow";
+    s.aimFollow = s.aimFollow !== false;
     s.particles = s.particles !== false;
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
@@ -217,7 +220,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot" | "particles" | "arcs") => {
+  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -302,7 +305,8 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.rowMode = rowSel.value;
     onChange(s);
   });
-  row("◆ 靶子位置", rowSel, "裂缝变大变小时：跟着移动 = 各行一直居中、靶子会上下挪；固定不动 = 靶子留在原处，裂缝自己挪一点");
+  row("◆ 靶子位置", rowSel, "裂缝变大变小时：跟着移动 = 各行一直居中、靶子会上下挪；固定不动 = 整面靶墙一起平移，靶子之间不相对滑动");
+  row("◆ 准星跟着格子", check("aimFollow"), "行的位置变了时视角自动跟着挪，准星一直停在原来瞄着的那一格；那一行收起来了就停在最近的一行");
   row("裂缝最大高度", num("maxFrac", 0.3, 0.8, 0.05), "占屏幕高度的比例；改了会重新打开一下");
   row("视野 FOV", num("fov", 70, 120, 1), "水平视野（度），Valorant 是 103；改了会重新打开一下");
   const sceneSel = document.createElement("select");

@@ -1159,6 +1159,9 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
 });
 
 let reloadTimer = 0;
+/** 上一帧的 N 和靶子位置模式（准星跟着格子用） */
+let lastN = 1;
+let lastFixed = false;
 /** 准星指向（弧度）：yaw 左右、pitch 上下（往上为正） */
 let aimYaw = 0;
 let aimPitch = 0;
@@ -1914,6 +1917,11 @@ function frame(now: number) {
   const open = Math.max(0, openSpring.value);
   const half = ((n * CELL_PX) / ZOOM / 2 + MARGIN) * open;
   halfNow = half;
+  // 准星跟着格子：布局变之前，先记下准星指在"第几行的哪个位置"（行坐标，从下往上，0 = 最下面那行的中心）
+  const D = WALL_Z * ZOOM;
+  const fixed = rowFixed();
+  const yw = camera.position.y + Math.tan(aimPitch) * D;
+  const q = fixed ? yw / CELL + 1.5 : yw / CELL + (lastN - 1) / 2;
   layoutRows(n);
   // 视角：上下范围跟着 N 变（N 变小时慢慢把准星收回范围内），再叠上后坐
   const pm = pitchMax(n);
@@ -1921,6 +1929,14 @@ function frame(now: number) {
   // 固定模式：镜头跟着露出来那几行的中心上下平移，裂缝、准星、文字都留在屏幕正中；
   // 行数变化时整面靶墙连同靶子一起平滑地挪（最多半行），靶子之间不会相对滑动
   camera.position.y = rowCenter;
+  // 布局变了：视角跟着挪，让准星回到同一行的同一个位置（再按新的上下范围夹一下）
+  if (settings.aimFollow && playing && (n !== lastN || fixed !== lastFixed)) {
+    const yw2 = (fixed ? q - 1.5 : q - (n - 1) / 2) * CELL;
+    aimPitch = Math.atan((yw2 - rowCenter) / D);
+    aimPitch = Math.min(pm, Math.max(-pm, aimPitch));
+  }
+  lastN = n;
+  lastFixed = fixed;
   recoil *= Math.exp(-dt / 0.07);
   camera.rotation.set(aimPitch + recoil, aimYaw, 0, "YXZ");
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
