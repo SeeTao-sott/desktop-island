@@ -45,6 +45,8 @@ export interface AimSettings {
   fxSpeed: number;
   /** 沿着裂缝边跳动的电弧 */
   arcs: boolean;
+  /** 配色："pair" 经典撞色（主题色 + 按经典配色表找的搭档色）、"mono" 单色（原来的样子） */
+  colorMode: string;
 }
 
 export const RIFT_STYLES: [string, string][] = [
@@ -58,7 +60,7 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair" };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -101,6 +103,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
     s.arcs = s.arcs === true;
+    if (s.colorMode !== "mono") s.colorMode = "pair";
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -370,6 +373,17 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   });
   row("裂缝样式", styleSel, "撕裂：大锯齿、发亮的撕口；裂纹：主裂缝裂出几道窄而曲折的分支、带光焰；经典：一条整齐的发光边");
   row("边缘电弧", check("arcs"), "沿着裂缝边一段一段跳动的电弧（三种样式都能开）");
+  const colorSel = document.createElement("select");
+  for (const [k, label] of [
+    ["pair", "经典撞色"],
+    ["mono", "单色"],
+  ])
+    colorSel.add(new Option(label, k, false, k === s.colorMode));
+  colorSel.addEventListener("change", () => {
+    s.colorMode = colorSel.value;
+    onChange(s);
+  });
+  row("配色", colorSel, "经典撞色：按壁纸主色找经典搭档色（红配蓝、橙配青、黄配紫……），裂缝里的场景、格子、靶子都换成它（红色壁纸 → 蓝色靶场），裂缝外圈、一部分火星也用它；单色：全用壁纸主色");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   page("aim");
