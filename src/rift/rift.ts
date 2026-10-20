@@ -376,6 +376,8 @@ interface LiveTarget {
   seenAt: number | null;
   /** 固定模式下这个靶子待在哪一格（从下往上 0~3），出现时定好，之后不变 */
   slot: number;
+  /** 自动模式已经对它开过枪（靶子对象会循环再用，拿出来时清掉） */
+  autoShot: boolean;
 }
 const targetLayer = new THREE.Group();
 scene.add(targetLayer);
@@ -396,11 +398,12 @@ function takeTarget(tg: Target): LiveTarget {
     core.renderOrder = 11;
     ring.renderOrder = 12;
     group.add(disc, core, ring);
-    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null, slot: 1 };
+    lt = { tg, group, disc, discMat, coreMat, ring, ringMat, gone: 0, spawnAt: 0, seenAt: null, slot: 1, autoShot: false };
   }
   lt.tg = tg;
   lt.gone = 0;
   lt.seenAt = null;
+  lt.autoShot = false;
   // 颜色每帧在 updateSong 里定（一组里两个都还在才是金色）
   lt.discMat.color.copy(rift);
   lt.ringMat.color.copy(rift);
@@ -1904,7 +1907,6 @@ function updateSong(n: number, nowMs: number) {
 // 准星自己转去瞄"拍点最近、还没打掉"的那个靶子：离拍点越近转得越快（像人甩枪，不是瞬移），
 // 拍点那一刻对正开枪；还成对的金色组用右键整组打。只转自己游戏里的镜头，不碰系统鼠标。
 const autoTmp = new THREE.Vector3();
-const autoFired = new WeakSet<LiveTarget>();
 /** 从镜头看过去，瞄准这个靶子要的 yaw / pitch */
 function aimAt(lt: LiveTarget): [number, number] {
   lt.disc.getWorldPosition(autoTmp).sub(camera.position);
@@ -1914,7 +1916,7 @@ function updateAuto(dt: number) {
   if (!settings.auto || !playing || !song.running || song.paused) return;
   song.autoUsed = true;
   const now = songTime();
-  const alive = song.live.filter((l) => !l.gone && !autoFired.has(l)).sort((a, b) => a.tg.t - b.tg.t);
+  const alive = song.live.filter((l) => !l.gone && !l.autoShot).sort((a, b) => a.tg.t - b.tg.t);
   const next = alive[0];
   if (!next) {
     // 没有靶子：慢慢回到正中
@@ -1935,8 +1937,8 @@ function updateAuto(dt: number) {
     aimYaw = ty;
     aimPitch = tp;
     const linked = next.tg.group >= 0 && song.live.filter((l) => !l.gone && l.tg.group === next.tg.group).length >= 2;
-    autoFired.add(next);
-    if (linked) for (const l of song.live) if (l.tg.group === next.tg.group) autoFired.add(l);
+    next.autoShot = true;
+    if (linked) for (const l of song.live) if (l.tg.group === next.tg.group) l.autoShot = true;
     shoot(linked);
   }
 }
