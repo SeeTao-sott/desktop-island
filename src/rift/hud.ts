@@ -47,6 +47,8 @@ export interface AimSettings {
   arcs: boolean;
   /** 配色："pair" 经典撞色（主题色 + 按经典配色表找的搭档色）、"mono" 单色（原来的样子） */
   colorMode: string;
+  /** 自动模式：准星自己转去瞄最近的靶子、在拍点开枪（看谱、找感觉用；这一局不记最高分） */
+  auto: boolean;
 }
 
 export const RIFT_STYLES: [string, string][] = [
@@ -60,7 +62,7 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair" };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair", auto: false };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -103,6 +105,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     if (!RIFT_STYLES.some(([k]) => k === s.riftStyle)) s.riftStyle = DEFAULTS.riftStyle;
     s.fxSpeed = Math.min(2, Math.max(0.1, Number(s.fxSpeed) || DEFAULTS.fxSpeed));
     s.arcs = s.arcs === true;
+    s.auto = s.auto === true;
     if (s.colorMode !== "mono") s.colorMode = "pair";
     return s;
   } catch {
@@ -268,7 +271,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow") => {
+  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow" | "auto") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -335,6 +338,9 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     onChange(s);
   });
   row("模式名字", name);
+  const autoBox = check("auto");
+  autoBox.id = "rf-auto"; // 游戏里按 F2 开关时同步这个勾
+  row("自动模式", autoBox, "准星自己转去瞄靶子、在拍点开枪（金色组用右键整组打）；开着时鼠标不起作用，这一局不记最高分。游戏中按 F2 也能开关");
 
   row("◆ 靶墙列数", num("cols", 4, 9, 1), "4~9 列；红靶在左半边，蓝靶在右半边");
   row("◆ 最多几行", num("rows", 1, 4, 1), "1~4 行；高潮时裂缝最多开到这么多行");

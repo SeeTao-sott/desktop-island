@@ -1458,7 +1458,7 @@ function nowPlaying(isPlaying: boolean) {
 }
 
 document.addEventListener("mousemove", (e) => {
-  if (!playing) return;
+  if (!playing || settings.auto) return;
   // Valorant：每个移动单位转 0.07 × 灵敏度 度
   const k = ((0.07 * settings.sens) * Math.PI) / 180;
   aimYaw = Math.min(yawMax(), Math.max(-yawMax(), aimYaw - e.movementX * k));
@@ -1471,7 +1471,7 @@ const aimEuler = new THREE.Euler();
 const shotColor = new THREE.Color(0xffffff);
 // 左键：打一个；右键：打中一组（金色）里的一个，整组都算
 document.addEventListener("mousedown", (e) => {
-  if (!playing || (e.button !== 0 && e.button !== 2)) return;
+  if (!playing || settings.auto || (e.button !== 0 && e.button !== 2)) return;
   shoot(e.button === 2);
 });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -1566,6 +1566,8 @@ const song = {
   flicks: [] as number[],
   /** 上一枪的时刻（歌曲秒），算"从上一枪到准星落上下一个靶子"用 */
   lastShot: -Infinity,
+  /** 这一局用过自动模式（结算不记最高分） */
+  autoUsed: false,
 };
 let actx: AudioContext | null = null;
 let source: AudioBufferSourceNode | null = null;
@@ -1693,6 +1695,7 @@ async function startSong() {
     devs: [],
     flicks: [],
     lastShot: -Infinity,
+    autoUsed: settings.auto,
   });
   showPrompt("");
   resultEl.hidden = true;
@@ -1755,7 +1758,7 @@ function accuracy() {
 function showLive() {
   const c = song.count;
   liveEl.hidden = !song.running;
-  liveEl.textContent = `准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
+  liveEl.textContent = `${settings.auto ? "自动　" : ""}准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
 }
 
 
@@ -1771,7 +1774,8 @@ function showResult() {
   const key = `${song.pick?.id}|${song.pick?.difficulty}`;
   const best = store.best;
   const prev = best[key] ?? 0;
-  const record = score > prev;
+  // 自动模式打的不算纪录
+  const record = !song.autoUsed && score > prev;
   if (record) {
     best[key] = score;
     saveStore(store);
@@ -1786,7 +1790,7 @@ function showResult() {
     resultEl.appendChild(d);
     return d;
   };
-  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}`);
+  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}${song.autoUsed ? " · 自动（不记最高分）" : ""}`);
   add("r-score", score.toLocaleString("en-US"));
   if (record) add("r-record", prev ? `新纪录！（之前 ${prev.toLocaleString("en-US")}）` : "新纪录！");
   else add("r-best", `最高分 ${prev.toLocaleString("en-US")}`);
@@ -1893,6 +1897,47 @@ function updateSong(n: number, nowMs: number) {
   if (!song.finished && song.next >= song.targets.length && song.live.length === 0 && now > lastT + 1.5) {
     song.finished = true;
     showResult();
+  }
+}
+
+// ---------------- 自动模式 ----------------
+// 准星自己转去瞄"拍点最近、还没打掉"的那个靶子：离拍点越近转得越快（像人甩枪，不是瞬移），
+// 拍点那一刻对正开枪；还成对的金色组用右键整组打。只转自己游戏里的镜头，不碰系统鼠标。
+const autoTmp = new THREE.Vector3();
+const autoFired = new WeakSet<LiveTarget>();
+/** 从镜头看过去，瞄准这个靶子要的 yaw / pitch */
+function aimAt(lt: LiveTarget): [number, number] {
+  lt.disc.getWorldPosition(autoTmp).sub(camera.position);
+  return [Math.atan2(-autoTmp.x, -autoTmp.z), Math.atan2(autoTmp.y, Math.hypot(autoTmp.x, autoTmp.z))];
+}
+function updateAuto(dt: number) {
+  if (!settings.auto || !playing || !song.running || song.paused) return;
+  song.autoUsed = true;
+  const now = songTime();
+  const alive = song.live.filter((l) => !l.gone && !autoFired.has(l)).sort((a, b) => a.tg.t - b.tg.t);
+  const next = alive[0];
+  if (!next) {
+    // 没有靶子：慢慢回到正中
+    const k = 1 - Math.exp(-dt / 0.35);
+    aimYaw -= aimYaw * k;
+    aimPitch -= aimPitch * k;
+    return;
+  }
+  const [ty, tp] = aimAt(next);
+  const left = next.tg.t - now;
+  // 时间常数：剩的时间越少转得越快（最快 12ms，最慢 90ms）
+  const tau = Math.max(0.012, Math.min(0.09, left / 3));
+  const k = 1 - Math.exp(-dt / tau);
+  aimYaw += (ty - aimYaw) * k;
+  aimPitch += (tp - aimPitch) * k;
+  if (left <= 0) {
+    // 拍点到了：对正，开枪
+    aimYaw = ty;
+    aimPitch = tp;
+    const linked = next.tg.group >= 0 && song.live.filter((l) => !l.gone && l.tg.group === next.tg.group).length >= 2;
+    autoFired.add(next);
+    if (linked) for (const l of song.live) if (l.tg.group === next.tg.group) autoFired.add(l);
+    shoot(linked);
   }
 }
 
@@ -2021,6 +2066,7 @@ function frame(now: number) {
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
   updateFx(now);
   updateSong(n, now);
+  updateAuto(dt);
   fxTime += dt * settings.fxSpeed;
   glowMat.uniforms.mode.value = settings.riftStyle === "tear" ? 2 : settings.riftStyle === "crack" ? 0 : 1;
   glowMat.uniforms.arcs.value = settings.arcs ? 1 : 0;
@@ -2108,6 +2154,18 @@ window.addEventListener("keydown", (e) => {
   // P：暂停（放开鼠标锁定，pointerlockchange 里弹出暂停菜单）
   if (k === "p" && playing && song.running && !song.finished && !e.repeat) {
     document.exitPointerLock();
+    return;
+  }
+  // F2：自动模式开关（设置里也能改）
+  if (e.key === "F2" && !e.repeat) {
+    e.preventDefault();
+    settings.auto = !settings.auto;
+    if (settings.auto && song.running) song.autoUsed = true;
+    const box = document.getElementById("rf-auto") as HTMLInputElement | null;
+    if (box) box.checked = settings.auto;
+    saveStore(store);
+    showLive();
+    log(`自动模式：${settings.auto ? "开" : "关"}`);
     return;
   }
   if (song.on) {
