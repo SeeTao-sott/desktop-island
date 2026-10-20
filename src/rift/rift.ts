@@ -1873,6 +1873,7 @@ function updateSong(n: number, nowMs: number) {
       // 没打：Miss，变暗淡出
       lt.gone = nowMs;
       lt.discMat.color.copy(DIM.copy(rift).multiplyScalar(0.35));
+      if (settings.auto) log(`[自动 Miss] 过期没打到（拍点 ${tg.t.toFixed(3)}s，${lt.autoShot ? "开过枪但射线没打中它" : "还没轮到它开枪"}）`);
       judge("miss");
       continue;
     }
@@ -1985,6 +1986,8 @@ function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = t
   const d = Math.abs(signed);
   // 太早（超出前窗口）或太晚（超出后窗口，一对靶子含宽限）算 Miss
   const j: Judge = d <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(lt.tg) ? "great" : "miss";
+  // 自动模式本该全中：要是 Miss 了，记下来看是哪里的问题
+  if (settings.auto && j === "miss") log(`[自动 Miss] 开枪时离拍点 ${(signed * 1000).toFixed(0)}ms（拍点 ${lt.tg.t.toFixed(3)}s，${lt.tg.group >= 0 ? "金色组" : "单个"}）`);
   if (j !== "miss") {
     song.devs.push(signed);
     // 甩枪：从上一枪（或靶子出现，取较晚的）到准星第一次落上这个靶子
@@ -2004,25 +2007,42 @@ function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = t
 }
 
 /** 准星现在是不是瞄着金色靶子（一组里至少两个都还在） */
+/** 准星下面的靶子。靶子密的时候可能好几个叠在一起（时间不同），
+ *  选离自己拍点最近的那个（不是离镜头最近的那个），叠着的靶子才能按顺序打掉、不会打到还没到时候的 */
+function underAim(): { lt: LiveTarget; point: THREE.Vector3 } | null {
+  const alive = song.live.filter((l) => !l.gone);
+  const hits = ray.intersectObjects(alive.map((l) => l.disc), false);
+  if (!hits.length) return null;
+  const now = songTime();
+  let best: { lt: LiveTarget; point: THREE.Vector3 } | null = null;
+  let bestD = Infinity;
+  for (const h of hits) {
+    const lt = alive.find((l) => l.disc === h.object);
+    if (!lt) continue;
+    const d = Math.abs(lt.tg.t - now);
+    if (d < bestD) {
+      bestD = d;
+      best = { lt, point: h.point };
+    }
+  }
+  return best;
+}
+
 function aimingAtGold(): boolean {
   if (!song.running) return false;
-  const alive = song.live.filter((l) => !l.gone);
-  const hit = ray.intersectObjects(alive.map((l) => l.disc), false)[0];
-  if (!hit) return false;
-  const lt = alive.find((l) => l.disc === hit.object);
-  if (!lt || lt.tg.group < 0) return false;
-  return alive.filter((l) => l.tg.group === lt.tg.group).length >= 2;
+  const u = underAim();
+  if (!u || u.lt.tg.group < 0) return false;
+  return song.live.filter((l) => !l.gone && l.tg.group === u.lt.tg.group).length >= 2;
 }
 
 /** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定） */
 function shootTargets(whole = false): boolean {
   if (!song.running || song.live.length === 0) return false;
-  const discs = song.live.filter((l) => !l.gone).map((l) => l.disc);
-  const hit = ray.intersectObjects(discs, false)[0];
-  if (!hit) return false;
-  const lt = song.live.find((l) => l.disc === hit.object)!;
+  const u = underAim();
+  if (!u) return false;
+  const lt = u.lt;
   const now = songTime();
-  hitOne(lt, hit.point, now);
+  hitOne(lt, u.point, now);
   if (whole && lt.tg.group >= 0) {
     for (const other of song.live.filter((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group)) hitOne(other, null, now, false);
   }
