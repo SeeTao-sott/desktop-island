@@ -49,6 +49,8 @@ export interface AimSettings {
   colorMode: string;
   /** 自动模式：准星自己转去瞄最近的靶子、在拍点开枪（看谱、找感觉用；这一局不记最高分） */
   auto: boolean;
+  /** 主色从哪来："wallpaper" 壁纸、"cover" 这首歌的封面（取不到时退回壁纸） */
+  colorSource: string;
 }
 
 export const RIFT_STYLES: [string, string][] = [
@@ -62,7 +64,7 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair", auto: false };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair", auto: false, colorSource: "wallpaper" };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -107,6 +109,7 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.arcs = s.arcs === true;
     s.auto = s.auto === true;
     if (s.colorMode !== "mono") s.colorMode = "pair";
+    if (s.colorSource !== "cover") s.colorSource = "wallpaper";
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -389,6 +392,17 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     s.colorMode = colorSel.value;
     onChange(s);
   });
+  const srcSel = document.createElement("select");
+  for (const [k, label] of [
+    ["wallpaper", "壁纸"],
+    ["cover", "歌曲封面"],
+  ])
+    srcSel.add(new Option(label, k, false, k === s.colorSource));
+  srcSel.addEventListener("change", () => {
+    s.colorSource = srcSel.value;
+    onChange(s);
+  });
+  row("主色来源", srcSel, "壁纸：跟着桌面壁纸的颜色；歌曲封面：每首歌按自己的封面（osu! 是背景图）取主色，没有封面时用壁纸色");
   row("配色", colorSel, "经典撞色：按壁纸主色找经典搭档色（红配蓝、橙配青、黄配紫……），裂缝里的场景、格子、靶子都换成它（红色壁纸 → 蓝色靶场），裂缝外圈、一部分火星也用它；单色：全用壁纸主色");
   row("裂缝特效速度", num("fxSpeed", 0.1, 2, 0.1), "光焰流动、电弧、边缘抖动的快慢（1 = 原速）");
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
