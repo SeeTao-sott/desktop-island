@@ -1058,7 +1058,11 @@
         combo: 0,
         cnt: { perfect: 0, great: 0, miss: 0 },
         taps: [],
+        // 上一次点中的金色组（另外几个已经打掉、点中的那个留着）：紧接着再点一下 = 整组打完
+        goldTap: null,
       };
+      /** 金色组连点两下：两下之间最多隔多久（毫秒） */
+      const DOUBLE_MS = 350;
       const ROW_ORDER = [1, 2, 0, 3];
       const nAt = (steps, t) => {
         let n = steps[0]?.n ?? 1;
@@ -1137,6 +1141,7 @@
         G.goneAt = new Float64Array(G.tg.length);
         G.next = 0;
         G.live = [];
+        G.goldTap = null;
         G.combo = 0;
         G.cnt = { perfect: 0, great: 0, miss: 0 };
         G.frozen = -1e9;
@@ -1309,9 +1314,20 @@
           if (!G.plan || G.state.phase !== "playing" || G.state.anchor == null) return;
           const now = songNow();
           const tapT = now - tapComp / 1000;
-          for (const t of e.changedTouches) {
+          // 判一个靶子（at：按哪一刻判定）
+          const hit = (i, at) => {
+            const x = G.tg[i];
+            const signed = at - x[0];
+            const j = Math.abs(signed) <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(x) ? "great" : "miss";
+            G.st[i] = j === "miss" ? 2 : 1;
+            G.goneAt[i] = performance.now();
+            localJudge(j);
+            api("/api/rhythm/hit", { method: "POST", body: JSON.stringify({ i, t: at }) }).catch(() => {});
+          };
+          const group = (gi) => G.live.filter((i) => G.st[i] === 0 && G.tg[i][4] === gi);
+          // 先把每根手指下面的靶子找出来（手指下面格子大小的范围内还没打的，选离自己拍点最近的那个）
+          const picks = [...e.changedTouches].map((t) => {
             const { x: px, y: py } = toLocal(t);
-            // 手指下面（格子大小的范围内）还没打的靶子里，选离自己拍点最近的那个
             let best = -1,
               bd = Infinity;
             for (const i of G.live) {
@@ -1324,17 +1340,37 @@
                 best = i;
               }
             }
+            return { px, py, best };
+          });
+          for (const { px, py, best } of picks) {
+            if (best >= 0 && G.st[best]) continue; // 同一下里别的手指已经把它打掉了
+            const gi = best >= 0 ? G.tg[best][4] : -1;
+            // 连点的第二下：点在留着的那个上，或者手快了点在这一组旁边空的地方，都算把这一组打完，按第一下的时刻判定
+            const g = G.goldTap;
+            if (g && performance.now() - g.at <= DOUBLE_MS) {
+              const rest = group(g.group);
+              const near = best < 0 && g.spots.some((s) => Math.hypot(px - s.x, py - s.y) <= L.cell * 0.9);
+              if (rest.length && (gi === g.group || near)) {
+                G.goldTap = null;
+                for (const i of rest) hit(i, g.t);
+                continue;
+              }
+            }
             if (best < 0) {
               G.taps.push({ x: px, y: py, at: performance.now() });
               continue;
             }
-            const x = G.tg[best];
-            const signed = tapT - x[0];
-            const j = Math.abs(signed) <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(x) ? "great" : "miss";
-            G.st[best] = j === "miss" ? 2 : 1;
-            G.goneAt[best] = performance.now();
-            localJudge(j);
-            api("/api/rhythm/hit", { method: "POST", body: JSON.stringify({ i: best, t: tapT }) }).catch(() => {});
+            G.goldTap = null;
+            const others = gi >= 0 ? group(gi).filter((i) => i !== best) : [];
+            // 几根手指一起点中同一组：照常各打各的
+            const together = others.some((i) => picks.some((q) => q.best === i));
+            if (others.length && !together) {
+              // 一根手指点中还成对的金色组里的一个：先打掉另外几个，点中的这个留着等第二下
+              G.goldTap = { group: gi, t: tapT, at: performance.now(), spots: others.map((i) => pos(L, G.tg[i])) };
+              for (const i of others) hit(i, tapT);
+              continue;
+            }
+            hit(best, tapT);
           }
         },
         { passive: false },
@@ -1402,7 +1438,7 @@
           case "error":
             return msg(`这首读不了：${s.error || "不知道为什么"}`, back());
           case "ready":
-            return msg("准备好了。点亮成绿色的靶子；金色一组用几根手指一起点。", gbtn("开始", () => cmd("start"), true), back());
+            return msg("准备好了。点亮成绿色的靶子；金色一组用几根手指一起点，或者在同一个靶子上连点两下。", gbtn("开始", () => cmd("start"), true), back());
           case "intro":
             return msg("准备…");
           case "playing":
