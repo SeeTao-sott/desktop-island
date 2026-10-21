@@ -2118,39 +2118,42 @@ function aimingAtGold(): boolean {
   return song.live.filter((l) => !l.gone && l.tg.group === u.lt.tg.group).length >= 2;
 }
 
-/** 左键打中金色组里的一个之后，多久之内在同一个地方再点一下算"连点两下"（毫秒） */
+/** 左键点中金色组里的一个之后，多久之内再点一下算"连点两下"（毫秒） */
 const DOUBLE_MS = 350;
-/** 上一次左键打中的金色靶子：哪一组、按哪一刻判定的（歌曲秒）、什么时候点的（performance.now） */
+/** 上一次左键点中的金色组：哪一组、按哪一刻判定的（歌曲秒）、什么时候点的（performance.now） */
 let goldTap: { group: number; at: number; ms: number } | null = null;
 
 /** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定）。
- *  左键连点两下也一样：第一下打中金色组里瞄着的那个，紧接着在同一个地方（那里已经没有靶子了）再点一下，
- *  同组剩下的全部算打中，按第一下的时刻判定（和右键打一样，不会因为第二下晚了一点变 Miss） */
+ *  左键连点两下也一样：第一下先打掉同组的另外几个、瞄着的那个留着（还在准星下面，看得出要再点一下），
+ *  紧接着再点一下打掉它，按第一下的时刻判定（和右键打一样，不会因为第二下晚了一点变 Miss） */
 function shootTargets(whole = false): boolean {
   if (!song.running || song.live.length === 0) return false;
   const u = underAim();
-  if (!u) {
-    const g = goldTap;
-    goldTap = null;
-    if (!whole && g && performance.now() - g.ms <= DOUBLE_MS) {
-      const rest = song.live.filter((l) => !l.gone && l.tg.group === g.group);
-      if (rest.length) {
-        for (const other of rest) hitOne(other, null, g.at, false);
-        song.lastShot = songTime();
-        return true;
-      }
+  const g = goldTap;
+  goldTap = null;
+  const second = !whole && g && performance.now() - g.ms <= DOUBLE_MS ? g : null;
+  if (second) {
+    // 连点的第二下：点在留着的那个上，或者手快了点在旁边空的地方，都算把这一组打完
+    const rest = song.live.filter((l) => !l.gone && l.tg.group === second.group);
+    if (rest.length && (!u || u.lt.tg.group === second.group)) {
+      for (const l of rest) hitOne(l, u && u.lt === l ? u.point : null, second.at, u?.lt === l);
+      song.lastShot = songTime();
+      return true;
     }
-    return false;
   }
+  if (!u) return false;
   const lt = u.lt;
   const now = songTime();
-  // 左键打中还成对的金色组里的一个：记下来，等着看会不会紧接着再点一下
-  const pairedGold = lt.tg.group >= 0 && song.live.some((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group);
-  goldTap = !whole && pairedGold ? { group: lt.tg.group, at: now, ms: performance.now() } : null;
-  hitOne(lt, u.point, now);
-  if (whole && lt.tg.group >= 0) {
-    for (const other of song.live.filter((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group)) hitOne(other, null, now, false);
+  const others = lt.tg.group >= 0 ? song.live.filter((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group) : [];
+  if (!whole && others.length) {
+    // 左键点中还成对的金色组里的一个：先打掉另外几个，瞄着的这个等第二下
+    goldTap = { group: lt.tg.group, at: now, ms: performance.now() };
+    for (const other of others) hitOne(other, null, now, false);
+    song.lastShot = now;
+    return true;
   }
+  hitOne(lt, u.point, now);
+  for (const other of others) hitOne(other, null, now, false);
   song.lastShot = now;
   return true;
 }
