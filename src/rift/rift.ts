@@ -380,7 +380,7 @@ const coreGeo = new THREE.CircleGeometry(TARGET_R * 0.26, 32);
 const approachGeo = new THREE.RingGeometry(TARGET_R * 0.96, TARGET_R * 1.1, 64);
 // 颜色：平时统一用壁纸主色；到了能打的时候（判定窗口以内，一对靶子含宽限）变成绿色
 const GREEN = new THREE.Color(0x35ff7a);
-/** 同一时刻要一起打的一组：金色，中间连一条金线；右键打中其中一个，整组都算 */
+/** 同一时刻要一起打的一组：金色，中间连一条金线；右键打中其中一个（或左键连点两下），整组都算 */
 const GOLD = new THREE.Color(0xffc53d);
 const DIM = new THREE.Color();
 interface LiveTarget {
@@ -1390,9 +1390,9 @@ function showMenu(kind: MenuKind, tip = "") {
     (kind === "pause"
       ? "点继续回到游戏"
       : phoneMode
-        ? "手机模式：在手机上点「开始」，用手指点靶子 · 金色一组用几根手指一起点"
+        ? "手机模式：在手机上点「开始」，用手指点靶子 · 金色一组用几根手指一起点，或在同一个靶子上连点两下"
         : song.on
-        ? "鼠标转视角 · 左键射击 · 右键打金色一组 · Esc / P 暂停 · R 重开"
+        ? "鼠标转视角 · 左键射击 · 金色一组：右键或左键连点两下 · Esc / P 暂停 · R 重开"
         : "鼠标转视角 · 左键射击 · 数字键 1~4 换行数 · Esc 退出");
   menuEl.hidden = false;
 }
@@ -1523,7 +1523,7 @@ const ray = new THREE.Raycaster();
 const aimDir = new THREE.Vector3();
 const aimEuler = new THREE.Euler();
 const shotColor = new THREE.Color(0xffffff);
-// 左键：打一个；右键：打中一组（金色）里的一个，整组都算
+// 左键：打一个（金色组连点两下 = 整组）；右键：打中一组（金色）里的一个，整组都算
 document.addEventListener("mousedown", (e) => {
   if (!playing || settings.auto || phoneMode || (e.button !== 0 && e.button !== 2)) return;
   shoot(e.button === 2);
@@ -2118,13 +2118,35 @@ function aimingAtGold(): boolean {
   return song.live.filter((l) => !l.gone && l.tg.group === u.lt.tg.group).length >= 2;
 }
 
-/** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定） */
+/** 左键打中金色组里的一个之后，多久之内在同一个地方再点一下算"连点两下"（毫秒） */
+const DOUBLE_MS = 350;
+/** 上一次左键打中的金色靶子：哪一组、按哪一刻判定的（歌曲秒）、什么时候点的（performance.now） */
+let goldTap: { group: number; at: number; ms: number } | null = null;
+
+/** 射线打靶子：打中返回 true。whole：右键——打中一组里的一个，这一组全部算打中（按这一刻判定）。
+ *  左键连点两下也一样：第一下打中金色组里瞄着的那个，紧接着在同一个地方（那里已经没有靶子了）再点一下，
+ *  同组剩下的全部算打中，按第一下的时刻判定（和右键打一样，不会因为第二下晚了一点变 Miss） */
 function shootTargets(whole = false): boolean {
   if (!song.running || song.live.length === 0) return false;
   const u = underAim();
-  if (!u) return false;
+  if (!u) {
+    const g = goldTap;
+    goldTap = null;
+    if (!whole && g && performance.now() - g.ms <= DOUBLE_MS) {
+      const rest = song.live.filter((l) => !l.gone && l.tg.group === g.group);
+      if (rest.length) {
+        for (const other of rest) hitOne(other, null, g.at, false);
+        song.lastShot = songTime();
+        return true;
+      }
+    }
+    return false;
+  }
   const lt = u.lt;
   const now = songTime();
+  // 左键打中还成对的金色组里的一个：记下来，等着看会不会紧接着再点一下
+  const pairedGold = lt.tg.group >= 0 && song.live.some((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group);
+  goldTap = !whole && pairedGold ? { group: lt.tg.group, at: now, ms: performance.now() } : null;
   hitOne(lt, u.point, now);
   if (whole && lt.tg.group >= 0) {
     for (const other of song.live.filter((l) => !l.gone && l !== lt && l.tg.group === lt.tg.group)) hitOne(other, null, now, false);

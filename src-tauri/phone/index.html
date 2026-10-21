@@ -1058,7 +1058,11 @@
         combo: 0,
         cnt: { perfect: 0, great: 0, miss: 0 },
         taps: [],
+        // 上一次点中的金色靶子（还成对的一组）：同一个地方紧接着再点一下 = 整组
+        goldTap: null,
       };
+      /** 金色组连点两下：两下之间最多隔多久（毫秒） */
+      const DOUBLE_MS = 350;
       const ROW_ORDER = [1, 2, 0, 3];
       const nAt = (steps, t) => {
         let n = steps[0]?.n ?? 1;
@@ -1137,6 +1141,7 @@
         G.goneAt = new Float64Array(G.tg.length);
         G.next = 0;
         G.live = [];
+        G.goldTap = null;
         G.combo = 0;
         G.cnt = { perfect: 0, great: 0, miss: 0 };
         G.frozen = -1e9;
@@ -1325,10 +1330,29 @@
               }
             }
             if (best < 0) {
+              // 刚点中金色组里的一个，紧接着在同一个地方再点一下：同组剩下的全部算打中，按第一下的时刻判定
+              const g = G.goldTap;
+              G.goldTap = null;
+              if (g && performance.now() - g.at <= DOUBLE_MS && Math.hypot(px - g.x, py - g.y) <= L.cell * 0.9) {
+                const rest = G.live.filter((i) => G.st[i] === 0 && G.tg[i][4] === g.group);
+                for (const i of rest) {
+                  const x = G.tg[i];
+                  const signed = g.t - x[0];
+                  const j = Math.abs(signed) <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(x) ? "great" : "miss";
+                  G.st[i] = j === "miss" ? 2 : 1;
+                  G.goneAt[i] = performance.now();
+                  localJudge(j);
+                  api("/api/rhythm/hit", { method: "POST", body: JSON.stringify({ i, t: g.t }) }).catch(() => {});
+                }
+                if (rest.length) continue;
+              }
               G.taps.push({ x: px, y: py, at: performance.now() });
               continue;
             }
             const x = G.tg[best];
+            // 点中还成对的金色组里的一个：记下来，等着看会不会在同一个地方再点一下
+            const paired = x[4] >= 0 && G.live.some((i) => i !== best && G.st[i] === 0 && G.tg[i][4] === x[4]);
+            G.goldTap = paired ? { group: x[4], t: tapT, at: performance.now(), x: px, y: py } : null;
             const signed = tapT - x[0];
             const j = Math.abs(signed) <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(x) ? "great" : "miss";
             G.st[best] = j === "miss" ? 2 : 1;
@@ -1402,7 +1426,7 @@
           case "error":
             return msg(`这首读不了：${s.error || "不知道为什么"}`, back());
           case "ready":
-            return msg("准备好了。点亮成绿色的靶子；金色一组用几根手指一起点。", gbtn("开始", () => cmd("start"), true), back());
+            return msg("准备好了。点亮成绿色的靶子；金色一组用几根手指一起点，或者在同一个靶子上连点两下。", gbtn("开始", () => cmd("start"), true), back());
           case "intro":
             return msg("准备…");
           case "playing":
