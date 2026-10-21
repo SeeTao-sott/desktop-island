@@ -80,10 +80,19 @@ export const rhythmOpen = () => root !== null;
 
 /** 双击律动组件：在它上方弹出选歌菜单 */
 let opening = false;
+/** 这次菜单是手机遥控打开的：选了歌就用手机点靶子（只有裂缝射击） */
+let phoneMenu = false;
 
-export async function openRhythm(anchor: Rect) {
+export async function openRhythm(anchor: Rect, phone = false) {
+  // 手机又按了一次：菜单已经开着，换成手机模式就行
+  if (root && phone && !phoneMenu) {
+    phoneMenu = true;
+    showMenu(anchor);
+    return;
+  }
   // 自己判断的双击和浏览器的 dblclick 可能前后脚都来，只开一次
   if (root || opening) return;
+  phoneMenu = phone;
   opening = true;
   const on = await invoke<boolean>("widgets_rhythm", { on: true }).catch(() => false);
   opening = false;
@@ -121,7 +130,15 @@ async function openRift(song: Song, diff: Difficulty) {
   root?.remove();
   root = null;
   await invoke("widgets_rhythm", { on: false }).catch(() => {});
-  invoke("rift_open", { id: song.id, characteristic: diff.characteristic, difficulty: diff.name }).catch(() => {});
+  invoke("rift_open", { id: song.id, characteristic: diff.characteristic, difficulty: diff.name, phone: phoneMenu }).catch(() => {});
+}
+
+/** 手机上选好歌了：电脑这边已经沉回桌面，只把菜单拆掉 */
+export function dropRhythmMenu() {
+  cleanup?.();
+  cleanup = null;
+  root?.remove();
+  root = null;
 }
 
 export function closeRhythm() {
@@ -163,9 +180,11 @@ function showMenu(anchor: Rect) {
       downOnShade = false;
     });
     const card = el("div", "rh-menu", root!);
-    el("div", "rh-menu-title", card, "选一首歌");
-    // 玩法：下落式 4 键 / 裂缝射击（记住上次选的）
+    el("div", "rh-menu-title", card, phoneMenu ? "选一首歌 · 手机模式" : "选一首歌");
+    if (phoneMenu) el("div", "rh-empty", card, "在手机或电脑上选都行，选好后用手机点靶子");
+    // 玩法：下落式 4 键 / 裂缝射击（记住上次选的）；手机模式只有裂缝射击
     const modes = el("div", "rh-modes", card);
+    modes.hidden = phoneMenu;
     for (const [id, label] of [
       ["fall", "下落 4 键"],
       ["rift", "裂缝射击"],
@@ -212,7 +231,7 @@ function showMenu(anchor: Rect) {
               const b = el("button", "rh-diff", diffs, extra ? `${d.name}（${extra}）` : d.name);
               b.title = `${d.name} · ${d.count} 个靶子`;
               b.disabled = !!d.note;
-              b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
+              b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
             }
           } else {
             // 只列标准谱（单手、无方向等玩法对 4 键没有意义）；没有标准谱就全列
@@ -220,7 +239,7 @@ function showMenu(anchor: Rect) {
             for (const d of std.length ? std : song.difficulties) {
               const b = el("button", "rh-diff", diffs, diffLabel(song, d));
               b.title = `${d.characteristic} / ${d.name}`;
-              b.addEventListener("click", () => (playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
+              b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
             }
           }
         }

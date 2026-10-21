@@ -21,7 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_MENU, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow, ShowWindow, GWL_EXSTYLE, GW_OWNER,
     SW_RESTORE, WS_EX_TOOLWINDOW,
 };
@@ -124,6 +124,21 @@ pub fn mouse_events(list: &[Value]) -> Result<usize, String> {
     }
     send(&out);
     Ok(out.len())
+}
+
+/// 模拟一下不动的鼠标：系统只让"刚收到输入的程序"把自己的窗口拿到前台，这样之后弹出的窗口能拿到焦点
+pub fn nudge() {
+    send(&[mouse(0, 0, 0, MOUSEEVENTF_MOVE)]);
+}
+
+/// 前台现在是不是桌面
+pub fn at_desktop() -> bool {
+    unsafe {
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(GetForegroundWindow(), &mut buf);
+        let class = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+        class == "Progman" || class == "WorkerW"
+    }
 }
 
 /// 像在键盘上按一下 Alt+Tab：切回上一个窗口
@@ -236,7 +251,7 @@ pub fn switch_to(id: isize) -> Result<(), String> {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
         // 系统只让"刚收到输入的程序"换前台窗口：先模拟一下不动的鼠标，算我们收到了输入
-        send(&[mouse(0, 0, 0, MOUSEEVENTF_MOVE)]);
+        nudge();
         if !SetForegroundWindow(hwnd).as_bool() {
             // 还不行就按一下 Alt（系统认这个），再试一次
             send(&[key(VK_MENU, false), key(VK_MENU, true)]);

@@ -1261,6 +1261,11 @@ function applyZoom() {
 }
 
 function showInfo() {
+  if (phoneMode) {
+    const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
+    infoEl.textContent = `手机模式：在手机上点靶子${delay}\nEsc / P 暂停 · R 重开`;
+    return;
+  }
   const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
   infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}${delay}\n${song.on ? "Esc / P 暂停 · R 重开" : "Esc 退出"}`;
 }
@@ -1355,7 +1360,9 @@ function showMenu(kind: MenuKind, tip = "") {
     tip ||
     (kind === "pause"
       ? "点继续回到游戏"
-      : song.on
+      : phoneMode
+        ? "手机模式：在手机上点「开始」，用手指点靶子 · 金色一组用几根手指一起点"
+        : song.on
         ? "鼠标转视角 · 左键射击 · 右键打金色一组 · Esc / P 暂停 · R 重开"
         : "鼠标转视角 · 左键射击 · 数字键 1~4 换行数 · Esc 退出");
   menuEl.hidden = false;
@@ -1371,7 +1378,11 @@ async function gameStart() {
     menuEl.hidden = true;
     startEl.hidden = true;
     resultEl.hidden = true;
-    if (!document.pointerLockElement) {
+    if (phoneMode) {
+      // 手机模式：不锁鼠标、不显示准星，输入全从手机来
+      playing = true;
+      pushPhone("intro");
+    } else if (!document.pointerLockElement) {
       await lock();
       if (!document.pointerLockElement) {
         // 刚按过 Esc 的一小会儿浏览器不让马上再锁
@@ -1383,7 +1394,11 @@ async function gameStart() {
     if (song.on) await songReady;
     if (!alive()) return;
     if (song.on && !song.audio) {
-      document.exitPointerLock();
+      if (phoneMode) {
+        playing = false;
+        showMenu("main");
+        pushPhone(song.error ? "error" : "loading");
+      } else document.exitPointerLock();
       return;
     }
     // 合上
@@ -1435,18 +1450,25 @@ function pause() {
   actx.suspend().catch(() => {});
   nowPlaying(false);
   showMenu("pause");
+  pushPhone("paused");
 }
 
 async function resume() {
   if (!song.paused || !actx) return;
-  await lock();
-  if (!document.pointerLockElement) {
-    showMenu("pause", "鼠标没锁上，再点一次");
-    return;
+  if (phoneMode) {
+    menuEl.hidden = true;
+    playing = true;
+  } else {
+    await lock();
+    if (!document.pointerLockElement) {
+      showMenu("pause", "鼠标没锁上，再点一次");
+      return;
+    }
   }
   await actx.resume();
   song.paused = false;
   nowPlaying(true);
+  pushPhone("playing");
 }
 
 /** 告诉音乐组件、灵动岛：放到哪了、是不是在放 */
@@ -1461,7 +1483,7 @@ function nowPlaying(isPlaying: boolean) {
 }
 
 document.addEventListener("mousemove", (e) => {
-  if (!playing || settings.auto) return;
+  if (!playing || settings.auto || phoneMode) return;
   // Valorant：每个移动单位转 0.07 × 灵敏度 度
   const k = ((0.07 * settings.sens) * Math.PI) / 180;
   aimYaw = Math.min(yawMax(), Math.max(-yawMax(), aimYaw - e.movementX * k));
@@ -1474,7 +1496,7 @@ const aimEuler = new THREE.Euler();
 const shotColor = new THREE.Color(0xffffff);
 // 左键：打一个；右键：打中一组（金色）里的一个，整组都算
 document.addEventListener("mousedown", (e) => {
-  if (!playing || settings.auto || (e.button !== 0 && e.button !== 2)) return;
+  if (!playing || settings.auto || phoneMode || (e.button !== 0 && e.button !== 2)) return;
   shoot(e.button === 2);
 });
 document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -1534,6 +1556,8 @@ interface Pick {
   id: string;
   characteristic: string;
   difficulty: string;
+  /** 手机模式：用手机点靶子 */
+  phone?: boolean;
 }
 /** 靶子提前多久出现（秒），设置里可调 */
 let LEAD = settings.lead;
@@ -1698,11 +1722,27 @@ async function startSong() {
     devs: [],
     flicks: [],
     lastShot: -Infinity,
-    autoUsed: settings.auto,
+    autoUsed: settings.auto && !phoneMode,
   });
   showPrompt("");
   resultEl.hidden = true;
   showLive();
+  if (phoneMode) {
+    // 靶子放在哪一格：和画面上固定模式一样（出现那一刻的 N 行里的第 rb 行）
+    const slotOf = (tg: Target) => {
+      const slots = activeSlots(nAt(song.steps, tg.t - LEAD));
+      return slots[Math.min(slots.length - 1, tg.rb)];
+    };
+    pushPhone("playing", {
+      cols: COLS,
+      lead: LEAD,
+      window: settings.window,
+      pairGrace: settings.pairGrace,
+      steps: song.steps,
+      // [拍点, 列, 格(从下往上 0~3), 颜色, 组, dx, dy, 成对]
+      targets: song.targets.map((x) => [+x.t.toFixed(4), x.col, slotOf(x), x.color, x.group, +x.dx.toFixed(3), +x.dy.toFixed(3), x.pair ? 1 : 0]),
+    });
+  }
 }
 
 function stopSong() {
@@ -1761,7 +1801,7 @@ function accuracy() {
 function showLive() {
   const c = song.count;
   liveEl.hidden = !song.running;
-  liveEl.textContent = `${settings.auto ? "自动　" : ""}准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
+  liveEl.textContent = `${phoneMode ? "手机　" : settings.auto ? "自动　" : ""}准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
 }
 
 
@@ -1774,7 +1814,7 @@ function showResult() {
   const dev = mean(song.devs) * 1000;
   const flick = mean(song.flicks) * 1000;
   // 最高分：按"歌 + 难度"记
-  const key = `${song.pick?.id}|${song.pick?.difficulty}`;
+  const key = `${song.pick?.id}|${song.pick?.difficulty}${phoneMode ? "|phone" : ""}`;
   const best = store.best;
   const prev = best[key] ?? 0;
   // 自动模式打的不算纪录
@@ -1793,7 +1833,7 @@ function showResult() {
     resultEl.appendChild(d);
     return d;
   };
-  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}${song.autoUsed ? " · 自动（不记最高分）" : ""}`);
+  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}${phoneMode ? " · 手机模式" : ""}${song.autoUsed ? " · 自动（不记最高分）" : ""}`);
   add("r-score", score.toLocaleString("en-US"));
   if (record) add("r-record", prev ? `新纪录！（之前 ${prev.toLocaleString("en-US")}）` : "新纪录！");
   else add("r-best", `最高分 ${prev.toLocaleString("en-US")}`);
@@ -1817,6 +1857,17 @@ function showResult() {
   add("r-tip", "甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · 空格 / R 再来一次 · Esc 退出");
   resultEl.hidden = false;
   liveEl.hidden = true;
+  pushPhone("result", undefined, {
+    score,
+    best: Math.max(prev, record ? score : 0),
+    record,
+    prev,
+    hitRate,
+    acc: accuracy(),
+    count: c,
+    maxCombo: song.maxCombo,
+    dev: devText,
+  });
   log(`结算：${score} 分，命中 ${(hitRate * 100).toFixed(1)}%，偏差 ${devText}，甩枪 ${flickText}${record ? "，新纪录" : ""}`);
 }
 
@@ -1869,11 +1920,12 @@ function updateSong(n: number, nowMs: number) {
     }
     needRows = Math.max(needRows, rowFixed() ? ROW_ORDER.indexOf(lt.slot) + 1 : tg.rb + 1);
     const left = tg.t - now; // 离拍点还有几秒
-    if (left < -lateW(tg)) {
+    if (left < -lateW(tg) - (phoneMode ? PHONE_NET : 0)) {
       // 没打：Miss，变暗淡出
       lt.gone = nowMs;
       lt.discMat.color.copy(DIM.copy(rift).multiplyScalar(0.35));
-      if (settings.auto) log(`[自动 Miss] 过期没打到（拍点 ${tg.t.toFixed(3)}s，${lt.autoShot ? "开过枪但射线没打中它" : "还没轮到它开枪"}）`);
+      if (phoneMode) log(`[手机 Miss] 过期没收到点击（拍点 ${tg.t.toFixed(3)}s）`);
+      if (settings.auto && !phoneMode) log(`[自动 Miss] 过期没打到（拍点 ${tg.t.toFixed(3)}s，${lt.autoShot ? "开过枪但射线没打中它" : "还没轮到它开枪"}）`);
       judge("miss");
       continue;
     }
@@ -1914,7 +1966,7 @@ function aimAt(lt: LiveTarget): [number, number] {
   return [Math.atan2(-autoTmp.x, -autoTmp.z), Math.atan2(autoTmp.y, Math.hypot(autoTmp.x, autoTmp.z))];
 }
 function updateAuto(dt: number) {
-  if (!settings.auto || !playing || !song.running || song.paused) return;
+  if (!settings.auto || phoneMode || !playing || !song.running || song.paused) return;
   song.autoUsed = true;
   const now = songTime();
   const alive = song.live.filter((l) => !l.gone && !l.autoShot).sort((a, b) => a.tg.t - b.tg.t);
@@ -1987,7 +2039,7 @@ function hitOne(lt: LiveTarget, at: THREE.Vector3 | null, now: number, aimed = t
   // 太早（超出前窗口）或太晚（超出后窗口，一对靶子含宽限）算 Miss
   const j: Judge = d <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(lt.tg) ? "great" : "miss";
   // 自动模式本该全中：要是 Miss 了，记下来看是哪里的问题
-  if (settings.auto && j === "miss") log(`[自动 Miss] 开枪时离拍点 ${(signed * 1000).toFixed(0)}ms（拍点 ${lt.tg.t.toFixed(3)}s，${lt.tg.group >= 0 ? "金色组" : "单个"}）`);
+  if (settings.auto && !phoneMode && j === "miss") log(`[自动 Miss] 开枪时离拍点 ${(signed * 1000).toFixed(0)}ms（拍点 ${lt.tg.t.toFixed(3)}s，${lt.tg.group >= 0 ? "金色组" : "单个"}）`);
   if (j !== "miss") {
     song.devs.push(signed);
     // 甩枪：从上一枪（或靶子出现，取较晚的）到准星第一次落上这个靶子
@@ -2050,6 +2102,77 @@ function shootTargets(whole = false): boolean {
   return true;
 }
 
+// ---------------- 手机模式 ----------------
+// 手机上画同样的靶子、用手指点；电脑照常放歌、画裂缝、判定、记分。
+// 对拍子：页面把"歌曲 0 秒对应的系统时间"推给手机，手机先和电脑对好表，
+// 点下去那一刻换算成歌曲时间一起发过来 —— 按手指碰到屏幕的时刻判定，网络慢一点也不影响。
+let phoneMode = false;
+let phonePushAt = 0;
+let lastAnchor: number | null = null;
+/** 手机点的结果从网络过来要一点时间：过期算 Miss 前多等这么久（秒） */
+const PHONE_NET = 0.3;
+
+type PhonePhase = "loading" | "ready" | "error" | "intro" | "playing" | "paused" | "result" | "closed";
+function pushPhone(phase: PhonePhase, plan?: object, result?: object) {
+  if (!phoneMode) return;
+  phonePushAt = performance.now();
+  const c = song.count;
+  const state = {
+    phase,
+    title: song.meta?.title ?? song.pick?.id ?? "",
+    difficulty: song.pick?.difficulty ?? "",
+    error: song.error,
+    // 歌曲 0 秒是系统时间的哪一刻（毫秒）；只有在放的时候才有
+    anchor: song.running && !song.paused && actx ? Date.now() - songTime() * 1000 : null,
+    combo: song.combo,
+    acc: accuracy(),
+    count: c,
+    result: result ?? null,
+  };
+  if (state.anchor !== null && lastAnchor !== null && Math.abs(state.anchor - lastAnchor) > 30)
+    log(`[手机] 对拍子的时间跳了 ${(state.anchor - lastAnchor).toFixed(0)}ms`);
+  lastAnchor = state.anchor;
+  invoke("rift_phone_push", { state, plan: plan ?? null }).catch(() => {});
+}
+
+/** 手机点中了第 i 个靶子，点下去的那一刻是歌曲的第 t 秒 */
+function phoneHit(i: number, t: number) {
+  if (!phoneMode || !song.running || song.paused || !Number.isFinite(t)) return;
+  const tg = song.targets[i];
+  const lt = tg && song.live.find((l) => l.tg === tg && !l.gone);
+  const now = songTime();
+  if (!lt) {
+    log(`[手机] 第 ${i} 个靶子不在场上：拍点 ${tg?.t.toFixed(3)}s，手机点的时刻 ${t.toFixed(3)}s，电脑现在 ${now.toFixed(3)}s，${tg && song.targets.indexOf(tg) < song.next ? "已经出过" : "还没出"}`);
+    return;
+  }
+  // 手机的表稍快一点时，不让它"在未来开枪"
+  hitOne(lt, null, Math.min(t, now + 0.05), false);
+  song.lastShot = now;
+}
+
+listen<{ i: number; t: number }>("rift-phone-hit", (e) => phoneHit(Number(e.payload?.i), Number(e.payload?.t)));
+listen<string>("rift-phone-cmd", (e) => {
+  if (!phoneMode || closing) return;
+  switch (e.payload) {
+    case "start":
+    case "restart":
+      if (!song.running || song.finished || e.payload === "restart") gameStart();
+      break;
+    case "pause":
+      if (song.running && !song.finished && !song.paused) {
+        playing = false;
+        pause();
+      }
+      break;
+    case "resume":
+      resume();
+      break;
+    case "quit":
+      close();
+      break;
+  }
+});
+
 // ---------------- 主循环 ----------------
 let last = performance.now();
 let frames = 0;
@@ -2089,6 +2212,7 @@ function frame(now: number) {
   updateFx(now);
   updateSong(n, now);
   updateAuto(dt);
+  if (phoneMode && song.running && !song.paused && !song.finished && now - phonePushAt > 1000) pushPhone("playing");
   fxTime += dt * settings.fxSpeed;
   glowMat.uniforms.mode.value = settings.riftStyle === "tear" ? 2 : settings.riftStyle === "crack" ? 0 : 1;
   glowMat.uniforms.arcs.value = settings.arcs ? 1 : 0;
@@ -2146,6 +2270,7 @@ function frame(now: number) {
 function close() {
   if (closing) return;
   closing = true;
+  pushPhone("closed");
   playing = false;
   intro++;
   crossEl.hidden = true;
@@ -2164,6 +2289,11 @@ function close() {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && phoneMode && playing && song.running && !song.finished && !song.paused) {
+    playing = false;
+    pause();
+    return;
+  }
   if (e.key === "Escape") {
     // 设置里 → 回菜单；暂停菜单里不理（免得连按两下 Esc 直接退出）；其他时候退出
     if (!startEl.hidden) showMenu(menuKind);
@@ -2175,7 +2305,10 @@ window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   // P：暂停（放开鼠标锁定，pointerlockchange 里弹出暂停菜单）
   if (k === "p" && playing && song.running && !song.finished && !e.repeat) {
-    document.exitPointerLock();
+    if (phoneMode) {
+      playing = false;
+      pause();
+    } else document.exitPointerLock();
     return;
   }
   // F2：自动模式开关（设置里也能改）
@@ -2231,7 +2364,13 @@ async function start() {
   } catch {
     // 没有就是测试模式
   }
+  if (pick?.phone) {
+    phoneMode = true;
+    crossEl.hidden = true;
+    pushPhone("loading");
+  }
   if (pick) songReady = loadSong(pick);
+  if (phoneMode) songReady.then(() => pushPhone(song.audio ? "ready" : "error"));
   showMenu("main");
   infoEl.hidden = false;
   showInfo();

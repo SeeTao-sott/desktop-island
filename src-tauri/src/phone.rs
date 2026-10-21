@@ -3,6 +3,7 @@
 //! 能做的：看电脑在放的歌、切歌暂停；番茄钟；回到桌面；看 CPU / 显卡温度 / 电量；
 //! 把手机上打的字送到电脑剪贴板；把手机里的照片、文件传进架子的「手机」分类。
 //! 手机当触控板控制鼠标（移动、左右键、滚轮、返回 / 前进键），切换电脑上的窗口（见 phone_input.rs）。
+//! 音游手机模式：手机上选歌、点靶子，电脑照常放歌、画裂缝（局面由裂缝页面推上来，见 rift.rs）。
 //!
 //! 安全：
 //! - 默认关着，托盘里打开才开始监听
@@ -20,7 +21,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Listener, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 const PAGE: &str = include_str!("../phone/index.html");
@@ -348,6 +349,56 @@ impl Phone {
                 },
                 None => text_resp(400, "没说切到哪个窗口"),
             },
+            // ---------- 音游（手机模式）：手机选歌、点靶子，电脑照常放歌和画裂缝 ----------
+            (Method::Get, "/api/time") => json_resp(json!({ "now": now_ms() })),
+            (Method::Get, "/api/rhythm/songs") => json_resp(serde_json::to_value(crate::rhythm_songs(self.app.clone())).unwrap_or(Value::Null)),
+            (Method::Post, "/api/rhythm/open") => {
+                // 电脑回到桌面（已经在桌面就不按，免得又切回去），弹出选歌菜单
+                if !crate::phone_input::at_desktop() {
+                    crate::desktop::run(crate::desktop::Action::Desktop, self.keep.clone());
+                }
+                crate::phone_input::nudge();
+                let _ = self.app.emit_to("widgets", "phone-rhythm", ());
+                json_resp(json!({ "ok": true }))
+            }
+            (Method::Post, "/api/rhythm/play") => {
+                let (id, c, d) = (query(&url, "id"), query(&url, "c"), query(&url, "d"));
+                match (id, c, d) {
+                    (Some(id), Some(characteristic), Some(difficulty)) => {
+                        // 电脑上的选歌菜单收起来，打开裂缝
+                        if let Some(w) = self.app.try_state::<Arc<crate::widgets::Widgets>>() {
+                            w.set_rhythm(false);
+                        }
+                        let _ = self.app.emit_to("widgets", "phone-rhythm-close", ());
+                        crate::phone_input::nudge();
+                        crate::rift::open_pick(&self.app, crate::rift::Pick { id, characteristic, difficulty, phone: true });
+                        json_resp(json!({ "ok": true }))
+                    }
+                    _ => text_resp(400, "没说玩哪首"),
+                }
+            }
+            (Method::Get, "/api/rhythm/state") => json_resp(crate::rift::phone_state()),
+            (Method::Get, "/api/rhythm/plan") => json_resp(crate::rift::phone_plan()),
+            (Method::Post, "/api/rhythm/hit") => {
+                let mut buf = String::new();
+                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                match serde_json::from_str::<Value>(&buf) {
+                    Ok(v) => {
+                        let _ = self.app.emit_to(crate::rift::LABEL, "rift-phone-hit", v);
+                        json_resp(json!({ "ok": true }))
+                    }
+                    Err(_) => text_resp(400, "看不懂"),
+                }
+            }
+            (Method::Post, p) if p.starts_with("/api/rhythm/cmd/") => {
+                let a = &p[16..];
+                if ["start", "pause", "resume", "restart", "quit"].contains(&a) {
+                    let _ = self.app.emit_to(crate::rift::LABEL, "rift-phone-cmd", a);
+                    json_resp(json!({ "ok": true }))
+                } else {
+                    text_resp(400, "不认识的操作")
+                }
+            }
             (Method::Post, "/api/alttab") => {
                 crate::phone_input::alt_tab();
                 json_resp(json!({ "ok": true }))

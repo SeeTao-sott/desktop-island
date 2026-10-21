@@ -598,6 +598,7 @@ fn main() {
             rift::rift_close,
             rift::rift_open,
             rift::rift_pending,
+            rift::rift_phone_push,
             rift::rift_hit,
             rift::rift_store_get,
             rift::rift_store_set,
