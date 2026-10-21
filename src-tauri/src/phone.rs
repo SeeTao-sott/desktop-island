@@ -2,6 +2,7 @@
 //!
 //! 能做的：看电脑在放的歌、切歌暂停；番茄钟；回到桌面；看 CPU / 显卡温度 / 电量；
 //! 把手机上打的字送到电脑剪贴板；把手机里的照片、文件传进架子的「手机」分类。
+//! 手机当触控板控制鼠标（移动、左右键、滚轮、返回 / 前进键），切换电脑上的窗口（见 phone_input.rs）。
 //!
 //! 安全：
 //! - 默认关着，托盘里打开才开始监听
@@ -27,6 +28,8 @@ const PAGE: &str = include_str!("../phone/index.html");
 const MAX_UPLOAD: u64 = 1 << 30;
 /// 发到剪贴板的文字最长 100KB
 const MAX_TEXT: u64 = 100 * 1024;
+/// 一批鼠标动作最多 64KB
+const MAX_MOUSE: u64 = 64 * 1024;
 
 /// 手机上要显示的最新状态（从程序里本来就有的事件收集来）
 #[derive(Default)]
@@ -329,6 +332,26 @@ impl Phone {
                 }
             }
             (Method::Post, "/api/upload") => self.upload(&mut rq, &url),
+            (Method::Post, "/api/mouse") => {
+                let mut buf = String::new();
+                let _ = rq.as_reader().take(MAX_MOUSE).read_to_string(&mut buf);
+                match serde_json::from_str::<Vec<Value>>(&buf).map_err(|e| e.to_string()).and_then(|l| crate::phone_input::mouse_events(&l)) {
+                    Ok(_) => json_resp(json!({ "ok": true })),
+                    Err(e) => text_resp(400, &e),
+                }
+            }
+            (Method::Get, "/api/windows") => json_resp(crate::phone_input::list_windows()),
+            (Method::Post, "/api/windows/switch") => match query(&url, "id").and_then(|v| v.parse::<isize>().ok()) {
+                Some(id) => match crate::phone_input::switch_to(id) {
+                    Ok(()) => json_resp(json!({ "ok": true })),
+                    Err(e) => text_resp(409, &e),
+                },
+                None => text_resp(400, "没说切到哪个窗口"),
+            },
+            (Method::Post, "/api/alttab") => {
+                crate::phone_input::alt_tab();
+                json_resp(json!({ "ok": true }))
+            }
             _ => text_resp(404, "没有这个"),
         };
         let _ = rq.respond(resp);

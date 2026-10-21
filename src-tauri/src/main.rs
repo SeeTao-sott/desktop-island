@@ -17,6 +17,7 @@ mod icons;
 mod media;
 mod osu;
 mod phone;
+mod phone_input;
 mod pomodoro;
 mod rift;
 mod shelf;
