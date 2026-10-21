@@ -143,6 +143,19 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 托盘 →「**屏幕边缘律动**」：放歌时屏幕四条边跟着音乐发光（低音推上下、中音推左右），颜色跟壁纸。
 鼠标永远点得穿过去；没声音、全屏游戏时自动藏起来。
 
+## 手机遥控
+
+托盘 →「**手机遥控**」打开后，电脑会在家里的 Wi-Fi 里开一个小网页；托盘 →「**手机遥控二维码…**」用手机扫码打开（不用装 App）。
+
+- 看电脑正在放的歌（封面、歌名、进度），上一首 / 暂停 / 下一首
+- 番茄钟：开始、暂停、继续、结束
+- 看 CPU、显卡温度、电量；一键让电脑回到桌面
+- 手机上打的字直接放进电脑剪贴板（电脑上 Ctrl+V）
+- 手机里的照片、文件传进架子的「手机」分类（重名自动改名，不覆盖；单个最大 1GB）
+
+安全：默认关着；二维码里带一串随机密钥，没有密钥的请求一律拒绝；只接受家里局域网的连接。
+第一次打开时 Windows 防火墙会问要不要允许，选「专用网络」。想让旧二维码失效：删掉配置里的 `phone_token` 再重启。
+
 ## 托盘菜单
 
 任务栏右下角的托盘里有一个胶囊图标（如果没看到，点一下 `^` 展开隐藏图标）。左键或右键点它：
@@ -207,6 +220,9 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 | `widgets_wallpaper_check_seconds` | `30` | Wallpaper Engine 开着时，每隔多少秒向它确认一次当前壁纸（10 ~ 3600） |
 | `widgets_status_seconds` | `3` | "系统状态"组件多少秒更新一次（1 ~ 60） |
 | `island_double_click` | `"desktop"` | 双击灵动岛做什么：`"desktop"` 回到桌面、`"minimize"` 全部最小化、`"off"` 不做什么（托盘里也能改） |
+| `phone_enabled` | `false` | 手机遥控（托盘里也能开关） |
+| `phone_port` | `8787` | 手机遥控网页用的端口 |
+| `phone_token` | 自动生成 | 二维码里的密钥；删掉再重启会换一个新的，旧链接全部失效 |
 | `edge_glow` | `false` | 屏幕边缘律动（托盘里也能开关） |
 | `show_desktop_hotkey` | `""` | 回到桌面的快捷键，比如 `"Ctrl+Alt+Q"`；做的事和双击灵动岛一样。留空表示不用，不能用 Win+D |
 

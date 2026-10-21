@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0e12" />
+    <title>桌面遥控</title>
+    <style>
+      :root {
+        --bg: #0e0e12;
+        --card: #1a1a22;
+        --line: #2a2a35;
+        --text: #f2f2f5;
+        --sub: #9a9aa8;
+        --accent: #ff5a6a;
+        --ok: #35d07a;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        margin: 0;
+        padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 4px 2px 14px;
+      }
+      h1 {
+        font-size: 19px;
+        margin: 0;
+      }
+      .dot {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .dot::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: #666;
+        vertical-align: 1px;
+      }
+      .dot.on::before {
+        background: var(--ok);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      .card h2 {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--sub);
+        margin: 0 0 10px;
+      }
+      .music {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .cover {
+        width: 72px;
+        height: 72px;
+        border-radius: 12px;
+        background: #2a2a35 center / cover no-repeat;
+        flex: none;
+      }
+      .meta {
+        min-width: 0;
+        flex: 1;
+      }
+      .title {
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .artist {
+        color: var(--sub);
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bar {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--line);
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      button {
+        flex: 1;
+        font: inherit;
+        font-weight: 600;
+        color: var(--text);
+        background: #262631;
+        border: none;
+        border-radius: 14px;
+        padding: 13px 8px;
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+      button.main {
+        background: var(--accent);
+        color: #fff;
+      }
+      button:disabled {
+        opacity: 0.35;
+      }
+      .big {
+        font-size: 34px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 1px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        text-align: center;
+      }
+      .stats b {
+        display: block;
+        font-size: 22px;
+        font-variant-numeric: tabular-nums;
+      }
+      .stats span {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      textarea {
+        width: 100%;
+        min-height: 80px;
+        font: inherit;
+        color: var(--text);
+        background: #13131a;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        resize: vertical;
+      }
+      .note {
+        font-size: 12px;
+        color: var(--sub);
+        margin-top: 8px;
+      }
+      .files div {
+        font-size: 13px;
+        margin-top: 6px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .files em {
+        color: var(--sub);
+        font-style: normal;
+        flex: none;
+      }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: calc(24px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        background: #2e2e3a;
+        padding: 10px 16px;
+        border-radius: 12px;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+        max-width: 90vw;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>桌面遥控</h1>
+      <span id="dot" class="dot">连接中…</span>
+    </header>
+
+    <section class="card">
+      <h2>正在播放</h2>
+      <div class="music">
+        <div id="cover" class="cover"></div>
+        <div class="meta">
+          <div id="title" class="title">没有在播放</div>
+          <div id="artist" class="artist"></div>
+          <div class="bar"><i id="prog"></i></div>
+        </div>
+      </div>
+      <div class="row">
+        <button data-media="prev">⏮</button>
+        <button id="toggle" class="main" data-media="toggle">▶</button>
+        <button data-media="next">⏭</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>番茄钟</h2>
+      <div id="pomoTime" class="big">--:--</div>
+      <div class="row" id="pomoBtns"></div>
+    </section>
+
+    <section class="card">
+      <h2>电脑状态</h2>
+      <div class="stats">
+        <div><b id="cpu">--</b><span>CPU</span></div>
+        <div><b id="gpu">--</b><span>显卡</span></div>
+        <div><b id="bat">--</b><span id="batNote">电量</span></div>
+      </div>
+      <div class="row"><button id="desktop">让电脑回到桌面</button></div>
+    </section>
+
+    <section class="card">
+      <h2>发文字到电脑</h2>
+      <textarea id="text" placeholder="打的字会放进电脑的剪贴板，电脑上直接 Ctrl+V 粘贴"></textarea>
+      <div class="row"><button id="sendText" class="main">发到电脑剪贴板</button></div>
+    </section>
+
+    <section class="card" id="uploadCard">
+      <h2>传文件到电脑</h2>
+      <div class="row">
+        <button id="pick" class="main">选照片 / 文件</button>
+        <input id="file" type="file" multiple hidden />
+      </div>
+      <div class="note">会放进电脑「架子」的「手机」分类里；同名不会覆盖，会自动改名。</div>
+      <div id="files" class="files"></div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+      const key = new URLSearchParams(location.search).get("k") || "";
+      const $ = (id) => document.getElementById(id);
+      const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "X-Key": key, ...(opts.headers || {}) } });
+      let toastTimer = 0;
+      function toast(msg) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+      }
+      const post = (path, body) =>
+        api(path, { method: "POST", body }).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text());
+          return r.json();
+        });
+
+      // ---------- 状态：每 2 秒问一次（页面在后台时不问） ----------
+      let media = null;
+      let mediaAt = 0;
+      let pomo = null;
+      let clockSkew = 0;
+      const fmt = (ms) => {
+        const s = Math.max(0, Math.round(ms / 1000));
+        return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+      };
+      async function poll() {
+        if (document.hidden) return;
+        try {
+          const r = await api("/api/state");
+          if (!r.ok) throw new Error(await r.text());
+          const s = await r.json();
+          clockSkew = s.now - Date.now();
+          $("dot").textContent = "已连接";
+          $("dot").classList.add("on");
+          media = s.media;
+          mediaAt = performance.now();
+          pomo = s.pomo;
+          showMedia(s.cover);
+          showStat(s.stat);
+          $("uploadCard").hidden = !s.upload;
+        } catch (e) {
+          $("dot").textContent = "连不上";
+          $("dot").classList.remove("on");
+          if (String(e.message).includes("密钥")) toast(e.message);
+        }
+      }
+      function showMedia(cover) {
+        const on = media && media.active;
+        $("title").textContent = on ? media.title || "（没有歌名）" : "没有在播放";
+        $("artist").textContent = on ? media.artist || media.source || "" : "";
+        $("toggle").textContent = on && media.playing ? "⏸" : "▶";
+        $("cover").style.backgroundImage = cover ? `url("${cover}")` : "";
+        document.querySelectorAll("[data-media]").forEach((b) => (b.disabled = !on));
+      }
+      function showStat(st) {
+        if (!st) return;
+        $("cpu").textContent = st.cpu == null ? "--" : `${Math.round(st.cpu)}%`;
+        $("gpu").textContent = st.gpuTemp == null ? "--" : `${st.gpuTemp}°`;
+        if (st.battery) {
+          $("bat").textContent = `${st.battery.percent}%`;
+          $("batNote").textContent = st.battery.charging ? "电量 · 充电中" : "电量";
+        }
+      }
+      // 进度条和番茄钟倒计时每秒自己走，不用等下一次轮询
+      function tick() {
+        if (media && media.active && media.durationMs > 0) {
+          const pos = media.positionMs + (media.playing ? performance.now() - mediaAt : 0);
+          $("prog").style.width = `${Math.min(100, (pos / media.durationMs) * 100)}%`;
+        } else $("prog").style.width = "0";
+        const btns = $("pomoBtns");
+        const want = [];
+        if (!pomo) $("pomoTime").textContent = "--:--";
+        else if (pomo.phase === "running") {
+          $("pomoTime").textContent = fmt(pomo.endAt - (Date.now() + clockSkew));
+          want.push(["pause", "暂停"], ["cancel", "结束"]);
+        } else if (pomo.phase === "paused") {
+          $("pomoTime").textContent = fmt(pomo.remainingMs);
+          want.push(["resume", "继续"], ["cancel", "结束"]);
+        } else if (pomo.phase === "done") {
+          $("pomoTime").textContent = "完成！";
+          want.push(["start", "再来一轮"], ["dismiss", "知道了"]);
+        } else {
+          $("pomoTime").textContent = fmt(pomo.totalMs);
+          want.push(["start", "开始专注"]);
+        }
+        const sig = want.map((w) => w[0]).join();
+        if (btns.dataset.sig !== sig) {
+          btns.dataset.sig = sig;
+          btns.replaceChildren(
+            ...want.map(([a, label], i) => {
+              const b = document.createElement("button");
+              b.textContent = label;
+              if (i === 0) b.className = "main";
+              b.onclick = () =>
+                post(`/api/pomodoro/${a}`)
+                  .then((p) => {
+                    pomo = p;
+                    tick();
+                  })
+                  .catch((e) => toast(e.message));
+              return b;
+            }),
+          );
+        }
+      }
+
+      document.querySelectorAll("[data-media]").forEach((b) =>
+        b.addEventListener("click", () =>
+          post(`/api/media/${b.dataset.media}`)
+            .then(() => setTimeout(poll, 400))
+            .catch((e) => toast(e.message)),
+        ),
+      );
+      $("desktop").onclick = () =>
+        post("/api/desktop")
+          .then(() => toast("电脑已回到桌面（再按一次恢复）"))
+          .catch((e) => toast(e.message));
+      $("sendText").onclick = () => {
+        const t = $("text").value;
+        if (!t) return toast("先打点字");
+        post("/api/text", t)
+          .then(() => {
+            toast("已放进电脑剪贴板");
+            $("text").value = "";
+          })
+          .catch((e) => toast(e.message));
+      };
+
+      // ---------- 传文件：一个一个传，显示进度 ----------
+      $("pick").onclick = () => $("file").click();
+      $("file").onchange = async () => {
+        const files = [...$("file").files];
+        $("file").value = "";
+        for (const f of files) await upload(f);
+      };
+      function upload(f) {
+        return new Promise((done) => {
+          const row = document.createElement("div");
+          const name = document.createElement("span");
+          name.textContent = f.name;
+          const st = document.createElement("em");
+          st.textContent = "0%";
+          row.append(name, st);
+          $("files").prepend(row);
+          const x = new XMLHttpRequest();
+          x.open("POST", `/api/upload?name=${encodeURIComponent(f.name)}`);
+          x.setRequestHeader("X-Key", key);
+          x.upload.onprogress = (e) => e.lengthComputable && (st.textContent = `${Math.round((e.loaded / e.total) * 100)}%`);
+          x.onload = () => {
+            if (x.status === 200) {
+              const r = JSON.parse(x.responseText);
+              st.textContent = "✓ 已存好";
+              if (r.name !== f.name) name.textContent = `${f.name} → ${r.name}`;
+            } else st.textContent = `✗ ${x.responseText}`;
+            done();
+          };
+          x.onerror = () => {
+            st.textContent = "✗ 断了";
+            done();
+          };
+          x.send(f);
+        });
+      }
+
+      poll();
+      setInterval(poll, 2000);
+      setInterval(tick, 500);
+      document.addEventListener("visibilitychange", () => !document.hidden && poll());
+    </script>
+  </body>
+</html>

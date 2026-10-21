@@ -1,0 +1,429 @@
+//! 手机遥控：在家里的局域网开一个小网页，手机扫码打开就能用（不用装 App）。
+//!
+//! 能做的：看电脑在放的歌、切歌暂停；番茄钟；回到桌面；看 CPU / 显卡温度 / 电量；
+//! 把手机上打的字送到电脑剪贴板；把手机里的照片、文件传进架子的「手机」分类。
+//!
+//! 安全：
+//! - 默认关着，托盘里打开才开始监听
+//! - 每个请求都要带二维码里的随机密钥（32 位十六进制），没带或不对一律拒绝
+//! - 只接受局域网 / 本机地址（192.168.x、10.x、172.16–31.x、IPv6 本地），外网来的直接拒绝
+//! - 传文件只写进架子的「手机」文件夹，文件名只取最后一段、重名自动改名，绝不覆盖；单个最大 1GB
+//! - 不读、不发任何别的东西；只是局域网里的 HTTP，没有上传到外面
+
+use std::io::Read;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde_json::{json, Value};
+use tauri::{AppHandle, Listener, Manager};
+use tiny_http::{Header, Method, Request, Response, Server};
+
+const PAGE: &str = include_str!("../phone/index.html");
+/// 单个文件最大 1GB
+const MAX_UPLOAD: u64 = 1 << 30;
+/// 发到剪贴板的文字最长 100KB
+const MAX_TEXT: u64 = 100 * 1024;
+
+/// 手机上要显示的最新状态（从程序里本来就有的事件收集来）
+#[derive(Default)]
+struct Snapshot {
+    media: Value,
+    cover: String,
+    pomo: Value,
+    stat: Value,
+}
+
+pub struct Phone {
+    app: AppHandle,
+    token: String,
+    port: u16,
+    shelf_dir: Option<PathBuf>,
+    keep: crate::desktop::Keep,
+    server: Mutex<Option<Arc<Server>>>,
+    snap: Arc<Mutex<Snapshot>>,
+    /// 手机最近一次来要状态的时间（毫秒）；有人在看时才让系统状态线程干活
+    last_poll: AtomicU64,
+    watching: AtomicBool,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// 32 位十六进制的随机密钥（系统的加密随机数）
+pub fn new_token() -> String {
+    let mut b = [0u8; 16];
+    unsafe {
+        let _ = windows::Win32::Security::Cryptography::BCryptGenRandom(
+            None,
+            &mut b,
+            windows::Win32::Security::Cryptography::BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        );
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// 本机在局域网里的地址（UDP 连一下外网地址只是让系统选网卡，不会真的发包）
+pub fn lan_ip() -> Option<IpAddr> {
+    let s = UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("8.8.8.8:80").ok()?;
+    Some(s.local_addr().ok()?.ip())
+}
+
+/// 只认局域网和本机
+fn is_local(addr: Option<&SocketAddr>) -> bool {
+    match addr.map(|a| a.ip()) {
+        Some(IpAddr::V4(v)) => v.is_private() || v.is_loopback() || v.is_link_local(),
+        Some(IpAddr::V6(v)) => {
+            if let Some(v4) = v.to_ipv4_mapped() {
+                return v4.is_private() || v4.is_loopback() || v4.is_link_local();
+            }
+            let seg = v.segments()[0];
+            v.is_loopback() || (seg & 0xfe00) == 0xfc00 || (seg & 0xffc0) == 0xfe80
+        }
+        None => false,
+    }
+}
+
+fn query(url: &str, key: &str) -> Option<String> {
+    let q = url.split_once('?')?.1;
+    q.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then(|| percent_decode(v))
+    })
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    out.push(v);
+                    i += 2;
+                } else {
+                    out.push(b'%');
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn header(name: &str, value: &str) -> Header {
+    Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
+}
+
+fn json_resp(v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_data(v.to_string().into_bytes()).with_header(header("Content-Type", "application/json; charset=utf-8"))
+}
+
+fn text_resp(code: u16, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_data(msg.as_bytes().to_vec())
+        .with_status_code(code)
+        .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+}
+
+/// 把文字放进剪贴板（Unicode 文本）
+fn set_clipboard(text: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        // 剪贴板可能正被别的程序占着：试几次
+        let mut opened = false;
+        for _ in 0..10 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(30));
+        }
+        if !opened {
+            return Err("剪贴板被别的程序占着".into());
+        }
+        let r = (|| {
+            EmptyClipboard().map_err(|e| e.to_string())?;
+            let mem: HGLOBAL = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).map_err(|e| e.to_string())?;
+            let p = GlobalLock(mem) as *mut u16;
+            if p.is_null() {
+                return Err("内存锁不住".to_string());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+            let _ = GlobalUnlock(mem);
+            // 成功后这块内存归系统管，不用自己释放
+            SetClipboardData(CF_UNICODETEXT, Some(HANDLE(mem.0))).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        let _ = CloseClipboard();
+        r
+    }
+}
+
+/// 只留文件名的最后一段，去掉 Windows 不允许的字符
+fn safe_name(raw: &str) -> String {
+    let last = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let cleaned: String = last.chars().map(|c| if "<>:\"|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
+    let cleaned = cleaned.trim_matches(['.', ' ']).to_string();
+    if cleaned.is_empty() { format!("手机文件-{}", now_ms()) } else { cleaned }
+}
+
+impl Phone {
+    pub fn new(app: &AppHandle, token: String, port: u16, shelf_dir: Option<PathBuf>, keep: crate::desktop::Keep) -> Arc<Phone> {
+        let phone = Arc::new(Phone {
+            app: app.clone(),
+            token,
+            port,
+            shelf_dir,
+            keep,
+            server: Mutex::new(None),
+            snap: Arc::new(Mutex::new(Snapshot::default())),
+            last_poll: AtomicU64::new(0),
+            watching: AtomicBool::new(false),
+        });
+        // 收集程序里本来就在广播的状态（灵动岛、小组件也在用）
+        let parse = |s: &str| serde_json::from_str::<Value>(s).unwrap_or(Value::Null);
+        let s = phone.snap.clone();
+        app.listen_any("media", move |e| s.lock().unwrap().media = parse(e.payload()));
+        let s = phone.snap.clone();
+        app.listen_any("media-cover", move |e| s.lock().unwrap().cover = serde_json::from_str::<String>(e.payload()).unwrap_or_default());
+        let s = phone.snap.clone();
+        app.listen_any("pomodoro", move |e| s.lock().unwrap().pomo = parse(e.payload()));
+        let s = phone.snap.clone();
+        app.listen_any("sysstat", move |e| s.lock().unwrap().stat = parse(e.payload()));
+        // 手机不看了（15 秒没来要状态）就让系统状态线程歇着
+        let me = phone.clone();
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(5));
+            if me.watching.load(Ordering::SeqCst) && now_ms().saturating_sub(me.last_poll.load(Ordering::SeqCst)) > 15_000 {
+                me.watching.store(false, Ordering::SeqCst);
+                if let Some(st) = me.app.try_state::<Arc<crate::sysstat::SysStat>>() {
+                    st.watch(false);
+                }
+            }
+        });
+        phone
+    }
+
+    pub fn running(&self) -> bool {
+        self.server.lock().unwrap().is_some()
+    }
+
+    /// 手机上要打开的地址（带密钥）
+    pub fn url(&self) -> String {
+        let ip = lan_ip().map(|i| i.to_string()).unwrap_or_else(|| "电脑的IP".into());
+        format!("http://{ip}:{}/?k={}", self.port, self.token)
+    }
+
+    /// 二维码（SVG）
+    pub fn qr_svg(&self) -> String {
+        match qrcode::QrCode::new(self.url().as_bytes()) {
+            Ok(code) => code
+                .render::<qrcode::render::svg::Color>()
+                .min_dimensions(240, 240)
+                .quiet_zone(true)
+                .build(),
+            Err(_) => String::new(),
+        }
+    }
+
+    /// 开始监听
+    pub fn start(self: &Arc<Self>) -> Result<(), String> {
+        if self.running() {
+            return Ok(());
+        }
+        let server = Arc::new(Server::http(("0.0.0.0", self.port)).map_err(|e| format!("端口 {} 开不了：{e}", self.port))?);
+        *self.server.lock().unwrap() = Some(server.clone());
+        // 让媒体模块把当前在放的歌重推一遍，手机一打开就有
+        if let Some(tx) = self.app.try_state::<crate::media::MediaTx>() {
+            let _ = tx.0.send(crate::media::Msg::Resync);
+        }
+        if let Some(p) = self.app.try_state::<Arc<crate::pomodoro::Pomodoro>>() {
+            self.snap.lock().unwrap().pomo = serde_json::to_value(p.get()).unwrap_or(Value::Null);
+        }
+        let me = self.clone();
+        thread::spawn(move || {
+            for rq in server.incoming_requests() {
+                let me = me.clone();
+                // 传大文件时不挡住别的请求
+                thread::spawn(move || me.handle(rq));
+            }
+        });
+        eprintln!("手机遥控已开启：{}", self.url());
+        Ok(())
+    }
+
+    pub fn stop(&self) {
+        if let Some(s) = self.server.lock().unwrap().take() {
+            s.unblock();
+            eprintln!("手机遥控已关闭");
+        }
+    }
+
+    fn handle(&self, mut rq: Request) {
+        if !is_local(rq.remote_addr()) {
+            let _ = rq.respond(text_resp(403, "只接受家里局域网的连接"));
+            return;
+        }
+        let url = rq.url().to_string();
+        let path = url.split('?').next().unwrap_or("/").to_string();
+        let key = query(&url, "k").or_else(|| {
+            rq.headers().iter().find(|h| h.field.equiv("X-Key")).map(|h| h.value.as_str().to_string())
+        });
+        if key.as_deref() != Some(self.token.as_str()) {
+            let _ = rq.respond(text_resp(403, "密钥不对：请重新扫电脑上的二维码（托盘 → 手机遥控 → 显示二维码）"));
+            return;
+        }
+        let method = rq.method().clone();
+        let resp = match (method, path.as_str()) {
+            (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec()).with_header(header("Content-Type", "text/html; charset=utf-8")),
+            (Method::Get, "/api/state") => json_resp(self.state()),
+            (Method::Post, p) if p.starts_with("/api/media/") => {
+                let msg = match &p[11..] {
+                    "toggle" => Some(crate::media::Msg::Toggle),
+                    "next" => Some(crate::media::Msg::Next),
+                    "prev" => Some(crate::media::Msg::Prev),
+                    _ => None,
+                };
+                match (msg, self.app.try_state::<crate::media::MediaTx>()) {
+                    (Some(m), Some(tx)) => {
+                        let _ = tx.0.send(m);
+                        json_resp(json!({ "ok": true }))
+                    }
+                    _ => text_resp(400, "不认识的操作"),
+                }
+            }
+            (Method::Post, p) if p.starts_with("/api/pomodoro/") => {
+                let a = &p[14..];
+                match (["start", "pause", "resume", "cancel", "dismiss"].contains(&a), self.app.try_state::<Arc<crate::pomodoro::Pomodoro>>()) {
+                    (true, Some(pomo)) => json_resp(serde_json::to_value(pomo.act(a)).unwrap_or(Value::Null)),
+                    _ => text_resp(400, "不认识的操作"),
+                }
+            }
+            (Method::Post, "/api/desktop") => {
+                crate::desktop::run(crate::desktop::Action::Desktop, self.keep.clone());
+                json_resp(json!({ "ok": true }))
+            }
+            (Method::Post, "/api/text") => {
+                let mut buf = String::new();
+                match rq.as_reader().take(MAX_TEXT).read_to_string(&mut buf) {
+                    Ok(_) if !buf.is_empty() => match set_clipboard(&buf) {
+                        Ok(()) => {
+                            eprintln!("手机发来文字（{} 字），已放进剪贴板", buf.chars().count());
+                            json_resp(json!({ "ok": true }))
+                        }
+                        Err(e) => text_resp(500, &e),
+                    },
+                    _ => text_resp(400, "没收到文字"),
+                }
+            }
+            (Method::Post, "/api/upload") => self.upload(&mut rq, &url),
+            _ => text_resp(404, "没有这个"),
+        };
+        let _ = rq.respond(resp);
+    }
+
+    fn state(&self) -> Value {
+        self.last_poll.store(now_ms(), Ordering::SeqCst);
+        // 有人在看：让系统状态线程开始读 CPU / 温度 / 电量
+        if !self.watching.swap(true, Ordering::SeqCst) {
+            if let Some(st) = self.app.try_state::<Arc<crate::sysstat::SysStat>>() {
+                let first = st.watch(true);
+                let mut s = self.snap.lock().unwrap();
+                if s.stat.is_null() {
+                    s.stat = serde_json::to_value(first).unwrap_or(Value::Null);
+                }
+            }
+        }
+        let s = self.snap.lock().unwrap();
+        let shelf = self.shelf_dir.is_some();
+        json!({ "media": s.media, "cover": s.cover, "pomo": s.pomo, "stat": s.stat, "upload": shelf, "now": now_ms() })
+    }
+
+    fn upload(&self, rq: &mut Request, url: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+        let Some(root) = &self.shelf_dir else { return text_resp(400, "架子没开，不能收文件") };
+        let len = rq.body_length().unwrap_or(0) as u64;
+        if len > MAX_UPLOAD {
+            return text_resp(413, "文件太大（最大 1GB）");
+        }
+        let name = safe_name(&query(url, "name").unwrap_or_default());
+        let dir = root.join("手机");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return text_resp(500, &format!("建不了文件夹：{e}"));
+        }
+        // 重名自动改名，绝不覆盖；先写到系统临时文件夹（架子里不会出现写了一半的文件），写完整了再挪进来
+        let target = crate::fileops::unique_target(&dir, &name, false);
+        let tmp = std::env::temp_dir().join(format!("desktop-island-phone-{}.part", now_ms()));
+        let result = (|| -> std::io::Result<u64> {
+            let mut f = std::fs::File::create(&tmp)?;
+            let n = std::io::copy(&mut rq.as_reader().take(MAX_UPLOAD + 1), &mut f)?;
+            if n > MAX_UPLOAD {
+                return Err(std::io::Error::other("文件太大"));
+            }
+            f.sync_all()?;
+            Ok(n)
+        })();
+        match result {
+            Ok(n) => {
+                // 改名时再确认一次没被占（写的过程中可能有同名文件出现）
+                let target = if target.exists() { crate::fileops::unique_target(&dir, &name, false) } else { target };
+                // 同一个盘直接改名；跨盘（比如架子在别的盘）就复制过去
+                let moved = std::fs::rename(&tmp, &target).or_else(|_| std::fs::copy(&tmp, &target).map(|_| ()));
+                // 临时文件是我们自己刚写的，用完清掉
+                let _ = std::fs::remove_file(&tmp);
+                if let Err(e) = moved {
+                    return text_resp(500, &format!("存不了：{e}"));
+                }
+                let saved = target.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                eprintln!("手机传来文件：{saved}（{n} 字节）");
+                json_resp(json!({ "ok": true, "name": saved, "bytes": n }))
+            }
+            Err(e) => {
+                // 只清掉自己刚写的临时文件
+                let _ = std::fs::remove_file(&tmp);
+                text_resp(500, &format!("没传完：{e}"))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_lan_addresses() {
+        let a = |s: &str| is_local(Some(&s.parse::<SocketAddr>().unwrap()));
+        assert!(a("192.168.1.5:1234"));
+        assert!(a("10.0.0.2:1"));
+        assert!(a("172.20.3.4:1"));
+        assert!(a("127.0.0.1:1"));
+        assert!(a("[fe80::1]:1"));
+        assert!(!a("8.8.8.8:1"));
+        assert!(!a("172.32.0.1:1"));
+        assert!(!a("[2001:db8::1]:1"));
+        assert!(!is_local(None));
+    }
+
+    #[test]
+    fn names_and_queries() {
+        assert_eq!(safe_name("../../Windows/evil.exe"), "evil.exe");
+        assert_eq!(safe_name("C:\\a\\b\\照片 1.jpg"), "照片 1.jpg");
+        assert_eq!(safe_name("a<b>:c?.txt"), "a_b__c_.txt");
+        assert!(safe_name("..").starts_with("手机文件-"));
+        assert_eq!(query("/api/upload?name=%E7%85%A7%E7%89%87.jpg&k=x", "name").unwrap(), "照片.jpg");
+        assert_eq!(query("/?k=abc", "k").unwrap(), "abc");
+        assert_eq!(new_token().len(), 32);
+    }
+}

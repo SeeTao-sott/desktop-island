@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>手机遥控</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #14141a;
+        color: #f2f2f5;
+        font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      }
+      main {
+        padding: 22px;
+        text-align: center;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      .sub {
+        color: #9a9aa8;
+        font-size: 13px;
+      }
+      #qr {
+        width: 240px;
+        height: 240px;
+        margin: 16px auto;
+        padding: 10px;
+        background: #fff;
+        border-radius: 14px;
+      }
+      #qr svg {
+        width: 100%;
+        height: 100%;
+      }
+      #url {
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        word-break: break-all;
+        background: #1f1f28;
+        border-radius: 10px;
+        padding: 8px;
+        user-select: all;
+      }
+      .tips {
+        text-align: left;
+        color: #9a9aa8;
+        font-size: 12px;
+        margin-top: 14px;
+      }
+      .off {
+        color: #ff8a8a;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>用手机扫一扫</h1>
+      <div class="sub" id="state">读取中…</div>
+      <div id="qr"></div>
+      <div id="url"></div>
+      <div class="tips">
+        · 手机和电脑要连在同一个 Wi-Fi。<br />
+        · 第一次打开时 Windows 防火墙可能会问要不要允许「desktop-island」访问网络：选「专用网络」允许即可。<br />
+        · 二维码里带着密钥，别发给别人。想让旧链接全部失效：删掉配置文件里的 phone_token 再重启。
+      </div>
+    </main>
+    <script type="module" src="/src/phone-qr.ts"></script>
+  </body>
+</html>
