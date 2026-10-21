@@ -1,0 +1,1493 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0e12" />
+    <title>桌面遥控</title>
+    <style>
+      :root {
+        --bg: #0e0e12;
+        --card: #1a1a22;
+        --line: #2a2a35;
+        --text: #f2f2f5;
+        --sub: #9a9aa8;
+        --accent: #ff5a6a;
+        --ok: #35d07a;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        margin: 0;
+        padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 4px 2px 14px;
+      }
+      h1 {
+        font-size: 19px;
+        margin: 0;
+      }
+      .dot {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .dot::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: #666;
+        vertical-align: 1px;
+      }
+      .dot.on::before {
+        background: var(--ok);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      .card h2 {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--sub);
+        margin: 0 0 10px;
+      }
+      .music {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .cover {
+        width: 72px;
+        height: 72px;
+        border-radius: 12px;
+        background: #2a2a35 center / cover no-repeat;
+        flex: none;
+      }
+      .meta {
+        min-width: 0;
+        flex: 1;
+      }
+      .title {
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .artist {
+        color: var(--sub);
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bar {
+        height: 4px;
+        border-radius: 2px;
+        background: var(--line);
+        margin-top: 8px;
+        overflow: hidden;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      button {
+        flex: 1;
+        font: inherit;
+        font-weight: 600;
+        color: var(--text);
+        background: #262631;
+        border: none;
+        border-radius: 14px;
+        padding: 13px 8px;
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+      button.main {
+        background: var(--accent);
+        color: #fff;
+      }
+      button:disabled {
+        opacity: 0.35;
+      }
+      .big {
+        font-size: 34px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 1px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        text-align: center;
+      }
+      .stats b {
+        display: block;
+        font-size: 22px;
+        font-variant-numeric: tabular-nums;
+      }
+      .stats span {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      textarea {
+        width: 100%;
+        min-height: 80px;
+        font: inherit;
+        color: var(--text);
+        background: #13131a;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        resize: vertical;
+      }
+      .note {
+        font-size: 12px;
+        color: var(--sub);
+        margin-top: 8px;
+      }
+      .files div {
+        font-size: 13px;
+        margin-top: 6px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .files em {
+        color: var(--sub);
+        font-style: normal;
+        flex: none;
+      }
+      .toast {
+        z-index: 30;
+        position: fixed;
+        left: 50%;
+        bottom: calc(24px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        background: #2e2e3a;
+        padding: 10px 16px;
+        border-radius: 12px;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+        max-width: 90vw;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+      /* ---------- 顶部标签 ---------- */
+      .tabs {
+        display: flex;
+        gap: 6px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 4px;
+        margin-bottom: 12px;
+      }
+      .tabs button {
+        padding: 9px 4px;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--sub);
+      }
+      .tabs button.on {
+        background: #2c2c38;
+        color: var(--text);
+      }
+      .view[hidden] {
+        display: none;
+      }
+      /* ---------- 触控板 ---------- */
+      .pad {
+        position: relative;
+        height: max(260px, calc(100dvh - 330px));
+        border-radius: 18px;
+        background: radial-gradient(circle at 50% 40%, #1f1f2a, #15151c);
+        border: 1px solid var(--line);
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        overflow: hidden;
+      }
+      .pad.hold {
+        border-color: var(--accent);
+      }
+      .padHint {
+        position: absolute;
+        left: 14px;
+        right: 64px;
+        bottom: 12px;
+        font-size: 12px;
+        color: #5c5c6a;
+        pointer-events: none;
+      }
+      .wheel {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        bottom: 10px;
+        width: 44px;
+        border-radius: 12px;
+        background: repeating-linear-gradient(#22222c 0 10px, #1a1a22 10px 20px);
+        border: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        writing-mode: vertical-rl;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .mbtn {
+        touch-action: manipulation;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .mbtn.down {
+        background: var(--accent);
+        color: #fff;
+      }
+      .sens {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--sub);
+        margin-top: 12px;
+      }
+      .sens input {
+        flex: 1;
+        accent-color: var(--accent);
+      }
+      /* ---------- 窗口列表 ---------- */
+      .win {
+        display: block;
+        width: 100%;
+        text-align: left;
+        margin-top: 8px;
+        padding: 11px 12px;
+      }
+      .win b {
+        display: block;
+        font-size: 12px;
+        color: var(--sub);
+        font-weight: 600;
+      }
+      .win span {
+        display: block;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .win.active {
+        outline: 2px solid var(--accent);
+      }
+      .win i {
+        font-style: normal;
+        font-size: 11px;
+        color: var(--sub);
+        margin-left: 6px;
+      }
+      /* ---------- 音游 ---------- */
+      .song {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px;
+        margin-top: 10px;
+      }
+      .songName {
+        font-weight: 700;
+      }
+      .songBy {
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .diffs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .diffs button {
+        flex: 0 0 auto;
+        padding: 9px 14px;
+        font-size: 14px;
+      }
+      #game {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: #07070b;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #game[hidden] {
+        display: none;
+      }
+      #cv {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .gbar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        padding-top: env(safe-area-inset-top);
+        z-index: 2;
+      }
+      .gbar button {
+        flex: 0 0 auto;
+        padding: 8px 12px;
+        font-size: 14px;
+        border-radius: 10px;
+      }
+      #gtitle {
+        flex: 1;
+        min-width: 0;
+        font-size: 13px;
+        color: var(--sub);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #gacc {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+      }
+      #gcombo {
+        position: absolute;
+        left: 50%;
+        top: 56px;
+        transform: translateX(-50%);
+        font-weight: 800;
+        color: var(--sub);
+        pointer-events: none;
+      }
+      #gjudge {
+        position: absolute;
+        left: 50%;
+        top: 78px;
+        transform: translateX(-50%);
+        font-size: 22px;
+        font-weight: 900;
+        opacity: 0;
+        pointer-events: none;
+      }
+      #gjudge[data-j="perfect"] {
+        color: #ffd36b;
+      }
+      #gjudge[data-j="great"] {
+        color: #6bd5ff;
+      }
+      #gjudge[data-j="miss"] {
+        color: #8a8a96;
+      }
+      #gmsg {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: min(420px, 88%);
+        max-height: 92%;
+        overflow: auto;
+        background: rgba(26, 26, 34, 0.94);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+        text-align: center;
+        z-index: 3;
+      }
+      #gmsg[hidden] {
+        display: none;
+      }
+      .gtext {
+        color: var(--sub);
+        margin-top: 4px;
+      }
+      .gscore {
+        font-size: 40px;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>桌面遥控</h1>
+      <span id="dot" class="dot">连接中…</span>
+    </header>
+
+    <nav class="tabs">
+      <button data-view="main" class="on">遥控</button>
+      <button data-view="pad">触控板</button>
+      <button data-view="win">窗口</button>
+      <button data-view="game">音游</button>
+    </nav>
+
+    <div class="view" id="v-main">
+
+    <section class="card">
+      <h2>正在播放</h2>
+      <div class="music">
+        <div id="cover" class="cover"></div>
+        <div class="meta">
+          <div id="title" class="title">没有在播放</div>
+          <div id="artist" class="artist"></div>
+          <div class="bar"><i id="prog"></i></div>
+        </div>
+      </div>
+      <div class="row">
+        <button data-media="prev">⏮</button>
+        <button id="toggle" class="main" data-media="toggle">▶</button>
+        <button data-media="next">⏭</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>番茄钟</h2>
+      <div id="pomoTime" class="big">--:--</div>
+      <div class="row" id="pomoBtns"></div>
+    </section>
+
+    <section class="card">
+      <h2>电脑状态</h2>
+      <div class="stats">
+        <div><b id="cpu">--</b><span>CPU</span></div>
+        <div><b id="gpu">--</b><span>显卡</span></div>
+        <div><b id="bat">--</b><span id="batNote">电量</span></div>
+      </div>
+      <div class="row"><button id="desktop">让电脑回到桌面</button></div>
+    </section>
+
+    <section class="card">
+      <h2>发文字到电脑</h2>
+      <textarea id="text" placeholder="打的字会放进电脑的剪贴板，电脑上直接 Ctrl+V 粘贴"></textarea>
+      <div class="row"><button id="sendText" class="main">发到电脑剪贴板</button></div>
+    </section>
+
+    <section class="card" id="uploadCard">
+      <h2>传文件到电脑</h2>
+      <div class="row">
+        <button id="pick" class="main">选照片 / 文件</button>
+        <input id="file" type="file" multiple hidden />
+      </div>
+      <div class="note">会放进电脑「架子」的「手机」分类里；同名不会覆盖，会自动改名。</div>
+      <div id="files" class="files"></div>
+    </section>
+    </div>
+
+    <div class="view" id="v-pad" hidden>
+      <div id="pad" class="pad">
+        <div class="padHint">单指移动 · 轻点＝左键 · 双指轻点＝右键 · 双指上下＝滚轮 · 点两下按住＝拖动</div>
+        <div id="wheel" class="wheel">滚 轮</div>
+      </div>
+      <div class="row">
+        <button class="mbtn" data-btn="left">左键</button>
+        <button class="mbtn" data-btn="middle">中键</button>
+        <button class="mbtn" data-btn="right">右键</button>
+      </div>
+      <div class="row">
+        <button class="mbtn" data-btn="back">← 返回</button>
+        <button class="mbtn" data-btn="forward">前进 →</button>
+      </div>
+      <label class="sens">灵敏度 <input id="sens" type="range" min="0.5" max="4" step="0.1" /> <span id="sensV"></span></label>
+      <label class="sens"><input id="natural" type="checkbox" style="flex: none" /> 滚动方向跟手机一样（手指往上推＝页面往下）</label>
+    </div>
+
+    <div class="view" id="v-win" hidden>
+      <div class="row" style="margin-top: 0">
+        <button id="altTab" class="main">上一个窗口（Alt+Tab）</button>
+        <button id="winRefresh" style="flex: 0 0 auto; padding: 13px 16px">刷新</button>
+      </div>
+      <div id="wins"></div>
+      <div class="note">点一个就切过去。以管理员身份运行的程序（比如任务管理器）系统不让遥控。</div>
+    </div>
+
+    <div class="view" id="v-game" hidden>
+      <section class="card">
+        <h2>音游 · 手机模式</h2>
+        <div class="note" style="margin-top: 0">电脑放歌、画裂缝；手机上直接用手指点靶子，不用瞄准。</div>
+        <div class="row"><button id="rhOpen" class="main">在电脑上打开选歌</button></div>
+        <label class="sens">点击补偿 <input id="comp" type="range" min="0" max="150" step="5" /> <span id="compV"></span></label>
+        <div class="note">结算说"平均偏晚"就往右调一点（手机屏幕感应手指有延迟）。</div>
+      </section>
+      <div id="songs"><div class="note">读取歌单…</div></div>
+    </div>
+
+    <div id="game" hidden>
+      <canvas id="cv"></canvas>
+      <div class="gbar">
+        <button id="gquit">✕</button>
+        <div id="gtitle"></div>
+        <span id="gacc"></span>
+        <button id="gpause" hidden>暂停</button>
+        <button id="grot">转向</button>
+        <button id="gfull">全屏</button>
+      </div>
+      <div id="gcombo"></div>
+      <div id="gjudge"></div>
+      <div id="gmsg" hidden></div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+      const key = new URLSearchParams(location.search).get("k") || "";
+      const $ = (id) => document.getElementById(id);
+      const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "X-Key": key, ...(opts.headers || {}) } });
+      let toastTimer = 0;
+      function toast(msg) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+      }
+      const post = (path, body) =>
+        api(path, { method: "POST", body }).then(async (r) => {
+          if (!r.ok) throw new Error(await r.text());
+          return r.json();
+        });
+
+      // ---------- 状态：每 2 秒问一次（页面在后台时不问） ----------
+      let media = null;
+      let mediaAt = 0;
+      let pomo = null;
+      let clockSkew = 0;
+      const fmt = (ms) => {
+        const s = Math.max(0, Math.round(ms / 1000));
+        return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+      };
+      async function poll() {
+        if (document.hidden) return;
+        try {
+          const r = await api("/api/state");
+          if (!r.ok) throw new Error(await r.text());
+          const s = await r.json();
+          clockSkew = s.now - Date.now();
+          $("dot").textContent = "已连接";
+          $("dot").classList.add("on");
+          media = s.media;
+          mediaAt = performance.now();
+          pomo = s.pomo;
+          showMedia(s.cover);
+          showStat(s.stat);
+          $("uploadCard").hidden = !s.upload;
+        } catch (e) {
+          $("dot").textContent = "连不上";
+          $("dot").classList.remove("on");
+          if (String(e.message).includes("密钥")) toast(e.message);
+        }
+      }
+      function showMedia(cover) {
+        const on = media && media.active;
+        $("title").textContent = on ? media.title || "（没有歌名）" : "没有在播放";
+        $("artist").textContent = on ? media.artist || media.source || "" : "";
+        $("toggle").textContent = on && media.playing ? "⏸" : "▶";
+        $("cover").style.backgroundImage = cover ? `url("${cover}")` : "";
+        document.querySelectorAll("[data-media]").forEach((b) => (b.disabled = !on));
+      }
+      function showStat(st) {
+        if (!st) return;
+        $("cpu").textContent = st.cpu == null ? "--" : `${Math.round(st.cpu)}%`;
+        $("gpu").textContent = st.gpuTemp == null ? "--" : `${st.gpuTemp}°`;
+        if (st.battery) {
+          $("bat").textContent = `${st.battery.percent}%`;
+          $("batNote").textContent = st.battery.charging ? "电量 · 充电中" : "电量";
+        }
+      }
+      // 进度条和番茄钟倒计时每秒自己走，不用等下一次轮询
+      function tick() {
+        if (media && media.active && media.durationMs > 0) {
+          const pos = media.positionMs + (media.playing ? performance.now() - mediaAt : 0);
+          $("prog").style.width = `${Math.min(100, (pos / media.durationMs) * 100)}%`;
+        } else $("prog").style.width = "0";
+        const btns = $("pomoBtns");
+        const want = [];
+        if (!pomo) $("pomoTime").textContent = "--:--";
+        else if (pomo.phase === "running") {
+          $("pomoTime").textContent = fmt(pomo.endAt - (Date.now() + clockSkew));
+          want.push(["pause", "暂停"], ["cancel", "结束"]);
+        } else if (pomo.phase === "paused") {
+          $("pomoTime").textContent = fmt(pomo.remainingMs);
+          want.push(["resume", "继续"], ["cancel", "结束"]);
+        } else if (pomo.phase === "done") {
+          $("pomoTime").textContent = "完成！";
+          want.push(["start", "再来一轮"], ["dismiss", "知道了"]);
+        } else {
+          $("pomoTime").textContent = fmt(pomo.totalMs);
+          want.push(["start", "开始专注"]);
+        }
+        const sig = want.map((w) => w[0]).join();
+        if (btns.dataset.sig !== sig) {
+          btns.dataset.sig = sig;
+          btns.replaceChildren(
+            ...want.map(([a, label], i) => {
+              const b = document.createElement("button");
+              b.textContent = label;
+              if (i === 0) b.className = "main";
+              b.onclick = () =>
+                post(`/api/pomodoro/${a}`)
+                  .then((p) => {
+                    pomo = p;
+                    tick();
+                  })
+                  .catch((e) => toast(e.message));
+              return b;
+            }),
+          );
+        }
+      }
+
+      document.querySelectorAll("[data-media]").forEach((b) =>
+        b.addEventListener("click", () =>
+          post(`/api/media/${b.dataset.media}`)
+            .then(() => setTimeout(poll, 400))
+            .catch((e) => toast(e.message)),
+        ),
+      );
+      $("desktop").onclick = () =>
+        post("/api/desktop")
+          .then(() => toast("电脑已回到桌面（再按一次恢复）"))
+          .catch((e) => toast(e.message));
+      $("sendText").onclick = () => {
+        const t = $("text").value;
+        if (!t) return toast("先打点字");
+        post("/api/text", t)
+          .then(() => {
+            toast("已放进电脑剪贴板");
+            $("text").value = "";
+          })
+          .catch((e) => toast(e.message));
+      };
+
+      // ---------- 传文件：一个一个传，显示进度 ----------
+      $("pick").onclick = () => $("file").click();
+      $("file").onchange = async () => {
+        const files = [...$("file").files];
+        $("file").value = "";
+        for (const f of files) await upload(f);
+      };
+      function upload(f) {
+        return new Promise((done) => {
+          const row = document.createElement("div");
+          const name = document.createElement("span");
+          name.textContent = f.name;
+          const st = document.createElement("em");
+          st.textContent = "0%";
+          row.append(name, st);
+          $("files").prepend(row);
+          const x = new XMLHttpRequest();
+          x.open("POST", `/api/upload?name=${encodeURIComponent(f.name)}`);
+          x.setRequestHeader("X-Key", key);
+          x.upload.onprogress = (e) => e.lengthComputable && (st.textContent = `${Math.round((e.loaded / e.total) * 100)}%`);
+          x.onload = () => {
+            if (x.status === 200) {
+              const r = JSON.parse(x.responseText);
+              st.textContent = "✓ 已存好";
+              if (r.name !== f.name) name.textContent = `${f.name} → ${r.name}`;
+            } else st.textContent = `✗ ${x.responseText}`;
+            done();
+          };
+          x.onerror = () => {
+            st.textContent = "✗ 断了";
+            done();
+          };
+          x.send(f);
+        });
+      }
+
+      // ---------- 标签页 ----------
+      function show(v) {
+        document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+        document.querySelectorAll(".view").forEach((el) => (el.hidden = el.id !== `v-${v}`));
+        if (v === "win") loadWindows();
+        if (v === "game") loadSongs();
+      }
+      document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => show(b.dataset.view)));
+
+      // ---------- 鼠标：动作排队，一次只发一个请求，等的时候把移动合并起来 ----------
+      const queue = [];
+      let sending = false;
+      function push(ev) {
+        const last = queue[queue.length - 1];
+        if (last && last.t === ev.t && (ev.t === "m" || ev.t === "w")) {
+          last.x += ev.x;
+          last.y += ev.y;
+        } else queue.push(ev);
+        flush();
+      }
+      function flush() {
+        if (sending || !queue.length) return;
+        sending = true;
+        const batch = queue.splice(0, queue.length);
+        api("/api/mouse", { method: "POST", body: JSON.stringify(batch) })
+          .then(async (r) => r.ok || toast(await r.text()))
+          .catch(() => toast("连不上电脑"))
+          .finally(() => {
+            sending = false;
+            flush();
+          });
+      }
+      const btn = (b, a = "click") => push({ t: "b", b, a });
+      const buzz = () => navigator.vibrate && navigator.vibrate(8);
+
+      let sens = Number(localStorage.getItem("sens")) || 1.6;
+      let natural = localStorage.getItem("natural") !== "0";
+      $("sens").value = sens;
+      $("sensV").textContent = sens.toFixed(1);
+      $("natural").checked = natural;
+      $("sens").oninput = () => {
+        sens = Number($("sens").value);
+        $("sensV").textContent = sens.toFixed(1);
+        localStorage.setItem("sens", sens);
+      };
+      $("natural").onchange = () => {
+        natural = $("natural").checked;
+        localStorage.setItem("natural", natural ? "1" : "0");
+      };
+
+      // 小数部分攒着，凑够 1 像素再发
+      let restX = 0,
+        restY = 0,
+        restW = 0;
+      function move(dx, dy, dt) {
+        const speed = Math.hypot(dx, dy) / Math.max(dt, 1); // 像素 / 毫秒
+        const gain = sens * Math.min(3, Math.max(0.6, 0.6 + speed * 0.9)); // 慢的时候准，快的时候远
+        restX += dx * gain;
+        restY += dy * gain;
+        const x = Math.trunc(restX),
+          y = Math.trunc(restY);
+        restX -= x;
+        restY -= y;
+        if (x || y) push({ t: "m", x, y });
+      }
+      // dy：手指往下为正。手机上手指移动 1 像素 ≈ 滚轮 4 个单位（120 = 一格）
+      function scroll(dy) {
+        restW += dy * 4 * (natural ? 1 : -1);
+        const w = Math.trunc(restW);
+        restW -= w;
+        if (w) push({ t: "w", x: 0, y: w });
+      }
+
+      // ---------- 触控板手势 ----------
+      const pad = $("pad");
+      const wheel = $("wheel");
+      const pts = new Map(); // 手指 id -> {x, y}
+      let gesture = null; // 这一次按下的情况
+      let lastTap = { at: 0, x: 0, y: 0 };
+      let holding = false; // 点两下按住拖动中
+      const avgY = () => [...pts.values()].reduce((s, p) => s + p.y, 0) / pts.size;
+      pad.addEventListener("touchstart", (e) => {
+        if (e.target === wheel) return;
+        e.preventDefault();
+        const now = performance.now();
+        for (const t of e.changedTouches) pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+        if (!gesture) {
+          const t = e.changedTouches[0];
+          gesture = { start: now, moved: 0, maxFingers: 0, at: now, sy: 0 };
+          // 刚轻点过、又在附近按下：按住左键，接着划就是拖动
+          if (now - lastTap.at < 300 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 50) {
+            holding = true;
+            pad.classList.add("hold");
+            btn("left", "down");
+          }
+        }
+        gesture.maxFingers = Math.max(gesture.maxFingers, pts.size);
+        gesture.sy = avgY();
+      });
+      pad.addEventListener("touchmove", (e) => {
+        if (!gesture || e.target === wheel) return;
+        e.preventDefault();
+        const now = performance.now();
+        const dt = now - gesture.at;
+        gesture.at = now;
+        if (pts.size >= 2) {
+          for (const t of e.changedTouches) if (pts.has(t.identifier)) pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+          const y = avgY();
+          const dy = y - gesture.sy;
+          gesture.sy = y;
+          gesture.moved += Math.abs(dy);
+          scroll(dy);
+          return;
+        }
+        for (const t of e.changedTouches) {
+          const p = pts.get(t.identifier);
+          if (!p) continue;
+          const dx = t.clientX - p.x,
+            dy = t.clientY - p.y;
+          pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+          gesture.moved += Math.hypot(dx, dy);
+          move(dx, dy, dt);
+        }
+      });
+      function end(e) {
+        if (!gesture || e.target === wheel) return;
+        e.preventDefault();
+        const last = e.changedTouches[0];
+        for (const t of e.changedTouches) pts.delete(t.identifier);
+        if (pts.size) {
+          gesture.sy = avgY();
+          return;
+        }
+        const quick = performance.now() - gesture.start < 260 && gesture.moved < 12;
+        if (holding) {
+          btn("left", "up");
+          holding = false;
+          pad.classList.remove("hold");
+          lastTap.at = 0;
+        } else if (quick && gesture.maxFingers >= 2) {
+          btn("right");
+          buzz();
+        } else if (quick) {
+          btn("left");
+          buzz();
+          lastTap = { at: performance.now(), x: last.clientX, y: last.clientY };
+        }
+        gesture = null;
+      }
+      pad.addEventListener("touchend", end);
+      pad.addEventListener("touchcancel", end);
+
+      // 右边的滚轮条：一根手指上下划
+      let wheelY = 0;
+      wheel.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        wheelY = e.targetTouches[0].clientY;
+      });
+      wheel.addEventListener("touchmove", (e) => {
+        e.preventDefault();
+        const y = e.targetTouches[0].clientY;
+        scroll(y - wheelY);
+        wheelY = y;
+      });
+
+      // 下面的按键：按下就按下、松开就松开（按住左键再用另一根手指划＝拖动）
+      document.querySelectorAll(".mbtn").forEach((b) => {
+        const down = (e) => {
+          e.preventDefault();
+          b.classList.add("down");
+          btn(b.dataset.btn, "down");
+          buzz();
+        };
+        const up = (e) => {
+          e.preventDefault();
+          if (!b.classList.contains("down")) return;
+          b.classList.remove("down");
+          btn(b.dataset.btn, "up");
+        };
+        b.addEventListener("touchstart", down);
+        b.addEventListener("touchend", up);
+        b.addEventListener("touchcancel", up);
+        // 电脑浏览器上调试用
+        b.addEventListener("mousedown", down);
+        b.addEventListener("mouseup", up);
+        b.addEventListener("mouseleave", up);
+      });
+
+      // ---------- 窗口 ----------
+      async function loadWindows() {
+        try {
+          const r = await api("/api/windows");
+          if (!r.ok) throw new Error(await r.text());
+          const list = await r.json();
+          $("wins").replaceChildren(
+            ...list.map((w) => {
+              const b = document.createElement("button");
+              b.className = "win" + (w.active ? " active" : "");
+              const app = document.createElement("b");
+              app.textContent = w.app || "窗口";
+              if (w.min) {
+                const tag = document.createElement("i");
+                tag.textContent = "已最小化";
+                app.append(tag);
+              }
+              const t = document.createElement("span");
+              t.textContent = w.title;
+              b.append(app, t);
+              b.onclick = () =>
+                post(`/api/windows/switch?id=${w.id}`)
+                  .then(() => {
+                    toast(`已切到：${w.app || w.title}`);
+                    show("pad");
+                  })
+                  .catch((e) => {
+                    toast(e.message);
+                    loadWindows();
+                  });
+              return b;
+            }),
+          );
+        } catch (e) {
+          toast(e.message);
+        }
+      }
+      $("winRefresh").onclick = loadWindows;
+      $("altTab").onclick = () =>
+        post("/api/alttab")
+          .then(() => setTimeout(loadWindows, 300))
+          .catch((e) => toast(e.message));
+
+      // ---------- 音游（手机模式）：手机上选歌、点靶子，电脑放歌、画裂缝、记分 ----------
+      const DIFF_LABEL = { Easy: "简单", Normal: "普通", Hard: "困难", Expert: "专家", ExpertPlus: "专家+" };
+      let songsLoaded = false;
+      async function loadSongs(force = false) {
+        if (songsLoaded && !force) return;
+        const list = $("songs");
+        try {
+          const r = await api("/api/rhythm/songs");
+          if (!r.ok) throw new Error(await r.text());
+          const songs = await r.json();
+          songsLoaded = true;
+          list.replaceChildren();
+          if (!songs.length) list.textContent = "电脑的 charts 文件夹里还没有歌";
+          for (const s of songs) {
+            const card = document.createElement("div");
+            card.className = "song";
+            const name = document.createElement("div");
+            name.className = "songName";
+            name.textContent = s.title + (s.sub_title ? ` ${s.sub_title}` : "");
+            const by = document.createElement("div");
+            by.className = "songBy";
+            by.textContent = `${s.artist}${s.mapper ? ` · 谱 ${s.mapper}` : ""} · ${Math.round(s.bpm)} BPM`;
+            const diffs = document.createElement("div");
+            diffs.className = "diffs";
+            // 和电脑上的选歌菜单一样：osu! 只列能玩的，按玩法、靶子数排；BeatSaver 只列标准谱
+            let ds;
+            if (s.format === "osu") ds = s.difficulties.filter((d) => !d.note).sort((a, b) => a.tag.localeCompare(b.tag) || a.count - b.count);
+            else {
+              const std = s.difficulties.filter((d) => d.characteristic === "Standard");
+              ds = std.length ? std : s.difficulties;
+            }
+            for (const d of ds) {
+              const b = document.createElement("button");
+              b.textContent = s.format === "osu" ? (d.tag ? `${d.name}（${d.tag}）` : d.name) : (DIFF_LABEL[d.name] ?? d.name);
+              b.onclick = () => play(s, d);
+              diffs.append(b);
+            }
+            card.append(name, by, diffs);
+            list.append(card);
+          }
+        } catch (e) {
+          list.textContent = `读歌单失败：${e.message}`;
+        }
+      }
+      const enc = encodeURIComponent;
+      function play(s, d) {
+        goLandscape(); // 点歌这一下算"用户操作"，浏览器才肯全屏
+        post(`/api/rhythm/play?id=${enc(s.id)}&c=${enc(d.characteristic)}&d=${enc(d.name)}`)
+          .then(() => openGame())
+          .catch((e) => toast(e.message));
+      }
+      $("rhOpen").onclick = () =>
+        post("/api/rhythm/open")
+          .then(() => toast("电脑上弹出了选歌菜单，在手机或电脑上选都行"))
+          .catch((e) => toast(e.message));
+
+      // 点击补偿：手机屏幕感应到手指要一点时间，点的总是偏晚就往上调
+      let tapComp = Number(localStorage.getItem("tapComp")) || 0;
+      $("comp").value = tapComp;
+      $("compV").textContent = `${tapComp}ms`;
+      $("comp").oninput = () => {
+        tapComp = Number($("comp").value);
+        $("compV").textContent = `${tapComp}ms`;
+        localStorage.setItem("tapComp", tapComp);
+      };
+
+      // 在音游页时每秒看一下电脑：电脑上选了歌（游戏开着）就自动进游戏画面
+      setInterval(async () => {
+        if ($("v-game").hidden || G.open || document.hidden) return;
+        try {
+          const st = await (await api("/api/rhythm/state")).json();
+          if (st.phase !== "closed") openGame();
+        } catch {}
+      }, 1000);
+
+      const G = {
+        open: false,
+        seen: false,
+        busy: false,
+        timer: 0,
+        state: { phase: "closed" },
+        planId: 0,
+        plan: null,
+        tg: [],
+        st: new Int8Array(0), // 0 还在 / 1 打中 / 2 Miss
+        goneAt: new Float64Array(0),
+        next: 0,
+        live: [],
+        skew: 0,
+        frozen: -1e9,
+        nShow: 1,
+        combo: 0,
+        cnt: { perfect: 0, great: 0, miss: 0 },
+        taps: [],
+      };
+      const ROW_ORDER = [1, 2, 0, 3];
+      const nAt = (steps, t) => {
+        let n = steps[0]?.n ?? 1;
+        for (const s of steps) {
+          if ((s.t ?? -1e9) > t) break;
+          n = s.n;
+        }
+        return n;
+      };
+
+      // 和电脑对表：来回 8 次，用最快的那次（网络等待最少，算得最准）
+      async function syncClock() {
+        let best = null;
+        for (let k = 0; k < 8; k++) {
+          try {
+            const a = Date.now();
+            const r = await api("/api/time");
+            const s = (await r.json()).now;
+            const b = Date.now();
+            if (!best || b - a < best.rtt) best = { rtt: b - a, skew: s - (a + b) / 2 };
+          } catch {}
+        }
+        if (best) G.skew = best.skew;
+      }
+
+      function openGame() {
+        if (G.open) return;
+        Object.assign(G, { open: true, seen: false, state: { phase: "closed" }, planId: 0, plan: null, live: [], next: 0 });
+        $("game").hidden = false;
+        document.body.style.overflow = "hidden"; // 游戏画面下面的页面别跟着滚
+        fitGame();
+        showGameUI();
+        syncClock();
+        G.timer = setInterval(pollGame, 300);
+        pollGame();
+        requestAnimationFrame(drawGame);
+      }
+      function closeGame() {
+        G.open = false;
+        clearInterval(G.timer);
+        $("game").hidden = true;
+        document.body.style.overflow = "";
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      }
+      const cmd = (a) => post(`/api/rhythm/cmd/${a}`).catch((e) => toast(e.message));
+      function quitGame() {
+        if (G.seen && G.state.phase !== "closed") cmd("quit");
+        closeGame();
+      }
+
+      async function pollGame() {
+        if (G.busy || !G.open) return;
+        G.busy = true;
+        try {
+          const st = await (await api("/api/rhythm/state")).json();
+          if (st.plan !== G.planId) {
+            const p = await (await api("/api/rhythm/plan")).json();
+            setPlan(p.id, p.plan);
+          }
+          const prev = G.state.phase;
+          G.state = st;
+          if (st.phase !== "closed") G.seen = true;
+          else if (G.seen) return closeGame(); // 电脑上退出了
+          if (st.phase !== prev) showGameUI();
+          // 歌重新开始（重开）：手机这边也从头来
+        } catch {
+        } finally {
+          G.busy = false;
+        }
+      }
+      function setPlan(id, plan) {
+        G.planId = id;
+        G.plan = plan;
+        G.tg = plan?.targets ?? [];
+        G.st = new Int8Array(G.tg.length);
+        G.goneAt = new Float64Array(G.tg.length);
+        G.next = 0;
+        G.live = [];
+        G.combo = 0;
+        G.cnt = { perfect: 0, great: 0, miss: 0 };
+        G.frozen = -1e9;
+        updateHud();
+      }
+
+      const greatW = () => G.plan.window / 1000;
+      const perfectW = () => G.plan.window / 2000;
+      const lateW = (x) => greatW() + (x[7] ? G.plan.pairGrace / 1000 : 0);
+      /** 歌放到第几秒（电脑那边的歌曲时间）；暂停时停住 */
+      function songNow() {
+        const s = G.state;
+        if (s.phase !== "playing" || s.anchor == null) return G.frozen;
+        G.frozen = (Date.now() + G.skew - s.anchor) / 1000;
+        return G.frozen;
+      }
+
+      // ---------- 画面 ----------
+      const cv = $("cv");
+      const cx = cv.getContext("2d");
+      const ACC = "#8caaff",
+        GOLD = "#ffc53d",
+        GREEN = "#35ff7a";
+      function layout(w, h, cols) {
+        const top = 58,
+          pad = 10;
+        const cell = Math.min((w - pad * 2) / cols, (h - top - pad) / 4);
+        const left = (w - cell * cols) / 2;
+        const y0 = top + (h - top - pad - cell * 4) / 2;
+        return { cell, left, y0 };
+      }
+      function pos(L, x) {
+        return { x: L.left + (x[1] + 0.5 + x[5]) * L.cell, y: L.y0 + (3 - x[2] + 0.5 - x[6]) * L.cell };
+      }
+      let L = { cell: 40, left: 0, y0: 0 };
+      function drawGame() {
+        if (!G.open) return;
+        requestAnimationFrame(drawGame);
+        const dpr = devicePixelRatio || 1;
+        const w = cv.clientWidth,
+          h = cv.clientHeight;
+        if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+          cv.width = Math.round(w * dpr);
+          cv.height = Math.round(h * dpr);
+        }
+        cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        cx.clearRect(0, 0, w, h);
+        const plan = G.plan;
+        const cols = plan?.cols ?? 9;
+        L = layout(w, h, cols);
+        const pnow = performance.now();
+        const now = plan ? songNow() : -1e9;
+        // 出靶、过期算 Miss、淡出完的拿掉
+        let need = 1;
+        if (plan && G.state.phase === "playing") {
+          while (G.next < G.tg.length && G.tg[G.next][0] - plan.lead <= now) G.live.push(G.next++);
+        }
+        const alive = new Map();
+        for (let k = G.live.length - 1; k >= 0; k--) {
+          const i = G.live[k];
+          const x = G.tg[i];
+          if (G.st[i] === 0 && G.state.phase === "playing" && now - x[0] > lateW(x)) {
+            G.st[i] = 2;
+            G.goneAt[i] = pnow;
+            localJudge("miss");
+          }
+          if (G.st[i] !== 0 && pnow - G.goneAt[i] > 260) {
+            G.live.splice(k, 1);
+            continue;
+          }
+          if (G.st[i] === 0) {
+            need = Math.max(need, ROW_ORDER.indexOf(x[2]) + 1);
+            if (x[4] >= 0) alive.set(x[4], (alive.get(x[4]) ?? 0) + 1);
+          }
+        }
+        const n = Math.max(plan ? nAt(plan.steps, now) : 1, need);
+        G.nShow += (n - G.nShow) * 0.12;
+        // 格子：露出来的行亮，没露出来的很淡
+        const c = L.cell;
+        for (let slot = 0; slot < 4; slot++) {
+          const vis = Math.min(1, Math.max(0, G.nShow - ROW_ORDER.indexOf(slot)));
+          const y = L.y0 + (3 - slot) * c;
+          for (let col = 0; col < cols; col++) {
+            cx.fillStyle = `rgba(140,170,255,${0.03 + 0.07 * vis})`;
+            cx.strokeStyle = `rgba(140,170,255,${0.06 + 0.3 * vis})`;
+            cx.lineWidth = 1;
+            cx.beginPath();
+            cx.roundRect(L.left + col * c + c * 0.07, y + c * 0.07, c * 0.86, c * 0.86, c * 0.12);
+            cx.fill();
+            cx.stroke();
+          }
+        }
+        if (!plan) return;
+        const lead = plan.lead;
+        const R = c * 0.33;
+        // 一组靶子之间的金线
+        const groups = new Map();
+        for (const i of G.live) {
+          const x = G.tg[i];
+          if (G.st[i] === 0 && x[4] >= 0 && (alive.get(x[4]) ?? 0) >= 2) groups.set(x[4], [...(groups.get(x[4]) ?? []), pos(L, x)]);
+        }
+        cx.strokeStyle = GOLD;
+        cx.lineWidth = Math.max(2, c * 0.06);
+        cx.globalAlpha = 0.8;
+        for (const ps of groups.values()) {
+          cx.beginPath();
+          ps.forEach((p, k) => (k ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y)));
+          cx.stroke();
+        }
+        cx.globalAlpha = 1;
+        // 靶子：先画晚的，早的（快到拍点的）压在上面
+        for (let k = G.live.length - 1; k >= 0; k--) {
+          const i = G.live[k];
+          const x = G.tg[i];
+          const p = pos(L, x);
+          if (G.st[i] !== 0) {
+            const t = (pnow - G.goneAt[i]) / 260;
+            cx.globalAlpha = 1 - t;
+            cx.strokeStyle = G.st[i] === 1 ? GREEN : "#555a66";
+            cx.lineWidth = 3;
+            cx.beginPath();
+            cx.arc(p.x, p.y, R * (1 + t * 0.8), 0, Math.PI * 2);
+            cx.stroke();
+            cx.globalAlpha = 1;
+            continue;
+          }
+          const left = x[0] - now;
+          const appear = Math.min(1, Math.max(0, (lead - left) / 0.15));
+          const ready = left <= Math.min(perfectW(), lead * 0.3) && left >= -lateW(x);
+          const linked = x[4] >= 0 && (alive.get(x[4]) ?? 0) >= 2;
+          cx.globalAlpha = appear;
+          // 收圈
+          cx.strokeStyle = linked ? GOLD : ready ? GREEN : ACC;
+          cx.lineWidth = Math.max(2, c * 0.035);
+          cx.beginPath();
+          cx.arc(p.x, p.y, R * (1 + 1.8 * Math.max(0, left / lead)), 0, Math.PI * 2);
+          cx.stroke();
+          // 圆盘 + 中心点
+          cx.fillStyle = ready ? GREEN : linked ? GOLD : ACC;
+          cx.globalAlpha = appear * 0.9;
+          cx.beginPath();
+          cx.arc(p.x, p.y, R, 0, Math.PI * 2);
+          cx.fill();
+          cx.fillStyle = "#fff";
+          cx.globalAlpha = appear;
+          cx.beginPath();
+          cx.arc(p.x, p.y, R * 0.26, 0, Math.PI * 2);
+          cx.fill();
+          cx.globalAlpha = 1;
+        }
+        // 点空的地方：一圈淡淡的波纹
+        G.taps = G.taps.filter((t) => pnow - t.at < 250);
+        for (const t of G.taps) {
+          const k = (pnow - t.at) / 250;
+          cx.globalAlpha = 0.5 * (1 - k);
+          cx.strokeStyle = "#fff";
+          cx.lineWidth = 2;
+          cx.beginPath();
+          cx.arc(t.x, t.y, c * 0.15 + c * 0.3 * k, 0, Math.PI * 2);
+          cx.stroke();
+        }
+        cx.globalAlpha = 1;
+      }
+
+      // ---------- 点靶子 ----------
+      cv.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault();
+          if (!G.plan || G.state.phase !== "playing" || G.state.anchor == null) return;
+          const now = songNow();
+          const tapT = now - tapComp / 1000;
+          for (const t of e.changedTouches) {
+            const { x: px, y: py } = toLocal(t);
+            // 手指下面（格子大小的范围内）还没打的靶子里，选离自己拍点最近的那个
+            let best = -1,
+              bd = Infinity;
+            for (const i of G.live) {
+              if (G.st[i]) continue;
+              const p = pos(L, G.tg[i]);
+              if (Math.hypot(px - p.x, py - p.y) > L.cell * 0.62) continue;
+              const d = Math.abs(G.tg[i][0] - now);
+              if (d < bd) {
+                bd = d;
+                best = i;
+              }
+            }
+            if (best < 0) {
+              G.taps.push({ x: px, y: py, at: performance.now() });
+              continue;
+            }
+            const x = G.tg[best];
+            const signed = tapT - x[0];
+            const j = Math.abs(signed) <= perfectW() ? "perfect" : signed >= -greatW() && signed <= lateW(x) ? "great" : "miss";
+            G.st[best] = j === "miss" ? 2 : 1;
+            G.goneAt[best] = performance.now();
+            localJudge(j);
+            api("/api/rhythm/hit", { method: "POST", body: JSON.stringify({ i: best, t: tapT }) }).catch(() => {});
+          }
+        },
+        { passive: false },
+      );
+
+      const JUDGE_TEXT = { perfect: "Perfect", great: "Great", miss: "Miss" };
+      function localJudge(j) {
+        G.cnt[j]++;
+        G.combo = j === "miss" ? 0 : G.combo + 1;
+        if (j !== "miss") buzz();
+        const el = $("gjudge");
+        el.textContent = JUDGE_TEXT[j];
+        el.dataset.j = j;
+        el.animate(
+          [
+            { transform: "translateX(-50%) scale(1.3)", opacity: 1 },
+            { transform: "translateX(-50%) scale(1)", opacity: 1, offset: 0.25 },
+            { transform: "translateX(-50%) scale(1)", opacity: 0 },
+          ],
+          { duration: 550, easing: "ease-out", fill: "forwards" },
+        );
+        updateHud();
+      }
+      function updateHud() {
+        const c = G.cnt;
+        const done = c.perfect + c.great + c.miss;
+        const acc = done ? ((c.perfect + c.great * 0.6) / done) * 100 : 100;
+        $("gcombo").textContent = G.combo >= 2 ? `${G.combo} combo` : "";
+        $("gacc").textContent = `${acc.toFixed(1)}%`;
+      }
+
+      // ---------- 各阶段的面板 ----------
+      function gbtn(text, fn, main = false) {
+        const b = document.createElement("button");
+        b.textContent = text;
+        if (main) b.className = "main";
+        b.onclick = fn;
+        return b;
+      }
+      function showGameUI() {
+        const s = G.state;
+        $("gtitle").textContent = s.title ? `${s.title} · ${s.difficulty}` : "音游";
+        $("gpause").hidden = s.phase !== "playing";
+        const box = $("gmsg");
+        const msg = (text, ...btns) => {
+          box.replaceChildren();
+          const t = document.createElement("div");
+          t.className = "gtext";
+          t.textContent = text;
+          box.append(t);
+          if (btns.length) {
+            const row = document.createElement("div");
+            row.className = "row";
+            row.append(...btns);
+            box.append(row);
+          }
+          box.hidden = false;
+        };
+        const back = () => gbtn("换歌", quitGame);
+        switch (s.phase) {
+          case "closed":
+            return msg("等电脑打开游戏…", gbtn("返回", closeGame));
+          case "loading":
+            return msg("电脑正在载入歌…");
+          case "error":
+            return msg(`这首读不了：${s.error || "不知道为什么"}`, back());
+          case "ready":
+            return msg("准备好了。点亮成绿色的靶子；金色一组用几根手指一起点。", gbtn("开始", () => cmd("start"), true), back());
+          case "intro":
+            return msg("准备…");
+          case "playing":
+            box.hidden = true;
+            return;
+          case "paused":
+            return msg("暂停", gbtn("继续", () => cmd("resume"), true), gbtn("重开", () => cmd("restart")), back());
+          case "result": {
+            const r = s.result;
+            if (!r) return msg("结算中…");
+            box.replaceChildren();
+            const add = (cls, text) => {
+              const d = document.createElement("div");
+              d.className = cls;
+              d.textContent = text;
+              box.append(d);
+            };
+            add("gscore", r.score.toLocaleString("en-US"));
+            add("gtext", r.record ? (r.prev ? `新纪录！（之前 ${r.prev.toLocaleString("en-US")}）` : "新纪录！") : `最高分 ${r.best.toLocaleString("en-US")}`);
+            add("gtext", `准确率 ${(r.acc * 100).toFixed(1)}% · ${r.count.perfect} / ${r.count.great} / ${r.count.miss} · 最大连击 ${r.maxCombo}`);
+            add("gtext", `时间偏差：${r.dev}`);
+            const row = document.createElement("div");
+            row.className = "row";
+            row.append(gbtn("再来一次", () => cmd("restart"), true), back());
+            box.append(row);
+            box.hidden = false;
+            return;
+          }
+        }
+      }
+      $("gquit").onclick = quitGame;
+      $("gpause").onclick = () => cmd("pause");
+      $("gfull").onclick = async () => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        else if (!(await goLandscape())) toast("这个浏览器不支持全屏，画面已经自动转成横的了");
+      };
+
+      // ---------- 横屏 ----------
+      // 能全屏的浏览器（安卓 Chrome 等）：全屏并锁成横屏。
+      // 不能的（或者手机关了自动旋转）：竖着拿时把游戏画面整个转 90 度画，手机横过来看就是横屏。
+      async function goLandscape() {
+        if (!("ontouchstart" in window) || document.fullscreenElement) return !!document.fullscreenElement;
+        try {
+          await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+          await screen.orientation?.lock?.("landscape").catch(() => {});
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      // 转的方向：90 = 手机往左横过来（顶部朝右），-90 = 往右横过来；记在手机上
+      let rotDir = localStorage.getItem("rotDir") === "-90" ? -90 : 90;
+      let rotNow = 0;
+      function fitGame() {
+        const g = $("game");
+        const W = window.innerWidth,
+          H = window.innerHeight;
+        rotNow = H > W ? rotDir : 0;
+        $("grot").hidden = !rotNow;
+        if (!rotNow) {
+          g.style.cssText = "";
+          return;
+        }
+        g.style.cssText = `inset:auto;left:0;top:0;width:${H}px;height:${W}px;transform-origin:0 0;transform:${
+          rotNow === 90 ? `translateX(${W}px) rotate(90deg)` : `translateY(${H}px) rotate(-90deg)`
+        }`;
+      }
+      /** 手指在屏幕上的位置 → 游戏画面里的位置（画面转过时要换算回来） */
+      function toLocal(t) {
+        if (rotNow === 90) return { x: t.clientY, y: window.innerWidth - t.clientX };
+        if (rotNow === -90) return { x: window.innerHeight - t.clientY, y: t.clientX };
+        const r = cv.getBoundingClientRect();
+        return { x: t.clientX - r.left, y: t.clientY - r.top };
+      }
+      $("grot").onclick = () => {
+        rotDir = -rotDir;
+        localStorage.setItem("rotDir", String(rotDir));
+        fitGame();
+      };
+      window.addEventListener("resize", () => G.open && fitGame());
+
+      poll();
+      setInterval(poll, 2000);
+      setInterval(tick, 500);
+      document.addEventListener("visibilitychange", () => !document.hidden && poll());
+    </script>
+  </body>
+</html>

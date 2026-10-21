@@ -16,6 +16,8 @@ mod hover;
 mod icons;
 mod media;
 mod osu;
+mod phone;
+mod phone_input;
 mod pomodoro;
 mod rift;
 mod shelf;
@@ -179,6 +181,27 @@ fn open_theme_preview(app: &AppHandle) {
         .inner_size(1290.0, 820.0)
         .center()
         .build();
+}
+
+/// 手机遥控二维码窗口（已经开着就拿到前面）
+fn open_phone_qr(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("phone-qr") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = tauri::WebviewWindowBuilder::new(app, "phone-qr", tauri::WebviewUrl::App("phone-qr.html".into()))
+        .title("手机遥控")
+        .inner_size(380.0, 560.0)
+        .resizable(false)
+        .center()
+        .build();
+}
+
+/// 二维码窗口要的东西：开没开、网址、二维码 SVG
+#[tauri::command]
+fn phone_info(p: State<'_, Arc<phone::Phone>>) -> serde_json::Value {
+    serde_json::json!({ "running": p.running(), "url": p.url(), "svg": p.qr_svg() })
 }
 
 #[tauri::command]
@@ -379,6 +402,7 @@ fn build_tray(
     keep: desktop::Keep,
     desktop_hotkey: &str,
     edge: Option<Arc<edge::Edge>>,
+    phone: Arc<phone::Phone>,
 ) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
     let widgets_label = if widgets_hotkey.is_empty() {
@@ -407,6 +431,9 @@ fn build_tray(
     let quit = MenuItem::with_id(app, "quit", "退出灵动岛", true, None::<&str>)?;
     let desktop_label = if desktop_hotkey.is_empty() { "回到桌面".to_string() } else { format!("回到桌面	{desktop_hotkey}") };
     let desktop_item = MenuItem::with_id(app, "show_desktop", desktop_label, true, None::<&str>)?;
+    // 手机遥控：开关 + 二维码
+    let phone_item = CheckMenuItem::with_id(app, "phone", "手机遥控", true, phone.running(), None::<&str>)?;
+    let phone_qr = MenuItem::with_id(app, "phone_qr", "手机遥控二维码…", true, None::<&str>)?;
     let edge_item = CheckMenuItem::with_id(
         app,
         "edge_glow",
@@ -439,6 +466,8 @@ fn build_tray(
             &preview_item,
             &layout_menu,
             &edge_item,
+            &phone_item,
+            &phone_qr,
             &rift_item,
             &PredefinedMenuItem::separator(app)?,
             &desktop_item,
@@ -455,6 +484,7 @@ fn build_tray(
 
     let auto_item = auto.clone();
     let edge_check = edge_item.clone();
+    let phone_check = phone_item.clone();
     let icons_item = icons.clone();
     TrayIconBuilder::with_id("island")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -509,6 +539,24 @@ fn build_tray(
             }
             "quit" => app.exit(0),
             "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
+            "phone" => {
+                let want = phone_check.is_checked().unwrap_or(false);
+                if want {
+                    if let Err(e) = phone.start() {
+                        eprintln!("手机遥控没开成：{e}");
+                    }
+                } else {
+                    phone.stop();
+                }
+                let on = phone.running();
+                let _ = phone_check.set_checked(on);
+                config::set_value(&cfg_path, "phone_enabled", serde_json::Value::from(on));
+                // 刚打开：顺便把二维码弹出来
+                if on {
+                    open_phone_qr(app);
+                }
+            }
+            "phone_qr" => open_phone_qr(app),
             "edge_glow" => {
                 if let Some(e) = &edge {
                     let on = edge_check.is_checked().unwrap_or(false);
@@ -550,6 +598,7 @@ fn main() {
             rift::rift_close,
             rift::rift_open,
             rift::rift_pending,
+            rift::rift_phone_push,
             rift::rift_hit,
             rift::rift_store_get,
             rift::rift_cover_color,
@@ -557,6 +606,7 @@ fn main() {
             rhythm_shots,
             edge_enabled,
             edge_active,
+            phone_info,
             media_cmd,
             pomodoro_cmd,
             alerts_get,
@@ -733,6 +783,22 @@ fn main() {
             app.manage(audio::Audio::spawn(app.handle().clone()));
             let hotkey_label = if shelf.is_some() { cfg.shelf_hotkey.clone() } else { String::new() };
             let widgets_hotkey = if widgets.is_some() { cfg.widgets_edit_hotkey.clone() } else { String::new() };
+            // ---------- 手机遥控：家里局域网的小网页（默认关着，托盘里开） ----------
+            let token = if cfg.phone_token.len() == 32 {
+                cfg.phone_token.clone()
+            } else {
+                let t = phone::new_token();
+                config::set_value(&cfg_path, "phone_token", serde_json::Value::from(t.clone()));
+                t
+            };
+            let phone_shelf = shelf.as_ref().map(|_| PathBuf::from(&cfg.shelf_dir));
+            let phone = phone::Phone::new(app.handle(), token, cfg.phone_port, phone_shelf, keep.clone());
+            if cfg.phone_enabled {
+                if let Err(e) = phone.start() {
+                    eprintln!("手机遥控没开成：{e}");
+                }
+            }
+            app.manage(phone.clone());
             app.manage(cfg);
 
             // 启动参数 --theme-preview：一启动就打开主题预览窗口（测试用，平时从托盘打开）
@@ -745,7 +811,7 @@ fn main() {
             }
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey, edge) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey, edge, phone) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())

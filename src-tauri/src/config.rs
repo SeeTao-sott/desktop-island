@@ -73,6 +73,14 @@ pub struct Config {
     // ---------- 屏幕边缘律动 ----------
     /// 放歌时屏幕四条边跟着音乐发光（托盘里可以开关）
     pub edge_glow: bool,
+
+    // ---------- 手机遥控 ----------
+    /// 在家里局域网开一个小网页，手机扫码遥控（托盘里可以开关）
+    pub phone_enabled: bool,
+    /// 小网页用的端口
+    pub phone_port: u16,
+    /// 二维码里的随机密钥；第一次用时自动生成，想让旧手机失效就删掉这一项再重启
+    pub phone_token: String,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -115,6 +123,9 @@ impl Default for Config {
             island_double_click: "desktop".into(),
             show_desktop_hotkey: String::new(),
             edge_glow: false,
+            phone_enabled: false,
+            phone_port: 8787,
+            phone_token: String::new(),
         }
     }
 }

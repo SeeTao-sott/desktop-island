@@ -12,7 +12,7 @@ import type { Frame, Kind, Pt, Skin, View } from "./skins/types";
 import { gridOf, type Cell } from "./grid";
 import { FALLBACK } from "./views";
 import { initTheme } from "./theme";
-import { openRhythm } from "./rhythm";
+import { dropRhythmMenu, openRhythm } from "./rhythm";
 import { SIZES, settingsWithDefaults, type Model, type SettingDef, type Settings, type SizeKey, type WidgetModule } from "./types";
 
 interface Item {
@@ -729,6 +729,16 @@ listen<boolean>("rift-active", (e) => {
   applyPause();
 });
 // 裂缝射击打中靶子：律动（音频可视化）组件跟着闪一下（只动 opacity）
+// 手机遥控：音游手机模式。在律动组件上方弹出选歌（没有律动组件就放屏幕中间）
+listen("phone-rhythm", () => {
+  const l = live.find((x) => x.mod.kind === "audio" && !x.removing);
+  const rect = l
+    ? { x: l.x.target, y: l.y.target, w: l.w.target, h: l.h.target }
+    : { x: window.innerWidth / 2 - 100, y: window.innerHeight * 0.75, w: 200, h: 0 };
+  openRhythm(rect, true);
+});
+listen("phone-rhythm-close", () => dropRhythmMenu());
+
 listen("rift-hit", () => {
   for (const l of live) {
     if (l.mod.kind !== "audio" || l.removing) continue;
