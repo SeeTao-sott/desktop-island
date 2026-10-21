@@ -116,8 +116,30 @@ function pickHue(pref: number, avoid: number[]) {
   return best;
 }
 
+/** 两个主色来源的原始颜色：壁纸（跟着壁纸变）、这首歌的封面（载入歌曲时取；取不到是 null） */
+const wallRaw = new THREE.Color(0x8caaff);
+let coverRaw: THREE.Color | null = null;
+let coverFor = "";
+/** 主色来源选了「歌曲封面」、并且取到了 */
+const usingCover = () => settings.colorSource === "cover" && coverRaw !== null;
+
+/** 取这首歌封面的主色（每首歌只取一次），然后按现在的来源重新上色 */
+async function loadCoverColor(id: string) {
+  if (coverFor !== id) {
+    coverFor = id;
+    coverRaw = null;
+    const c = await invoke<[number, number, number] | null>("rift_cover_color", { id }).catch(() => null);
+    if (coverFor !== id) return; // 等的时候换了歌
+    coverRaw = c ? new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace) : null;
+    log(c ? `封面主色：#${coverRaw!.getHexString()}` : "这首歌没有封面（或读不了），主色用壁纸");
+  }
+  applyTheme(null);
+}
+
 function applyTheme(t: Theme | null) {
-  if (t) accent.setRGB(t.accent[0] / 255, t.accent[1] / 255, t.accent[2] / 255, THREE.SRGBColorSpace);
+  if (t) wallRaw.setRGB(t.accent[0] / 255, t.accent[1] / 255, t.accent[2] / 255, THREE.SRGBColorSpace);
+  // 主色：选了歌曲封面且取到了就用封面的，否则用壁纸的（每次都从原始颜色重新算，来回切不会越调越偏）
+  accent.copy(usingCover() ? coverRaw! : wallRaw);
   const hsl = { h: 0, s: 0, l: 0 };
   accent.getHSL(hsl);
   // 主题色调亮调艳一点，压在深色靶场里才显眼
@@ -1205,6 +1227,12 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
     lastColorMode = st.colorMode;
     applyTheme(null);
   }
+  // 主色来源换了：要用封面就先取（这首歌取过就不再取），再重新上色
+  if (st.colorSource !== lastColorSource) {
+    lastColorSource = st.colorSource;
+    if (st.colorSource === "cover" && song.pick) loadCoverColor(song.pick.id);
+    else applyTheme(null);
+  }
   if (st.cols !== COLS) {
     COLS = st.cols;
     buildCells();
@@ -1237,6 +1265,7 @@ buildSettings(document.getElementById("settings")!, store, (st) => {
 
 let reloadTimer = 0;
 let lastColorMode = settings.colorMode;
+let lastColorSource = settings.colorSource;
 /** 上一帧的 N 和靶子位置模式（准星跟着格子用） */
 let lastN = 1;
 let lastFixed = false;
@@ -1607,6 +1636,8 @@ async function loadSong(pick: Pick) {
   document.getElementById("test")!.hidden = true;
   const list = await invoke<SongEntry[]>("rhythm_songs").catch(() => [] as SongEntry[]);
   song.meta = list.find((x) => x.id === pick.id) ?? null;
+  // 主色来源是歌曲封面：先按这首歌的封面上色（不等它，读谱照常进行）
+  if (settings.colorSource === "cover") loadCoverColor(pick.id);
   song.offsetMs = song.meta?.offset_ms ?? 0;
   let shots: Shot[] = [];
   let shotsError = "";

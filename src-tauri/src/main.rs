@@ -552,6 +552,7 @@ fn main() {
             rift::rift_pending,
             rift::rift_hit,
             rift::rift_store_get,
+            rift::rift_cover_color,
             rift::rift_store_set,
             rhythm_shots,
             edge_enabled,

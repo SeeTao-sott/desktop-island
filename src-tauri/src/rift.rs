@@ -116,6 +116,21 @@ fn store_path(app: &AppHandle) -> Option<std::path::PathBuf> {
 }
 
 /// 读出存过的设置（没有或读不了 = null，页面用默认值）
+/// 主色来源选「歌曲封面」时：从这首歌的封面（osu! 是背景图）取主色（0~255）。
+/// 和壁纸取色同一套办法：有一定面积、又最鲜艳的颜色。没有封面或读不了返回 None（页面退回壁纸色）
+#[tauri::command]
+pub async fn rift_cover_color(id: String) -> Option<[f64; 3]> {
+    let root = crate::chart::charts_dir()?;
+    let song = crate::chart::list_songs(&root).into_iter().find(|s| s.id == id)?;
+    let name = song.cover_file;
+    // 文件名来自谱文件：只认这首歌文件夹里直接放着的文件
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
+        return None;
+    }
+    let e = crate::theme::extract(&root.join(&song.id).join(&name))?;
+    Some([e.accent.r * 255.0, e.accent.g * 255.0, e.accent.b * 255.0])
+}
+
 #[tauri::command]
 pub fn rift_store_get(app: AppHandle) -> serde_json::Value {
     store_path(&app)
@@ -135,4 +150,30 @@ pub fn rift_store_set(app: AppHandle, data: serde_json::Value) -> Result<(), Str
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    /// 看看 charts/ 里每首歌的封面能取出什么主色：
+    /// cargo test --release print_cover_colors -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn print_cover_colors() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../charts");
+        for song in crate::chart::list_songs(&root) {
+            let path = root.join(&song.id).join(&song.cover_file);
+            let c = if song.cover_file.is_empty() { None } else { crate::theme::extract(&path) };
+            match c {
+                Some(e) => println!(
+                    "#{:02x}{:02x}{:02x}  《{}》（{}）",
+                    (e.accent.r * 255.0).round() as u8,
+                    (e.accent.g * 255.0).round() as u8,
+                    (e.accent.b * 255.0).round() as u8,
+                    song.title,
+                    song.cover_file
+                ),
+                None => println!("（取不到）《{}》封面：{:?}", song.title, song.cover_file),
+            }
+        }
+    }
 }
