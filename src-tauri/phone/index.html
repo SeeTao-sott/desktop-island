@@ -423,7 +423,9 @@
         left: 50%;
         top: 50%;
         transform: translate(-50%, -50%);
-        width: min(420px, 88vw);
+        width: min(420px, 88%);
+        max-height: 92%;
+        overflow: auto;
         background: rgba(26, 26, 34, 0.94);
         border: 1px solid var(--line);
         border-radius: 18px;
@@ -555,6 +557,7 @@
         <div id="gtitle"></div>
         <span id="gacc"></span>
         <button id="gpause" hidden>暂停</button>
+        <button id="grot">转向</button>
         <button id="gfull">全屏</button>
       </div>
       <div id="gcombo"></div>
@@ -1007,6 +1010,7 @@
       }
       const enc = encodeURIComponent;
       function play(s, d) {
+        goLandscape(); // 点歌这一下算"用户操作"，浏览器才肯全屏
         post(`/api/rhythm/play?id=${enc(s.id)}&c=${enc(d.characteristic)}&d=${enc(d.name)}`)
           .then(() => openGame())
           .catch((e) => toast(e.message));
@@ -1085,6 +1089,7 @@
         Object.assign(G, { open: true, seen: false, state: { phase: "closed" }, planId: 0, plan: null, live: [], next: 0 });
         $("game").hidden = false;
         document.body.style.overflow = "hidden"; // 游戏画面下面的页面别跟着滚
+        fitGame();
         showGameUI();
         syncClock();
         G.timer = setInterval(pollGame, 300);
@@ -1304,10 +1309,8 @@
           if (!G.plan || G.state.phase !== "playing" || G.state.anchor == null) return;
           const now = songNow();
           const tapT = now - tapComp / 1000;
-          const rect = cv.getBoundingClientRect();
           for (const t of e.changedTouches) {
-            const px = t.clientX - rect.left,
-              py = t.clientY - rect.top;
+            const { x: px, y: py } = toLocal(t);
             // 手指下面（格子大小的范围内）还没打的靶子里，选离自己拍点最近的那个
             let best = -1,
               bd = Infinity;
@@ -1433,16 +1436,53 @@
       $("gquit").onclick = quitGame;
       $("gpause").onclick = () => cmd("pause");
       $("gfull").onclick = async () => {
-        try {
-          if (document.fullscreenElement) await document.exitFullscreen();
-          else {
-            await $("game").requestFullscreen();
-            await screen.orientation?.lock?.("landscape").catch(() => {});
-          }
-        } catch {
-          toast("这个浏览器不支持全屏；横过来拿手机也行");
-        }
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        else if (!(await goLandscape())) toast("这个浏览器不支持全屏，画面已经自动转成横的了");
       };
+
+      // ---------- 横屏 ----------
+      // 能全屏的浏览器（安卓 Chrome 等）：全屏并锁成横屏。
+      // 不能的（或者手机关了自动旋转）：竖着拿时把游戏画面整个转 90 度画，手机横过来看就是横屏。
+      async function goLandscape() {
+        if (!("ontouchstart" in window) || document.fullscreenElement) return !!document.fullscreenElement;
+        try {
+          await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+          await screen.orientation?.lock?.("landscape").catch(() => {});
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      // 转的方向：90 = 手机往左横过来（顶部朝右），-90 = 往右横过来；记在手机上
+      let rotDir = localStorage.getItem("rotDir") === "-90" ? -90 : 90;
+      let rotNow = 0;
+      function fitGame() {
+        const g = $("game");
+        const W = window.innerWidth,
+          H = window.innerHeight;
+        rotNow = H > W ? rotDir : 0;
+        $("grot").hidden = !rotNow;
+        if (!rotNow) {
+          g.style.cssText = "";
+          return;
+        }
+        g.style.cssText = `inset:auto;left:0;top:0;width:${H}px;height:${W}px;transform-origin:0 0;transform:${
+          rotNow === 90 ? `translateX(${W}px) rotate(90deg)` : `translateY(${H}px) rotate(-90deg)`
+        }`;
+      }
+      /** 手指在屏幕上的位置 → 游戏画面里的位置（画面转过时要换算回来） */
+      function toLocal(t) {
+        if (rotNow === 90) return { x: t.clientY, y: window.innerWidth - t.clientX };
+        if (rotNow === -90) return { x: window.innerHeight - t.clientY, y: t.clientX };
+        const r = cv.getBoundingClientRect();
+        return { x: t.clientX - r.left, y: t.clientY - r.top };
+      }
+      $("grot").onclick = () => {
+        rotDir = -rotDir;
+        localStorage.setItem("rotDir", String(rotDir));
+        fitGame();
+      };
+      window.addEventListener("resize", () => G.open && fitGame());
 
       poll();
       setInterval(poll, 2000);
