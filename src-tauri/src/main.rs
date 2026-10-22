@@ -338,9 +338,10 @@ fn island_double_click(keep: State<'_, desktop::Keep>) {
     desktop::run(desktop::double_click(), keep.inner().clone());
 }
 
-/// 三连击灵动岛：弹出手机遥控的二维码
+/// 三连击灵动岛：弹出手机遥控的二维码。
+/// 必须是 async：同步命令跑在主线程上，在里面开新窗口会在 Windows 上卡死（窗口全白、整个程序不动）
 #[tauri::command]
-fn island_triple_click(app: AppHandle) {
+async fn island_triple_click(app: AppHandle) {
     open_phone_qr(&app);
 }
 
