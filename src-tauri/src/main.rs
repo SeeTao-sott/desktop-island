@@ -18,6 +18,7 @@ mod media;
 mod osu;
 mod phone;
 mod phone_input;
+mod phone_pad;
 mod pomodoro;
 mod rift;
 mod shelf;
@@ -374,6 +375,24 @@ fn release_single_instance() {
     }
 }
 
+/// 以管理员身份重新打开自己（弹 UAC），成功就退出这一个。
+/// 管理员身份运行的游戏（比如原神）不收普通程序模拟的键盘鼠标，手机触控板要灵动岛也是管理员身份才控制得了
+fn restart_as_admin(app: &AppHandle) {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let args: Vec<String> = std::env::args().skip(1).map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a }).collect();
+    release_single_instance();
+    let r = unsafe { ShellExecuteW(None, &HSTRING::from("runas"), &HSTRING::from(exe.as_os_str()), &HSTRING::from(args.join(" ")), None, SW_SHOWNORMAL) };
+    // 返回值大于 32 才是成功；点了 UAC 的"否"就照常留着这一个
+    if r.0 as isize > 32 {
+        app.exit(0);
+    } else {
+        claim_single_instance();
+    }
+}
+
 // ---------------- 窗口位置 ----------------
 
 /// 放到主屏幕顶部正中，再加上配置里的偏移。用物理像素计算，DPI 缩放下也对得齐
@@ -427,6 +446,14 @@ fn build_tray(
     let icons = CheckMenuItem::with_id(app, "desktop_icons", "隐藏桌面图标", true, desktop_icons::hidden(), None::<&str>)?;
     let open_cfg = MenuItem::with_id(app, "open_config", "打开配置文件", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "重启（应用新配置）", true, None::<&str>)?;
+    let admin = phone_pad::self_elevated();
+    let restart_admin = MenuItem::with_id(
+        app,
+        "restart_admin",
+        if admin { "已经是管理员身份" } else { "以管理员身份重启（手机控制管理员游戏用）" },
+        !admin,
+        None::<&str>,
+    )?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, autostart::is_enabled(), None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出灵动岛", true, None::<&str>)?;
     let desktop_label = if desktop_hotkey.is_empty() { "回到桌面".to_string() } else { format!("回到桌面	{desktop_hotkey}") };
@@ -475,6 +502,7 @@ fn build_tray(
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
+            &restart_admin,
             &PredefinedMenuItem::separator(app)?,
             &auto,
             &PredefinedMenuItem::separator(app)?,
@@ -537,6 +565,7 @@ fn build_tray(
                 let _ = autostart::set(want);
                 let _ = auto_item.set_checked(autostart::is_enabled());
             }
+            "restart_admin" => restart_as_admin(app),
             "quit" => app.exit(0),
             "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
             "phone" => {
