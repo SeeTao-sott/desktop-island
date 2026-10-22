@@ -19,7 +19,7 @@ Windows 11 上的三样东西，在同一个程序里：
 - 音乐支持所有接入 Windows 媒体控制的播放器：Chrome / Edge 里的 YouTube、Spotify、网易云等。
 - 胶囊以外的透明区域不挡鼠标，可以正常点下面的东西。
 - **长按灵动岛 2 秒 = 让开**：缩成一粒小点、鼠标可以直接点到它下面的东西，3 秒后自己变回来。
-- **双击灵动岛 = 回到桌面**，再双击一次把窗口恢复（双击按钮不算）。托盘 →「双击灵动岛」可以改成「全部最小化（再双击恢复）」、「弹出手机遥控二维码」或「不做什么」。
+- **双击灵动岛 = 回到桌面**，再双击一次把窗口恢复（双击按钮不算）。托盘 →「双击灵动岛」可以改成「全部最小化（再双击恢复）」或「不做什么」。
   回到桌面后灵动岛、架子、桌面小组件都照常显示。也可以在配置里设一个快捷键（`show_desktop_hotkey`），不能用 Win+D。
 
 ## 侧边架子怎么用
@@ -229,7 +229,7 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 | `widgets_manual_color` | `"#5b7bd5"` | 手动颜色（只在 `"manual"` 时用），浅色会自动配深色字 |
 | `widgets_wallpaper_check_seconds` | `30` | Wallpaper Engine 开着时，每隔多少秒向它确认一次当前壁纸（10 ~ 3600） |
 | `widgets_status_seconds` | `3` | "系统状态"组件多少秒更新一次（1 ~ 60） |
-| `island_double_click` | `"desktop"` | 双击灵动岛做什么：`"desktop"` 回到桌面、`"minimize"` 全部最小化、`"phone_qr"` 弹出手机遥控二维码、`"off"` 不做什么（托盘里也能改） |
+| `island_double_click` | `"desktop"` | 双击灵动岛做什么：`"desktop"` 回到桌面、`"minimize"` 全部最小化、`"off"` 不做什么（托盘里也能改） |
 | `phone_enabled` | `false` | 手机遥控（托盘里也能开关） |
 | `phone_port` | `8787` | 手机遥控网页用的端口 |
 | `phone_token` | 自动生成 | 二维码里的密钥；删掉再重启会换一个新的，旧链接全部失效 |

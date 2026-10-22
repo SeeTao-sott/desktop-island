@@ -27,8 +27,6 @@ pub enum Action {
     Minimize,
     /// 什么都不做
     Off,
-    /// 弹出手机遥控的二维码（不是桌面操作，main.rs 里处理）
-    PhoneQr,
 }
 
 impl Action {
@@ -36,7 +34,6 @@ impl Action {
         match s {
             "minimize" => Action::Minimize,
             "off" => Action::Off,
-            "phone_qr" => Action::PhoneQr,
             _ => Action::Desktop,
         }
     }
@@ -45,7 +42,6 @@ impl Action {
             Action::Desktop => "desktop",
             Action::Minimize => "minimize",
             Action::Off => "off",
-            Action::PhoneQr => "phone_qr",
         }
     }
     fn code(self) -> u8 {
@@ -55,7 +51,6 @@ impl Action {
         match c {
             1 => Action::Minimize,
             2 => Action::Off,
-            3 => Action::PhoneQr,
             _ => Action::Desktop,
         }
     }
@@ -85,7 +80,7 @@ pub struct Keep {
 
 /// 在后台线程里执行（COM 要在自己的线程里初始化），不卡界面
 pub fn run(action: Action, keep: Keep) {
-    if matches!(action, Action::Off | Action::PhoneQr) || BUSY.swap(true, Ordering::SeqCst) {
+    if action == Action::Off || BUSY.swap(true, Ordering::SeqCst) {
         return;
     }
     thread::spawn(move || {
@@ -129,7 +124,7 @@ fn shell_call(action: Action) -> windows::core::Result<()> {
                         sh.MinimizeAll()
                     }
                 }
-                Action::Off | Action::PhoneQr => Ok(()),
+                Action::Off => Ok(()),
             }
         })();
         if init {

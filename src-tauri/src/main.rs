@@ -334,11 +334,8 @@ fn edge_active(e: State<'_, Arc<edge::Edge>>, on: bool) {
 
 /// 灵动岛被双击：按设置回到桌面 / 全部最小化
 #[tauri::command]
-fn island_double_click(app: AppHandle, keep: State<'_, desktop::Keep>) {
-    match desktop::double_click() {
-        desktop::Action::PhoneQr => open_phone_qr(&app),
-        a => desktop::run(a, keep.inner().clone()),
-    }
+fn island_double_click(keep: State<'_, desktop::Keep>) {
+    desktop::run(desktop::double_click(), keep.inner().clone());
 }
 
 #[tauri::command]
@@ -492,13 +489,12 @@ fn build_tray(
     let dbl: Vec<CheckMenuItem<tauri::Wry>> = [
         (desktop::Action::Desktop, "回到桌面（再双击恢复）"),
         (desktop::Action::Minimize, "全部最小化（再双击恢复）"),
-        (desktop::Action::PhoneQr, "弹出手机遥控二维码"),
         (desktop::Action::Off, "不做什么"),
     ]
     .into_iter()
     .map(|(a, text)| CheckMenuItem::with_id(app, format!("dbl_{}", a.key()), text, true, a == now, None::<&str>))
     .collect::<tauri::Result<_>>()?;
-    let dbl_menu = Submenu::with_items(app, "双击灵动岛", true, &[&dbl[0], &dbl[1], &dbl[2], &dbl[3]])?;
+    let dbl_menu = Submenu::with_items(app, "双击灵动岛", true, &[&dbl[0], &dbl[1], &dbl[2]])?;
     let menu = Menu::with_items(
         app,
         &[
@@ -620,7 +616,7 @@ fn build_tray(
             id if id.starts_with("dbl_") => {
                 let a = desktop::Action::parse(&id[4..]);
                 desktop::set_double_click(a);
-                for (item, key) in dbl.iter().zip(["desktop", "minimize", "phone_qr", "off"]) {
+                for (item, key) in dbl.iter().zip(["desktop", "minimize", "off"]) {
                     let _ = item.set_checked(key == a.key());
                 }
                 config::set_value(&cfg_path, "island_double_click", serde_json::Value::from(a.key()));
@@ -806,10 +802,10 @@ fn main() {
             desktop::set_double_click(desktop::Action::parse(&cfg.island_double_click));
             let desktop_hotkey = {
                 let k = keep.clone();
-                // 快捷键做的事和双击一样；双击设成"不做什么"或"弹出二维码"时就是回到桌面
+                // 快捷键做的事和双击一样；双击设成"不做什么"时就是回到桌面
                 let ok = hotkey::spawn(&cfg.show_desktop_hotkey, move || {
                     let a = match desktop::double_click() {
-                        desktop::Action::Off | desktop::Action::PhoneQr => desktop::Action::Desktop,
+                        desktop::Action::Off => desktop::Action::Desktop,
                         a => a,
                     };
                     desktop::run(a, k.clone());
