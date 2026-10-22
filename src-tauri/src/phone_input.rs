@@ -15,7 +15,7 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_HWHEEL,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
     MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_MENU, VK_TAB,
@@ -84,7 +84,7 @@ fn clamp(v: Option<&Value>) -> i32 {
 }
 
 /// 手机发来的一串鼠标动作，按顺序做：
-/// `{"t":"m","x":dx,"y":dy}` 移动；`{"t":"w","y":dy,"x":dx}` 滚轮（120 = 一格）；
+/// `{"t":"m","x":dx,"y":dy}` 移动；`{"t":"a","x":0~1,"y":0~1}` 移到主屏幕上的某个位置（体感鼠标"指哪打哪"）；`{"t":"w","y":dy,"x":dx}` 滚轮（120 = 一格）；
 /// `{"t":"b","b":"left|right|middle|back|forward","a":"click|down|up"}` 按键
 pub fn mouse_events(list: &[Value]) -> Result<usize, String> {
     if list.len() > MAX_EVENTS {
@@ -98,6 +98,11 @@ pub fn mouse_events(list: &[Value]) -> Result<usize, String> {
                 if x != 0 || y != 0 {
                     out.push(mouse(x, y, 0, MOUSEEVENTF_MOVE));
                 }
+            }
+            Some("a") => {
+                // 绝对位置：主屏幕左上角 0、右下角 65535
+                let f = |k: &str| (e.get(k).and_then(Value::as_f64).unwrap_or(0.5).clamp(0.0, 1.0) * 65535.0).round() as i32;
+                out.push(mouse(f("x"), f("y"), 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE));
             }
             Some("w") => {
                 let (x, y) = (clamp(e.get("x")), clamp(e.get("y")));
