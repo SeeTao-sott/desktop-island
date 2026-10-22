@@ -74,14 +74,6 @@ pub struct Config {
     /// 放歌时屏幕四条边跟着音乐发光（托盘里可以开关）
     pub edge_glow: bool,
 
-    // ---------- 手柄按键显示 ----------
-    /// 屏幕角落显示手柄按了哪些键（玩别的游戏时浮在上面；托盘里可以开关）
-    pub pad_overlay: bool,
-    /// 放在哪个角："bottom-left" / "bottom-right" / "top-left" / "top-right"
-    pub pad_overlay_corner: String,
-    /// 大小："small" / "medium" / "large"
-    pub pad_overlay_size: String,
-
     // ---------- 手机遥控 ----------
     /// 在家里局域网开一个小网页，手机扫码遥控（托盘里可以开关）
     pub phone_enabled: bool,
@@ -131,9 +123,6 @@ impl Default for Config {
             island_double_click: "desktop".into(),
             show_desktop_hotkey: String::new(),
             edge_glow: false,
-            pad_overlay: false,
-            pad_overlay_corner: "bottom-left".into(),
-            pad_overlay_size: "medium".into(),
             phone_enabled: false,
             phone_port: 8787,
             phone_token: String::new(),
@@ -162,12 +151,6 @@ impl Config {
         }
         if !matches!(self.island_double_click.as_str(), "desktop" | "minimize" | "off") {
             self.island_double_click = "desktop".into();
-        }
-        if !matches!(self.pad_overlay_corner.as_str(), "bottom-left" | "bottom-right" | "top-left" | "top-right") {
-            self.pad_overlay_corner = "bottom-left".into();
-        }
-        if !matches!(self.pad_overlay_size.as_str(), "small" | "medium" | "large") {
-            self.pad_overlay_size = "medium".into();
         }
         if self.shelf_dir.trim().is_empty() {
             self.shelf_dir = default_shelf_dir();
