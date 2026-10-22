@@ -18,6 +18,7 @@ mod media;
 mod osu;
 mod phone;
 mod phone_input;
+mod phone_pad;
 mod pomodoro;
 mod rift;
 mod shelf;
@@ -337,6 +338,12 @@ fn island_double_click(keep: State<'_, desktop::Keep>) {
     desktop::run(desktop::double_click(), keep.inner().clone());
 }
 
+/// 三连击灵动岛：弹出手机遥控的二维码
+#[tauri::command]
+fn island_triple_click(app: AppHandle) {
+    open_phone_qr(&app);
+}
+
 #[tauri::command]
 fn config_get(cfg: State<'_, Config>) -> Config {
     cfg.inner().clone()
@@ -371,6 +378,30 @@ fn release_single_instance() {
         unsafe {
             let _ = CloseHandle(HANDLE(h as *mut _));
         }
+    }
+}
+
+/// 以管理员身份重新打开自己（弹 UAC），成功就退出这一个。
+/// 管理员身份运行的游戏（比如原神）不收普通程序模拟的键盘鼠标，手机触控板要灵动岛也是管理员身份才控制得了
+fn restart_as_admin(app: &AppHandle) {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let mut args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| !a.starts_with("--wait-pid="))
+        .map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a })
+        .collect();
+    // 新的那个先等这个退出干净再启动（不然手机遥控的端口还被占着，开不了）
+    args.push(format!("--wait-pid={}", std::process::id()));
+    release_single_instance();
+    let r = unsafe { ShellExecuteW(None, &HSTRING::from("runas"), &HSTRING::from(exe.as_os_str()), &HSTRING::from(args.join(" ")), None, SW_SHOWNORMAL) };
+    // 返回值大于 32 才是成功；点了 UAC 的"否"就照常留着这一个
+    if r.0 as isize > 32 {
+        app.exit(0);
+    } else {
+        claim_single_instance();
     }
 }
 
@@ -427,6 +458,23 @@ fn build_tray(
     let icons = CheckMenuItem::with_id(app, "desktop_icons", "隐藏桌面图标", true, desktop_icons::hidden(), None::<&str>)?;
     let open_cfg = MenuItem::with_id(app, "open_config", "打开配置文件", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, "restart", "重启（应用新配置）", true, None::<&str>)?;
+    let admin = phone_pad::self_elevated();
+    // 开发模式（npm run tauri dev）下页面来自开发服务器，这个进程一退出开发服务器就跟着停了，重启出来的全是白页：
+    // 开发时要管理员身份，就用"以管理员身份运行"的终端跑 npm run tauri dev
+    let dev = cfg!(debug_assertions);
+    let restart_admin = MenuItem::with_id(
+        app,
+        "restart_admin",
+        if admin {
+            "已经是管理员身份"
+        } else if dev {
+            "以管理员身份重启（开发模式不行：用管理员终端运行）"
+        } else {
+            "以管理员身份重启（手机控制管理员游戏用）"
+        },
+        !admin && !dev,
+        None::<&str>,
+    )?;
     let auto = CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, autostart::is_enabled(), None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出灵动岛", true, None::<&str>)?;
     let desktop_label = if desktop_hotkey.is_empty() { "回到桌面".to_string() } else { format!("回到桌面	{desktop_hotkey}") };
@@ -475,6 +523,7 @@ fn build_tray(
             &PredefinedMenuItem::separator(app)?,
             &open_cfg,
             &restart,
+            &restart_admin,
             &PredefinedMenuItem::separator(app)?,
             &auto,
             &PredefinedMenuItem::separator(app)?,
@@ -537,6 +586,7 @@ fn build_tray(
                 let _ = autostart::set(want);
                 let _ = auto_item.set_checked(autostart::is_enabled());
             }
+            "restart_admin" => restart_as_admin(app),
             "quit" => app.exit(0),
             "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
             "phone" => {
@@ -583,7 +633,20 @@ fn build_tray(
     Ok(())
 }
 
+/// 以管理员身份重启时：等旧的那个退出（最多 10 秒）
+fn wait_for_old_instance() {
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    let Some(pid) = std::env::args().find_map(|a| a.strip_prefix("--wait-pid=").and_then(|v| v.parse::<u32>().ok())) else { return };
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            WaitForSingleObject(h, 10_000);
+            let _ = CloseHandle(h);
+        }
+    }
+}
+
 fn main() {
+    wait_for_old_instance();
     if !claim_single_instance() {
         return;
     }
@@ -594,6 +657,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             set_hit_rect,
             island_double_click,
+            island_triple_click,
             rift::rift_log,
             rift::rift_close,
             rift::rift_open,
@@ -795,7 +859,18 @@ fn main() {
             let phone = phone::Phone::new(app.handle(), token, cfg.phone_port, phone_shelf, keep.clone());
             if cfg.phone_enabled {
                 if let Err(e) = phone.start() {
-                    eprintln!("手机遥控没开成：{e}");
+                    eprintln!("手机遥控没开成：{e}，过一会儿再试");
+                    // 端口可能还被刚退出的旧进程占着：隔一秒再试几次
+                    let p = phone.clone();
+                    std::thread::spawn(move || {
+                        for _ in 0..8 {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            match p.start() {
+                                Ok(()) => return,
+                                Err(e) => eprintln!("手机遥控还是没开成：{e}"),
+                            }
+                        }
+                    });
                 }
             }
             app.manage(phone.clone());

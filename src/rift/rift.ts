@@ -1296,6 +1296,10 @@ function showInfo() {
     return;
   }
   const delay = song.on ? ` · 延迟 ${song.offsetMs > 0 ? "+" : ""}${song.offsetMs}ms（← →）` : "";
+  if (padMode) {
+    infoEl.textContent = `手柄模式 · 灵敏度 ${settings.padSens}${settings.padAssist ? " · 辅助瞄准" : ""}${delay}\n${song.on ? "Start 暂停 · Back 重开" : "B 退出"}`;
+    return;
+  }
   infoEl.textContent = `灵敏度 ${settings.sens}（Valorant）· ${lockMode || "鼠标未锁定"}${delay}\n${song.on ? "Esc / P 暂停 · R 重开" : "Esc 退出"}`;
 }
 
@@ -1392,9 +1396,11 @@ function showMenu(kind: MenuKind, tip = "") {
       : phoneMode
         ? "手机模式：在手机上点「开始」，用手指点靶子 · 金色一组用几根手指一起点，或在同一个靶子上连点两下"
         : song.on
-        ? "鼠标转视角 · 左键射击 · 金色一组：右键或左键连点两下 · Esc / P 暂停 · R 重开"
+        ? "鼠标转视角 · 左键射击 · 金色一组：右键或左键连点两下 · Esc / P 暂停 · R 重开 · 也能用手柄（A 开始）"
         : "鼠标转视角 · 左键射击 · 数字键 1~4 换行数 · Esc 退出");
   menuEl.hidden = false;
+  padFocus = 0;
+  markPadFocus();
 }
 
 /** 开始 / 重开：锁鼠标 → 裂缝合上 → 闪出 GAME START → 裂缝再打开 → 放歌 */
@@ -1407,10 +1413,15 @@ async function gameStart() {
     menuEl.hidden = true;
     startEl.hidden = true;
     resultEl.hidden = true;
+    if (!phoneMode) setPadMode(lastInput === "pad");
     if (phoneMode) {
       // 手机模式：不锁鼠标、不显示准星，输入全从手机来
       playing = true;
       pushPhone("intro");
+    } else if (padMode) {
+      // 手柄：不用锁鼠标（菜单出来时鼠标本来就没锁）
+      playing = true;
+      crossEl.hidden = false;
     } else if (!document.pointerLockElement) {
       await lock();
       if (!document.pointerLockElement) {
@@ -1423,10 +1434,11 @@ async function gameStart() {
     if (song.on) await songReady;
     if (!alive()) return;
     if (song.on && !song.audio) {
-      if (phoneMode) {
+      if (phoneMode || padMode) {
         playing = false;
+        crossEl.hidden = true;
         showMenu("main");
-        pushPhone(song.error ? "error" : "loading");
+        if (phoneMode) pushPhone(song.error ? "error" : "loading");
       } else document.exitPointerLock();
       return;
     }
@@ -1484,9 +1496,12 @@ function pause() {
 
 async function resume() {
   if (!song.paused || !actx) return;
-  if (phoneMode) {
+  if (!phoneMode) setPadMode(lastInput === "pad");
+  if (phoneMode || padMode) {
     menuEl.hidden = true;
+    startEl.hidden = true;
     playing = true;
+    if (padMode) crossEl.hidden = false;
   } else {
     await lock();
     if (!document.pointerLockElement) {
@@ -1512,7 +1527,9 @@ function nowPlaying(isPlaying: boolean) {
 }
 
 document.addEventListener("mousemove", (e) => {
-  if (!playing || settings.auto || phoneMode) return;
+  // 用手柄打的时候鼠标没锁：碰到鼠标不转视角
+  if (!document.pointerLockElement) document.body.classList.remove("pad-play"); // 动了鼠标：指针露出来
+  if (!playing || settings.auto || phoneMode || (padMode && !document.pointerLockElement)) return;
   // Valorant：每个移动单位转 0.07 × 灵敏度 度
   const k = ((0.07 * settings.sens) * Math.PI) / 180;
   aimYaw = Math.min(yawMax(), Math.max(-yawMax(), aimYaw - e.movementX * k));
@@ -1525,6 +1542,7 @@ const aimEuler = new THREE.Euler();
 const shotColor = new THREE.Color(0xffffff);
 // 左键：打一个（金色组连点两下 = 整组）；右键：打中一组（金色）里的一个，整组都算
 document.addEventListener("mousedown", (e) => {
+  lastInput = "mouse";
   if (!playing || settings.auto || phoneMode || (e.button !== 0 && e.button !== 2)) return;
   shoot(e.button === 2);
 });
@@ -1538,6 +1556,7 @@ function shoot(whole = false) {
   // 右键只对金色（还成对的一组）有效：没瞄着金色靶子就什么都不做（不开枪、不算 Miss）
   if (whole && !aimingAtGold()) return;
   const hitTarget = shootTargets(whole);
+  if (hitTarget && padMode) rumble(0.25, 0.5, 45);
   const targets: THREE.Object3D[] = [];
   for (const r of rows) if (r.group.visible && r.cell.opacity > 0.5) for (const c of r.group.children) if ((c as THREE.Mesh).isMesh) targets.push(c);
   const hit = hitTarget ? undefined : ray.intersectObjects(targets, false)[0];
@@ -1832,7 +1851,7 @@ function accuracy() {
 function showLive() {
   const c = song.count;
   liveEl.hidden = !song.running;
-  liveEl.textContent = `${phoneMode ? "手机　" : settings.auto ? "自动　" : ""}准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
+  liveEl.textContent = `${phoneMode ? "手机　" : padMode ? "手柄　" : ""}${settings.auto && !phoneMode ? "自动　" : ""}准确率 ${(accuracy() * 100).toFixed(1)}%　连击 ${song.combo}　(${c.perfect}/${c.great}/${c.miss})`;
 }
 
 
@@ -1845,7 +1864,7 @@ function showResult() {
   const dev = mean(song.devs) * 1000;
   const flick = mean(song.flicks) * 1000;
   // 最高分：按"歌 + 难度"记
-  const key = `${song.pick?.id}|${song.pick?.difficulty}${phoneMode ? "|phone" : ""}`;
+  const key = `${song.pick?.id}|${song.pick?.difficulty}${phoneMode ? "|phone" : padMode ? "|pad" : ""}`;
   const best = store.best;
   const prev = best[key] ?? 0;
   // 自动模式打的不算纪录
@@ -1864,7 +1883,7 @@ function showResult() {
     resultEl.appendChild(d);
     return d;
   };
-  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}${phoneMode ? " · 手机模式" : ""}${song.autoUsed ? " · 自动（不记最高分）" : ""}`);
+  add("r-title", `${song.meta?.title ?? ""} · ${song.pick?.difficulty ?? ""}${phoneMode ? " · 手机模式" : padMode ? " · 手柄" : ""}${song.autoUsed ? " · 自动（不记最高分）" : ""}`);
   add("r-score", score.toLocaleString("en-US"));
   if (record) add("r-record", prev ? `新纪录！（之前 ${prev.toLocaleString("en-US")}）` : "新纪录！");
   else add("r-best", `最高分 ${prev.toLocaleString("en-US")}`);
@@ -1885,7 +1904,7 @@ function showResult() {
     rows.append(a, b);
   }
   resultEl.appendChild(rows);
-  add("r-tip", "甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · 空格 / R 再来一次 · Esc 退出");
+  add("r-tip", `甩枪时间：从上一枪（或靶子出现）到准星落到这个靶子上 · ${padMode ? "A 再来一次 · B 退出" : "空格 / R 再来一次 · Esc 退出"}`);
   resultEl.hidden = false;
   liveEl.hidden = true;
   pushPhone("result", undefined, {
@@ -2229,6 +2248,190 @@ listen<string>("rift-phone-cmd", (e) => {
   }
 });
 
+// ---------------- 手柄 ----------------
+// 标准布局（Xbox 叫法）：右摇杆瞄准（左摇杆也行）；RT / RB / A 射击；LT / LB 金色整组（= 右键）；
+// Start 暂停 / 继续；Back 重开。菜单里十字键 / 左摇杆选按钮、A 确定、B 返回；结算时 A 再来一次、B 退出。
+// 用手柄开的局不锁鼠标（浏览器只认鼠标键盘的操作才让锁），准星照样在屏幕正中。
+/** 这一局是不是用手柄打 */
+let padMode = false;
+/** 最后碰的是鼠标还是手柄：开始 / 继续时按这个决定用哪种 */
+let lastInput: "mouse" | "pad" = "mouse";
+let padPrev: boolean[] = [];
+let padFocus = 0;
+/** 菜单里摇杆推着不放时，多久跳一格（毫秒） */
+let padNavAt = 0;
+let padNavDir = 0;
+const PAD_DEAD = 0.18;
+
+function setPadMode(on: boolean) {
+  if (on !== padMode) log(`手柄模式：${on ? "开" : "关"}`);
+  padMode = on;
+  document.body.classList.toggle("pad-play", on);
+  showInfo();
+}
+
+/** 没锁鼠标时（手机、手柄）暂停：自己弹暂停菜单 */
+function freePause() {
+  playing = false;
+  crossEl.hidden = true;
+  pause();
+}
+
+function activePad(): Gamepad | null {
+  const pads = navigator.getGamepads?.() ?? [];
+  let first: Gamepad | null = null;
+  for (const g of pads) {
+    if (!g || !g.connected) continue;
+    if (g.mapping === "standard") return g;
+    first ??= g;
+  }
+  return first;
+}
+
+function rumble(strong: number, weak: number, ms: number) {
+  const act = (activePad() as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, o: object) => Promise<unknown> } }) | null)?.vibrationActuator;
+  act?.playEffect?.("dual-rumble", { duration: ms, strongMagnitude: strong, weakMagnitude: weak })?.catch(() => {});
+}
+
+/** 摇杆：圆形死区，推得轻时更细（平方曲线） */
+function stick(x: number, y: number): [number, number] {
+  const m = Math.hypot(x, y);
+  if (m < PAD_DEAD) return [0, 0];
+  const k = Math.min(1, (m - PAD_DEAD) / (1 - PAD_DEAD));
+  return [(x / m) * k * k, (y / m) * k * k];
+}
+
+/** 看得见的菜单（或结算）里能按的按钮 */
+function padButtons(): HTMLButtonElement[] {
+  if (menuEl.hidden) return [];
+  return [...menuEl.querySelectorAll<HTMLButtonElement>(".menu-buttons button")].filter((b) => !b.disabled);
+}
+function markPadFocus() {
+  const bs = [...menuEl.querySelectorAll<HTMLButtonElement>(".menu-buttons button")];
+  const ok = bs.filter((b) => !b.disabled);
+  if (ok.length) padFocus = ((padFocus % ok.length) + ok.length) % ok.length;
+  for (const b of bs) b.classList.toggle("pad-focus", lastInput === "pad" && b === ok[padFocus]);
+}
+
+/** 辅助瞄准：离准星最近（按角度）、还没打掉的靶子，和到它的角度差 */
+function nearestTarget(): { dy: number; dp: number; d: number } | null {
+  let best: { dy: number; dp: number; d: number } | null = null;
+  for (const lt of song.live) {
+    if (lt.gone) continue;
+    const [ty, tp] = aimAt(lt);
+    const dy = ty - aimYaw;
+    const dp = tp - aimPitch;
+    const d = Math.hypot(dy, dp);
+    if (!best || d < best.d) best = { dy, dp, d };
+  }
+  return best;
+}
+
+function updatePad(dt: number) {
+  if (phoneMode || closing) return;
+  const gp = activePad();
+  if (!gp) {
+    padPrev = [];
+    return;
+  }
+  const btn = gp.buttons.map((b) => b.pressed || b.value > 0.5);
+  const down = (...ids: number[]) => ids.some((i) => btn[i] && !padPrev[i]);
+  const prevAny = padPrev.length > 0;
+  padPrev = btn;
+  // 刚连上的那一帧不算按下（免得之前按着的键被当成新按）
+  if (!prevAny) return;
+  const ax = gp.axes;
+  const [rx, ry] = stick(ax[2] ?? 0, ax[3] ?? 0);
+  const [lx, ly] = stick(ax[0] ?? 0, ax[1] ?? 0);
+  // 两根摇杆哪根推得多用哪根
+  const [sx, sy] = Math.hypot(rx, ry) >= Math.hypot(lx, ly) ? [rx, ry] : [lx, ly];
+  const moving = sx !== 0 || sy !== 0;
+  if (moving || btn.some(Boolean)) {
+    if (lastInput !== "pad") {
+      lastInput = "pad";
+      markPadFocus();
+    }
+  }
+
+  const inGame = playing && (!song.on || (song.running && !song.paused && !song.finished)) && menuEl.hidden;
+  if (inGame) {
+    if (song.on && down(9)) {
+      freePause();
+      return;
+    }
+    if (song.on && down(8)) {
+      gameStart();
+      return;
+    }
+    // 测试模式（没有歌）：Start / B 回菜单
+    if (!song.on && down(9, 1)) {
+      playing = false;
+      crossEl.hidden = true;
+      showMenu("main");
+      return;
+    }
+    if (settings.auto) return;
+    if (moving) {
+      // 推到底每秒转 padSens × 100 度
+      let rate = (settings.padSens * 100 * Math.PI) / 180;
+      const near = settings.padAssist ? nearestTarget() : null;
+      // 靶子大概多大（角度）：半个格子
+      const r = Math.atan((CELL * 0.5 * settings.size) / (WALL_Z * ZOOM));
+      if (near && near.d < r) rate *= 0.55; // 划过靶子时转慢一点
+      aimYaw -= sx * rate * dt;
+      aimPitch -= sy * rate * dt;
+      if (near && near.d < r * 2.5) {
+        // 往靶子吸一点（只在推摇杆时，不推就不动）
+        const k = (1 - Math.exp(-dt / 0.12)) * (1 - near.d / (r * 2.5));
+        aimYaw += near.dy * k;
+        aimPitch += near.dp * k;
+      }
+      aimYaw = Math.min(yawMax(), Math.max(-yawMax(), aimYaw));
+    }
+    if (down(7, 5, 0)) shoot(false);
+    if (down(6, 4)) shoot(true);
+    return;
+  }
+
+  // 结算：A 再来一次、B 退出
+  if (playing && song.finished) {
+    if (down(0)) gameStart();
+    else if (down(1)) close();
+    return;
+  }
+  // 设置面板：B 回菜单（里面的东西用鼠标改）
+  if (!startEl.hidden) {
+    if (down(1)) showMenu(menuKind);
+    return;
+  }
+  const bs = padButtons();
+  if (!bs.length) return;
+  // 菜单：十字键 / 左摇杆选，A 确定，B 返回（暂停时 = 继续），Start = 第一个按钮（开始 / 继续）
+  let dir = down(14, 12) ? -1 : down(15, 13) ? 1 : 0;
+  const ls = Math.abs(lx) > Math.abs(ly) ? lx : ly;
+  const sd = Math.abs(ls) > 0.25 ? Math.sign(ls) : 0;
+  const t = performance.now();
+  if (sd && (sd !== padNavDir || t - padNavAt > 260)) {
+    dir ||= sd;
+    padNavAt = t;
+  }
+  padNavDir = sd;
+  if (dir) {
+    padFocus += dir;
+    markPadFocus();
+  }
+  if (down(0)) bs[Math.min(padFocus, bs.length - 1)]?.click();
+  else if (down(9)) bs[0].click();
+  else if (down(1) && menuKind === "pause") resume();
+}
+
+window.addEventListener("gamepadconnected", (e) => log(`手柄连上了：${(e as GamepadEvent).gamepad.id}`));
+window.addEventListener("gamepaddisconnected", () => {
+  log("手柄断开了");
+  // 打到一半手柄断了：暂停
+  if (padMode && playing && song.running && !song.finished && !song.paused && !document.pointerLockElement) freePause();
+});
+
 // ---------------- 主循环 ----------------
 let last = performance.now();
 let frames = 0;
@@ -2267,6 +2470,7 @@ function frame(now: number) {
   muzzleLight.intensity *= Math.exp(-dt / 0.03);
   updateFx(now);
   updateSong(n, now);
+  updatePad(dt);
   updateAuto(dt);
   if (phoneMode && song.running && !song.paused && !song.finished && now - phonePushAt > 1000) pushPhone("playing");
   fxTime += dt * settings.fxSpeed;
@@ -2335,6 +2539,7 @@ function close() {
   bannerEl.hidden = true;
   infoEl.hidden = true;
   if (document.pointerLockElement) document.exitPointerLock();
+  document.body.classList.remove("pad-play");
   stopSong();
   showPrompt("");
   comboEl.textContent = "";
@@ -2345,9 +2550,8 @@ function close() {
 }
 
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && phoneMode && playing && song.running && !song.finished && !song.paused) {
-    playing = false;
-    pause();
+  if (e.key === "Escape" && (phoneMode || (padMode && !document.pointerLockElement)) && playing && song.running && !song.finished && !song.paused) {
+    freePause();
     return;
   }
   if (e.key === "Escape") {
@@ -2361,10 +2565,8 @@ window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   // P：暂停（放开鼠标锁定，pointerlockchange 里弹出暂停菜单）
   if (k === "p" && playing && song.running && !song.finished && !e.repeat) {
-    if (phoneMode) {
-      playing = false;
-      pause();
-    } else document.exitPointerLock();
+    if (phoneMode || (padMode && !document.pointerLockElement)) freePause();
+    else document.exitPointerLock();
     return;
   }
   // F2：自动模式开关（设置里也能改）

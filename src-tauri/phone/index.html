@@ -445,6 +445,225 @@
         font-weight: 900;
         font-variant-numeric: tabular-nums;
       }
+
+      /* ---------- 游戏触控板（横屏铺满） ---------- */
+      #tp {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 30;
+        background: #07070b;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        overflow: hidden;
+        transform-origin: 0 0;
+      }
+      #tp[hidden] {
+        display: none;
+      }
+      #tpBar {
+        position: absolute;
+        left: 38%;
+        right: 2%;
+        top: 3%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #55556a;
+        pointer-events: none;
+      }
+      #tpBar button {
+        flex: 0 0 auto;
+        padding: 6px 12px;
+        font-size: 13px;
+        border-radius: 10px;
+        pointer-events: auto;
+      }
+      #tpMsg {
+        flex: 1;
+        min-width: 0;
+        text-align: center;
+      }
+      #tpMsg.bad {
+        color: #ff8a8a;
+      }
+      #tpAlt {
+        position: absolute;
+        left: 4%;
+        top: 12%;
+        width: 22%;
+        height: 26%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        border-radius: 18px;
+        border: 1.5px solid #3a3a48;
+        background: #191922;
+        color: #c8c8d4;
+        font-weight: 800;
+        font-size: 20px;
+      }
+      #tpAlt small {
+        font-size: 11px;
+        font-weight: 400;
+        color: #6a6a80;
+      }
+      #tpAlt.on {
+        background: #8aa8ff;
+        border-color: #8aa8ff;
+        color: #111;
+      }
+      #tpAlt.on small {
+        color: #223;
+      }
+      #tpPadHint {
+        position: absolute;
+        left: 36%;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        border-left: 1px dashed #24242e;
+        pointer-events: none;
+      }
+
+      /* ---------- 手机当手柄 ---------- */
+      #xpad {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 30;
+        background: #07070b;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        overflow: hidden;
+        transform-origin: 0 0;
+      }
+      #xpad[hidden] {
+        display: none;
+      }
+      #xpad .xb {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        border: 1.5px solid #3a3a48;
+        background: #191922;
+        color: #c8c8d4;
+        font-weight: 800;
+        font-size: 15px;
+      }
+      #xpad .xb.on {
+        background: var(--c, #8aa8ff);
+        border-color: var(--c, #8aa8ff);
+        color: #111;
+        box-shadow: 0 0 16px var(--c, #8aa8ff);
+      }
+      #xpad .face {
+        /* left / top 是圆心 */
+        width: 13vmin;
+        height: 13vmin;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        border: 2px solid var(--c);
+        color: var(--c);
+        font-size: 20px;
+      }
+      #xpad .round {
+        border-radius: 999px;
+        font-size: 12px;
+      }
+      #xpad .dp {
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .xzone {
+        position: absolute;
+      }
+      .xbase {
+        position: absolute;
+        border-radius: 50%;
+        border: 2px solid #3a3a48;
+        background: rgba(255, 255, 255, 0.03);
+        pointer-events: none;
+        opacity: 0.55;
+      }
+      .xbase.on {
+        opacity: 1;
+        border-color: #8aa8ff;
+      }
+      .xknob {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 46%;
+        height: 46%;
+        margin: -23% 0 0 -23%;
+        border-radius: 50%;
+        background: #34344a;
+        border: 2px solid #55557a;
+      }
+      .xbase.on .xknob {
+        background: #8aa8ff;
+        border-color: #b9caff;
+      }
+      .xzone .xlabel {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 8px;
+        text-align: center;
+        font-size: 11px;
+        color: #55556a;
+        pointer-events: none;
+      }
+      #xtop {
+        position: absolute;
+        left: 22%;
+        right: 22%;
+        top: 3%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      #xtop button {
+        flex: 0 0 auto;
+        padding: 6px 12px;
+        font-size: 13px;
+        border-radius: 10px;
+      }
+      #xmode {
+        flex: 1;
+        min-width: 0;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #xmode.bad {
+        color: #ff8a8a;
+        white-space: normal;
+      }
+      .keymap {
+        display: grid;
+        grid-template-columns: auto 1fr auto 1fr;
+        gap: 4px 10px;
+        margin-top: 8px;
+        font-size: 13px;
+      }
+      .keymap b {
+        color: var(--text);
+      }
     </style>
   </head>
   <body>
@@ -458,6 +677,7 @@
       <button data-view="pad">触控板</button>
       <button data-view="win">窗口</button>
       <button data-view="game">音游</button>
+      <button data-view="xpad">手柄</button>
     </nav>
 
     <div class="view" id="v-main">
@@ -526,6 +746,8 @@
         <button class="mbtn" data-btn="back">← 返回</button>
         <button class="mbtn" data-btn="forward">前进 →</button>
       </div>
+      <div id="padWarn" class="note" style="color: #ff8a8a" hidden>电脑前台的程序是以管理员身份运行的（很多游戏是），系统不让手机控制它。电脑托盘 →「以管理员身份重启」之后就可以了。</div>
+      <div class="row"><button id="tpStart" class="main">横屏铺满（玩游戏用：WASD 摇杆 + Alt）</button></div>
       <label class="sens">灵敏度 <input id="sens" type="range" min="0.5" max="4" step="0.1" /> <span id="sensV"></span></label>
       <label class="sens"><input id="natural" type="checkbox" style="flex: none" /> 滚动方向跟手机一样（手指往上推＝页面往下）</label>
     </div>
@@ -548,6 +770,68 @@
         <div class="note">结算说"平均偏晚"就往右调一点（手机屏幕感应手指有延迟）。</div>
       </section>
       <div id="songs"><div class="note">读取歌单…</div></div>
+    </div>
+
+
+    <div class="view" id="v-xpad" hidden>
+      <section class="card">
+        <h2>手机当手柄</h2>
+        <div class="note" style="margin-top: 0">手机横过来变成一个手柄，玩电脑上的游戏。</div>
+        <div class="row"><button id="xStart" class="main">开始</button></div>
+        <div class="note" id="xModeNote">电脑装了 <b>ViGEmBus</b> 驱动 → 游戏会以为插了一个 Xbox 手柄（摇杆有轻重，管理员身份的游戏也能用）。<br />没装 → 自动改成模拟键盘鼠标，按键对应下面这张表。</div>
+        <label class="sens">右摇杆转视角速度（键盘模式） <input id="xsens" type="range" min="0.3" max="3" step="0.1" /> <span id="xsensV"></span></label>
+      </section>
+      <section class="card">
+        <h2>键盘鼠标模式的按键</h2>
+        <div class="keymap">
+          <span>左摇杆</span><b>W A S D</b><span>右摇杆</span><b>鼠标（转视角）</b>
+          <span>A</span><b>空格</b><span>B</span><b>左 Shift</b>
+          <span>X</span><b>E</b><span>Y</span><b>Q</b>
+          <span>LB</span><b>R</b><span>RB</span><b>F</b>
+          <span>LT</span><b>鼠标右键</b><span>RT</span><b>鼠标左键</b>
+          <span>L3</span><b>左 Ctrl</b><span>R3</span><b>鼠标中键</b>
+          <span>Start</span><b>Esc</b><span>Back</span><b>Tab</b>
+          <span>十字键</span><b>↑1 →2 ↓3 ←4</b><span></span><b></b>
+        </div>
+        <div class="note">想要真正的手柄：电脑上装 ViGEmBus（在 GitHub 搜 nefarius ViGEmBus，下载 Releases 里的安装包），装好后重新点「开始」就行，不用重启灵动岛。</div>
+      </section>
+    </div>
+
+    <div id="tp" hidden>
+      <div id="tpPadHint"></div>
+      <div id="tpBar">
+        <span id="tpMsg">右边划＝移鼠标 / 转视角 · 轻点＝左键 · 双指轻点＝右键 · 按住不动＝按住左键</span>
+        <button id="tpFull">全屏</button>
+        <button id="tpQuit">✕</button>
+      </div>
+      <div id="tpAlt">Alt<small>按住 · 轻点＝锁住</small></div>
+      <div class="xzone" id="tpStick" style="left: 0; top: 42%; width: 36%; height: 58%"><div class="xbase"><div class="xknob"></div></div><div class="xlabel">W A S D</div></div>
+    </div>
+
+    <div id="xpad" hidden>
+      <div id="xtop">
+        <button id="xquit">✕</button>
+        <button class="xb round" data-b="32" style="position: static; width: 56px; height: 30px">Back</button>
+        <span id="xmode">连接中…</span>
+        <button class="xb round" data-b="16" style="position: static; width: 56px; height: 30px">Start</button>
+        <button id="xfull">全屏</button>
+      </div>
+      <div class="xb" data-trig="lt" style="left: 3%; top: 4%; width: 17%; height: 14%">LT</div>
+      <div class="xb" data-b="256" style="left: 3%; top: 20%; width: 17%; height: 12%">LB</div>
+      <div class="xb" data-trig="rt" style="right: 3%; top: 4%; width: 17%; height: 14%">RT</div>
+      <div class="xb" data-b="512" style="right: 3%; top: 20%; width: 17%; height: 12%">RB</div>
+      <div class="xb round" data-b="64" style="left: 36%; top: 17%; width: 9%; height: 11%">L3</div>
+      <div class="xb round" data-b="128" style="right: 36%; top: 17%; width: 9%; height: 11%">R3</div>
+      <div class="xzone" id="xls" style="left: 0; top: 34%; width: 36%; height: 66%"><div class="xbase"><div class="xknob"></div></div><div class="xlabel">左摇杆</div></div>
+      <div class="xzone" id="xrs" style="left: 51%; top: 50%; width: 24%; height: 50%"><div class="xbase"><div class="xknob"></div></div><div class="xlabel" id="xrsLabel">右摇杆</div></div>
+      <div class="xb dp" data-b="1" style="left: 37%; top: 52%; width: 6%; height: 14%">▲</div>
+      <div class="xb dp" data-b="2" style="left: 37%; top: 80%; width: 6%; height: 14%">▼</div>
+      <div class="xb dp" data-b="4" style="left: 31%; top: 66%; width: 6%; height: 14%">◀</div>
+      <div class="xb dp" data-b="8" style="left: 43%; top: 66%; width: 6%; height: 14%">▶</div>
+      <div class="xb face" data-b="32768" style="--c: #ffd24f; left: 85%; top: 40%">Y</div>
+      <div class="xb face" data-b="16384" style="--c: #4f8cff; left: 77%; top: 58%">X</div>
+      <div class="xb face" data-b="8192" style="--c: #ff5a4f; left: 93%; top: 58%">B</div>
+      <div class="xb face" data-b="4096" style="--c: #5ee08a; left: 85%; top: 76%">A</div>
     </div>
 
     <div id="game" hidden>
@@ -609,6 +893,7 @@
           showMedia(s.cover);
           showStat(s.stat);
           $("uploadCard").hidden = !s.upload;
+          $("padWarn").hidden = !s.blocked;
         } catch (e) {
           $("dot").textContent = "连不上";
           $("dot").classList.remove("on");
@@ -1519,6 +1804,483 @@
         fitGame();
       };
       window.addEventListener("resize", () => G.open && fitGame());
+
+
+
+      // ---------- 游戏触控板：横屏铺满 ----------
+      // 左手边：Alt（按住；轻点一下锁住，再点松开）和一个摇杆（推哪边按哪个 WASD）；其余整块都是触控板：
+      // 划＝移鼠标（游戏里转视角）、轻点＝左键、双指轻点＝右键、按住不动＝按住左键（松手放开）。
+      // 键盘的键按"现在应该按着哪些"整个发给电脑；按着键时每 250ms 发一次心跳，断了电脑会自己全部松开。
+      const TP = { open: false, rot: 0, keys: new Set(), altLock: false };
+      const tpEl = $("tp");
+      let tpSending = false,
+        tpDirty = false;
+      function tpSendKeys() {
+        if (tpSending) {
+          tpDirty = true;
+          return;
+        }
+        tpSending = true;
+        tpDirty = false;
+        api("/api/keys", { method: "POST", body: JSON.stringify({ keys: [...TP.keys] }) })
+          .then(async (r) => {
+            if (!r.ok) throw new Error(await r.text());
+            const j = await r.json();
+            tpWarn(j.blocked);
+          })
+          .catch(() => {})
+          .finally(() => {
+            tpSending = false;
+            if (tpDirty) tpSendKeys();
+          });
+      }
+      function tpWarn(blocked) {
+        const m = $("tpMsg");
+        m.classList.toggle("bad", !!blocked);
+        m.textContent = blocked
+          ? "前台游戏是管理员身份：电脑托盘 → 以管理员身份重启"
+          : "右边划＝移鼠标 / 转视角 · 轻点＝左键 · 双指轻点＝右键 · 按住不动＝按住左键";
+      }
+      setInterval(() => TP.open && !document.hidden && TP.keys.size && tpSendKeys(), 250);
+      function tpSetKeys(next) {
+        const same = next.size === TP.keys.size && [...next].every((k) => TP.keys.has(k));
+        if (same) return;
+        TP.keys = next;
+        tpSendKeys();
+      }
+      const tpWith = (k, on) => {
+        const n = new Set(TP.keys);
+        on ? n.add(k) : n.delete(k);
+        tpSetKeys(n);
+      };
+
+      function tpFit() {
+        const portrait = window.innerHeight > window.innerWidth;
+        TP.rot = portrait ? 90 : 0;
+        if (portrait) {
+          tpEl.style.width = `${window.innerHeight}px`;
+          tpEl.style.height = `${window.innerWidth}px`;
+          tpEl.style.transform = `translateX(${window.innerWidth}px) rotate(90deg)`;
+        } else tpEl.style.width = tpEl.style.height = tpEl.style.transform = "";
+        tpIdle();
+      }
+      const tpLocal = (t) => (TP.rot === 90 ? { x: t.clientY, y: window.innerWidth - t.clientX } : { x: t.clientX, y: t.clientY });
+      const TP_R = () => Math.min(tpEl.clientWidth, tpEl.clientHeight) * 0.17;
+      function tpIdle() {
+        const z = $("tpStick");
+        const base = z.querySelector(".xbase");
+        const R = TP_R();
+        base.style.width = base.style.height = `${R * 2}px`;
+        base.style.left = `${z.clientWidth / 2 - R}px`;
+        base.style.top = `${z.clientHeight / 2 - R}px`;
+        base.classList.remove("on");
+        base.querySelector(".xknob").style.transform = "";
+      }
+      window.addEventListener("resize", () => TP.open && tpFit());
+
+      async function tpOpen() {
+        TP.open = true;
+        tpEl.hidden = false;
+        try {
+          await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+          await screen.orientation?.lock?.("landscape").catch(() => {});
+        } catch {}
+        tpFit();
+      }
+      function tpClose() {
+        TP.open = false;
+        tpEl.hidden = true;
+        tpTouches.clear();
+        if (tpGesture?.holding) btn("left", "up");
+        tpGesture = null;
+        TP.altLock = false;
+        $("tpAlt").classList.remove("on");
+        tpSetKeys(new Set());
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      }
+      $("tpStart").onclick = tpOpen;
+      $("tpQuit").onclick = tpClose;
+      $("tpFull").onclick = () => document.documentElement.requestFullscreen({ navigationUI: "hide" }).then(() => screen.orientation?.lock?.("landscape")).catch(() => {});
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden && TP.open) {
+          TP.altLock = false;
+          $("tpAlt").classList.remove("on");
+          tpSetKeys(new Set());
+        }
+      });
+
+      // 每根手指：{kind: "alt", at} / {kind: "stick", cx, cy} / {kind: "pad", x, y, at}
+      const tpTouches = new Map();
+      // 触控板这一下：几根手指、动了多少、是不是在按住左键
+      let tpGesture = null;
+      const tpPlain = (e) => !!(e.target.closest && e.target.closest("#tpQuit, #tpFull"));
+      function tpStickKeys(t, x, y) {
+        const R = TP_R();
+        let dx = x - t.cx,
+          dy = y - t.cy;
+        const m = Math.hypot(dx, dy);
+        if (m > R) {
+          dx *= R / m;
+          dy *= R / m;
+        }
+        t.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+        const n = new Set([...TP.keys].filter((k) => !"wasd".includes(k)));
+        // 推过三分之一才算；斜着推就两个键一起按
+        const vx = dx / R,
+          vy = dy / R;
+        if (Math.hypot(vx, vy) > 0.3) {
+          if (vy < -0.38) n.add("w");
+          if (vy > 0.38) n.add("s");
+          if (vx < -0.38) n.add("a");
+          if (vx > 0.38) n.add("d");
+        }
+        tpSetKeys(n);
+      }
+      tpEl.addEventListener(
+        "touchstart",
+        (e) => {
+          if (tpPlain(e)) return;
+          e.preventDefault();
+          const now = performance.now();
+          for (const tc of e.changedTouches) {
+            const p = tpLocal(tc);
+            const target = tc.target.closest ? tc.target.closest("#tpAlt, #tpStick") : null;
+            if (target?.id === "tpAlt") {
+              if (navigator.vibrate) navigator.vibrate(12);
+              if (TP.altLock) {
+                // 锁着时再点一下：松开
+                TP.altLock = false;
+                $("tpAlt").classList.remove("on");
+                tpWith("alt", false);
+                tpTouches.set(tc.identifier, { kind: "none" });
+              } else {
+                $("tpAlt").classList.add("on");
+                tpWith("alt", true);
+                tpTouches.set(tc.identifier, { kind: "alt", at: now });
+              }
+            } else if (target?.id === "tpStick") {
+              const R = TP_R();
+              const base = target.querySelector(".xbase");
+              base.style.width = base.style.height = `${R * 2}px`;
+              base.style.left = `${p.x - target.offsetLeft - R}px`;
+              base.style.top = `${p.y - target.offsetTop - R}px`;
+              base.classList.add("on");
+              const knob = base.querySelector(".xknob");
+              knob.style.transform = "";
+              tpTouches.set(tc.identifier, { kind: "stick", cx: p.x, cy: p.y, knob });
+            } else {
+              tpTouches.set(tc.identifier, { kind: "pad", x: p.x, y: p.y, at: now });
+              if (!tpGesture) {
+                tpGesture = { start: now, fingers: 0, moved: 0, holding: false, timer: 0 };
+                // 按住不动一会儿：按住左键（比如原神的重击），松手放开
+                tpGesture.timer = setTimeout(() => {
+                  const g = tpGesture;
+                  if (g && g.fingers === 1 && g.moved < 10) {
+                    g.holding = true;
+                    if (navigator.vibrate) navigator.vibrate(20);
+                    btn("left", "down");
+                  }
+                }, 380);
+              }
+              tpGesture.fingers++;
+            }
+          }
+        },
+        { passive: false },
+      );
+      tpEl.addEventListener(
+        "touchmove",
+        (e) => {
+          if (tpPlain(e)) return;
+          e.preventDefault();
+          const now = performance.now();
+          for (const tc of e.changedTouches) {
+            const t = tpTouches.get(tc.identifier);
+            if (!t) continue;
+            const p = tpLocal(tc);
+            if (t.kind === "stick") tpStickKeys(t, p.x, p.y);
+            else if (t.kind === "pad" && tpGesture) {
+              const dx = p.x - t.x,
+                dy = p.y - t.y;
+              const dt = now - t.at;
+              t.x = p.x;
+              t.y = p.y;
+              t.at = now;
+              tpGesture.moved += Math.hypot(dx, dy);
+              // 一根手指才移鼠标（两根手指是在点右键）
+              if (tpGesture.fingers === 1) move(dx, dy, dt);
+            }
+          }
+        },
+        { passive: false },
+      );
+      function tpEnd(e) {
+        if (tpPlain(e)) return;
+        e.preventDefault();
+        const now = performance.now();
+        for (const tc of e.changedTouches) {
+          const t = tpTouches.get(tc.identifier);
+          if (!t) continue;
+          tpTouches.delete(tc.identifier);
+          if (t.kind === "alt") {
+            // 很快松开＝轻点：锁住，不松 Alt
+            if (now - t.at < 250) TP.altLock = true;
+            else {
+              $("tpAlt").classList.remove("on");
+              tpWith("alt", false);
+            }
+          } else if (t.kind === "stick") {
+            tpIdle();
+            tpSetKeys(new Set([...TP.keys].filter((k) => !"wasd".includes(k))));
+          } else if (t.kind === "pad") {
+            if ([...tpTouches.values()].some((o) => o.kind === "pad")) continue;
+            const g = tpGesture;
+            tpGesture = null;
+            if (!g) continue;
+            clearTimeout(g.timer);
+            if (g.holding) btn("left", "up");
+            else if (now - g.start < 300 && g.moved < 14) btn(g.fingers >= 2 ? "right" : "left");
+          }
+        }
+      }
+      tpEl.addEventListener("touchend", tpEnd, { passive: false });
+      tpEl.addEventListener("touchcancel", tpEnd, { passive: false });
+
+      // ---------- 手机当手柄 ----------
+      // 手机横过来变成一个手柄：按键、摇杆的状态发给电脑（一次只发一个请求，等的时候合并成最新状态；没变也 250ms 发一次心跳）。
+      // 电脑装了 ViGEmBus 就是虚拟 Xbox 手柄，没装就是键盘鼠标（键盘模式下右摇杆区变成"划一划转视角"，像触控板）。
+      const X = { open: false, b: 0, lt: 0, rt: 0, lx: 0, ly: 0, rx: 0, ry: 0, mode: "", rot: 0 };
+      const xEl = $("xpad");
+      let xSending = false,
+        xDirty = false;
+      let xsens = Number(localStorage.getItem("xsens")) || 1;
+      $("xsens").value = xsens;
+      $("xsensV").textContent = xsens.toFixed(1);
+      $("xsens").oninput = () => {
+        xsens = Number($("xsens").value);
+        $("xsensV").textContent = xsens.toFixed(1);
+        localStorage.setItem("xsens", xsens);
+      };
+      function xSend(end = false) {
+        if (xSending && !end) {
+          xDirty = true;
+          return;
+        }
+        xSending = true;
+        xDirty = false;
+        const body = end ? { end: true } : { b: X.b, lt: X.lt, rt: X.rt, lx: X.lx, ly: X.ly, rx: X.rx, ry: X.ry, sens: xsens };
+        api("/api/pad", { method: "POST", body: JSON.stringify(body) })
+          .then(async (r) => {
+            if (!r.ok) throw new Error(await r.text());
+            const j = await r.json();
+            if (!end) xShowMode(j.mode, j.blocked);
+          })
+          .catch((e) => X.open && xShowMode("err", false, e.message))
+          .finally(() => {
+            xSending = false;
+            if (xDirty && X.open) xSend();
+          });
+      }
+      function xShowMode(mode, blocked, err) {
+        const el = $("xmode");
+        if (mode !== X.mode) {
+          X.mode = mode;
+          // 键盘模式：右摇杆区当触控板用（转视角更顺手）
+          $("xrsLabel").textContent = mode === "keys" ? "划这里转视角" : "右摇杆";
+        }
+        el.classList.toggle("bad", !!blocked || mode === "err");
+        el.textContent =
+          mode === "err"
+            ? `连不上电脑${err ? "：" + err : ""}`
+            : blocked
+              ? "前台游戏是管理员身份，键盘鼠标模式控制不了：电脑托盘 → 以管理员身份重启（或装 ViGEmBus）"
+              : mode === "xbox"
+                ? "虚拟 Xbox 手柄"
+                : "键盘鼠标模式（没装 ViGEmBus）";
+      }
+      setInterval(() => X.open && !document.hidden && xSend(), 250);
+
+      // 竖着拿时整个手柄转 90 度（和音游一样）
+      function xFit() {
+        const portrait = window.innerHeight > window.innerWidth;
+        X.rot = portrait ? 90 : 0;
+        if (portrait) {
+          xEl.style.width = `${window.innerHeight}px`;
+          xEl.style.height = `${window.innerWidth}px`;
+          xEl.style.transform = `translateX(${window.innerWidth}px) rotate(90deg)`;
+        } else {
+          xEl.style.width = xEl.style.height = xEl.style.transform = "";
+        }
+      }
+      window.addEventListener("resize", () => {
+        if (!X.open) return;
+        xFit();
+        for (const z of [$("xls"), $("xrs")]) if (![...xTouches.values()].some((t) => t.zone === z)) xIdle(z);
+      });
+      // 屏幕坐标 → 手柄里的坐标
+      const xLocal = (t) => (X.rot === 90 ? { x: t.clientY, y: window.innerWidth - t.clientX } : { x: t.clientX, y: t.clientY });
+
+      async function xOpen() {
+        X.open = true;
+        X.mode = "";
+        xEl.hidden = false;
+        $("xmode").textContent = "连接中…";
+        try {
+          await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+          await screen.orientation?.lock?.("landscape").catch(() => {});
+        } catch {}
+        xFit();
+        xIdle($("xls"));
+        xIdle($("xrs"));
+        xSend();
+      }
+      // 没按着时摇杆圈停在区域正中，看得出摇杆在哪
+      function xIdle(zone) {
+        const R = STICK_R();
+        const base = zone.querySelector(".xbase");
+        base.style.width = base.style.height = `${R * 2}px`;
+        base.style.left = `${zone.clientWidth / 2 - R}px`;
+        base.style.top = `${zone.clientHeight / 2 - R}px`;
+        base.classList.remove("on");
+        base.querySelector(".xknob").style.transform = "";
+      }
+      function xClose() {
+        X.open = false;
+        xEl.hidden = true;
+        xTouches.clear();
+        Object.assign(X, { b: 0, lt: 0, rt: 0, lx: 0, ly: 0, rx: 0, ry: 0 });
+        document.querySelectorAll("#xpad .on").forEach((e) => e.classList.remove("on"));
+        xSend(true);
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      }
+      $("xStart").onclick = xOpen;
+      $("xquit").onclick = xClose;
+      $("xfull").onclick = () => document.documentElement.requestFullscreen({ navigationUI: "hide" }).then(() => screen.orientation?.lock?.("landscape")).catch(() => {});
+      document.addEventListener("visibilitychange", () => {
+        // 切出去了：电脑那边全部松开
+        if (document.hidden && X.open) xSend(true);
+      });
+
+      // 每根手指按着什么：{kind: "b", el, bit} / {kind: "trig", el, which} / {kind: "stick", zone, cx, cy, lx, ly}
+      const xTouches = new Map();
+      const STICK_R = () => Math.min(xEl.clientWidth, xEl.clientHeight) * 0.17;
+      function xRecount() {
+        let b = 0,
+          lt = 0,
+          rt = 0;
+        for (const t of xTouches.values()) {
+          if (t.kind === "b") b |= t.bit;
+          if (t.kind === "trig") t.which === "lt" ? (lt = 255) : (rt = 255);
+        }
+        X.b = b;
+        X.lt = lt;
+        X.rt = rt;
+        xSend();
+      }
+      function xStick(t, x, y) {
+        const z = t.zone.id === "xls" ? "l" : "r";
+        // 键盘模式的右摇杆区：划多少鼠标走多少
+        if (z === "r" && X.mode === "keys") {
+          const dx = (x - t.px) * xsens * 2.2,
+            dy = (y - t.py) * xsens * 2.2;
+          t.px = x;
+          t.py = y;
+          t.restX = (t.restX || 0) + dx;
+          t.restY = (t.restY || 0) + dy;
+          const mx = Math.trunc(t.restX),
+            my = Math.trunc(t.restY);
+          t.restX -= mx;
+          t.restY -= my;
+          if (mx || my) push({ t: "m", x: mx, y: my });
+          return;
+        }
+        const R = STICK_R();
+        let dx = x - t.cx,
+          dy = y - t.cy;
+        const m = Math.hypot(dx, dy);
+        if (m > R) {
+          dx *= R / m;
+          dy *= R / m;
+        }
+        t.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+        const vx = Math.round((dx / R) * 32767),
+          vy = Math.round((-dy / R) * 32767);
+        if (z === "l") {
+          X.lx = vx;
+          X.ly = vy;
+        } else {
+          X.rx = vx;
+          X.ry = vy;
+        }
+        xSend();
+      }
+      // 顶上的 ✕、全屏是普通按钮：不拦它们的触摸，不然点击事件出不来（全屏还必须在点击里才让开）
+      const xPlain = (e) => !!(e.target.closest && e.target.closest("#xquit, #xfull"));
+      xEl.addEventListener(
+        "touchstart",
+        (e) => {
+          if (xPlain(e)) return;
+          e.preventDefault();
+          for (const tc of e.changedTouches) {
+            const el = tc.target.closest ? tc.target.closest("[data-b], [data-trig], .xzone") : null;
+            if (!el) continue;
+            if (el.classList.contains("xzone")) {
+              const p = xLocal(tc);
+              const R = STICK_R();
+              // 摇杆的中心就是手指按下的地方（不用找准位置）
+              const cx = p.x - el.offsetLeft,
+                cy = p.y - el.offsetTop;
+              const base = el.querySelector(".xbase");
+              base.style.width = base.style.height = `${R * 2}px`;
+              base.style.left = `${cx - R}px`;
+              base.style.top = `${cy - R}px`;
+              base.classList.add("on");
+              const knob = base.querySelector(".xknob");
+              knob.style.transform = "";
+              const t = { kind: "stick", zone: el, base, knob, cx: p.x, cy: p.y, px: p.x, py: p.y };
+              xTouches.set(tc.identifier, t);
+              continue;
+            }
+            el.classList.add("on");
+            if (navigator.vibrate) navigator.vibrate(12);
+            xTouches.set(tc.identifier, el.dataset.trig ? { kind: "trig", el, which: el.dataset.trig } : { kind: "b", el, bit: Number(el.dataset.b) });
+          }
+          xRecount();
+        },
+        { passive: false },
+      );
+      xEl.addEventListener(
+        "touchmove",
+        (e) => {
+          if (xPlain(e)) return;
+          e.preventDefault();
+          for (const tc of e.changedTouches) {
+            const t = xTouches.get(tc.identifier);
+            if (t && t.kind === "stick") {
+              const p = xLocal(tc);
+              xStick(t, p.x, p.y);
+            }
+          }
+        },
+        { passive: false },
+      );
+      function xEnd(e) {
+        if (xPlain(e)) return;
+        e.preventDefault();
+        for (const tc of e.changedTouches) {
+          const t = xTouches.get(tc.identifier);
+          if (!t) continue;
+          xTouches.delete(tc.identifier);
+          if (t.kind === "stick") {
+            xIdle(t.zone);
+            if (t.zone.id === "xls") X.lx = X.ly = 0;
+            else X.rx = X.ry = 0;
+          } else if (![...xTouches.values()].some((o) => o.el === t.el)) t.el.classList.remove("on");
+        }
+        xRecount();
+      }
+      xEl.addEventListener("touchend", xEnd, { passive: false });
+      xEl.addEventListener("touchcancel", xEnd, { passive: false });
 
       poll();
       setInterval(poll, 2000);

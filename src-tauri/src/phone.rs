@@ -3,6 +3,7 @@
 //! 能做的：看电脑在放的歌、切歌暂停；番茄钟；回到桌面；看 CPU / 显卡温度 / 电量；
 //! 把手机上打的字送到电脑剪贴板；把手机里的照片、文件传进架子的「手机」分类。
 //! 手机当触控板控制鼠标（移动、左右键、滚轮、返回 / 前进键），切换电脑上的窗口（见 phone_input.rs）。
+//! 手机当手柄玩电脑游戏（虚拟 Xbox 手柄 / 键盘鼠标，见 phone_pad.rs）。
 //! 音游手机模式：手机上选歌、点靶子，电脑照常放歌、画裂缝（局面由裂缝页面推上来，见 rift.rs）。
 //!
 //! 安全：
@@ -52,6 +53,8 @@ pub struct Phone {
     /// 手机最近一次来要状态的时间（毫秒）；有人在看时才让系统状态线程干活
     last_poll: AtomicU64,
     watching: AtomicBool,
+    /// 手机当手柄（见 phone_pad.rs）
+    pad: Arc<crate::phone_pad::PhonePad>,
 }
 
 fn now_ms() -> u64 {
@@ -195,6 +198,7 @@ impl Phone {
             snap: Arc::new(Mutex::new(Snapshot::default())),
             last_poll: AtomicU64::new(0),
             watching: AtomicBool::new(false),
+            pad: crate::phone_pad::PhonePad::new(),
         });
         // 收集程序里本来就在广播的状态（灵动岛、小组件也在用）
         let parse = |s: &str| serde_json::from_str::<Value>(s).unwrap_or(Value::Null);
@@ -341,6 +345,36 @@ impl Phone {
                     Err(e) => text_resp(400, &e),
                 }
             }
+            // 手机当手柄：一帧状态 → 虚拟 Xbox 手柄 / 键盘鼠标
+            (Method::Post, "/api/pad") => {
+                let mut buf = String::new();
+                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                match serde_json::from_str::<Value>(&buf) {
+                    Ok(v) => {
+                        let s = crate::phone_pad::PadState::from_json(&v);
+                        let sens = v.get("sens").and_then(Value::as_f64).unwrap_or(1.0);
+                        let end = v.get("end").and_then(Value::as_bool).unwrap_or(false);
+                        let mode = self.pad.update(s, sens, end);
+                        // 键盘模式下前台是管理员身份的程序：模拟的键盘鼠标它收不到
+                        let blocked = mode == "keys" && crate::phone_pad::elevated_foreground();
+                        json_resp(json!({ "mode": mode, "blocked": blocked }))
+                    }
+                    Err(_) => text_resp(400, "看不懂"),
+                }
+            }
+            // 游戏触控板：WASD 摇杆、Alt 现在按着哪些键（{"keys":["w","alt"]}）
+            (Method::Post, "/api/keys") => {
+                let mut buf = String::new();
+                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                let names: Vec<String> = serde_json::from_str::<Value>(&buf)
+                    .ok()
+                    .and_then(|v| v.get("keys").and_then(|k| serde_json::from_value(k.clone()).ok()))
+                    .unwrap_or_default();
+                match self.pad.keys(&names.iter().map(String::as_str).collect::<Vec<_>>()) {
+                    Ok(()) => json_resp(json!({ "ok": true, "blocked": crate::phone_pad::elevated_foreground() })),
+                    Err(e) => text_resp(400, &e),
+                }
+            }
             (Method::Get, "/api/windows") => json_resp(crate::phone_input::list_windows()),
             (Method::Post, "/api/windows/switch") => match query(&url, "id").and_then(|v| v.parse::<isize>().ok()) {
                 Some(id) => match crate::phone_input::switch_to(id) {
@@ -422,7 +456,16 @@ impl Phone {
         }
         let s = self.snap.lock().unwrap();
         let shelf = self.shelf_dir.is_some();
-        json!({ "media": s.media, "cover": s.cover, "pomo": s.pomo, "stat": s.stat, "upload": shelf, "now": now_ms() })
+        json!({
+            "media": s.media,
+            "cover": s.cover,
+            "pomo": s.pomo,
+            "stat": s.stat,
+            "upload": shelf,
+            "now": now_ms(),
+            // 前台是管理员身份的程序：触控板（模拟鼠标）控制不了它
+            "blocked": crate::phone_pad::elevated_foreground(),
+        })
     }
 
     fn upload(&self, rq: &mut Request, url: &str) -> Response<std::io::Cursor<Vec<u8>>> {

@@ -285,6 +285,15 @@ body {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
+/* 手柄选中的按钮 */
+.menu-buttons button.pad-focus:not(:disabled) {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+/* 用手柄打的时候鼠标没锁，把指针藏起来 */
+body.pad-play {
+  cursor: none;
+}
 .menu-buttons button:hover:not(:disabled) {
   border-color: var(--w-accent);
   box-shadow: 0 0 14px var(--w-accent);

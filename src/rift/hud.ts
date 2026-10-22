@@ -51,6 +51,10 @@ export interface AimSettings {
   auto: boolean;
   /** 主色从哪来："wallpaper" 壁纸、"cover" 这首歌的封面（取不到时退回壁纸） */
   colorSource: string;
+  /** 手柄灵敏度：摇杆推到底时每秒转多少个 100 度 */
+  padSens: number;
+  /** 手柄辅助瞄准：摇杆在动时准星往附近的靶子吸一点、在靶子上时转慢一点 */
+  padAssist: boolean;
 }
 
 export const RIFT_STYLES: [string, string][] = [
@@ -64,7 +68,7 @@ export const SCENES: [string, string][] = [
   ["sky", "天空之岛"],
 ];
 
-export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair", auto: false, colorSource: "wallpaper" };
+export const DEFAULTS: AimSettings = { sens: 0.4, color: "#00ffb4", length: 6, thick: 2, gap: 3, outline: true, dot: false, cols: 6, rows: 4, zoom: 1, size: 1, lead: 1, maxFrac: 0.6, fov: 103, window: 100, pairGrace: 150, rowMode: "follow", aimFollow: true, scene: "range", particles: true, riftStyle: "tear", fxSpeed: 0.5, arcs: false, colorMode: "pair", auto: false, colorSource: "wallpaper", padSens: 1.2, padAssist: true };
 const KEY = "rift-aim";
 
 /** 跟着"模式"走的设置；其余（灵敏度、准星、裂缝高度、视野）所有模式共用 */
@@ -110,6 +114,8 @@ export function cleanSettings(raw: unknown): AimSettings {
     s.auto = s.auto === true;
     if (s.colorMode !== "mono") s.colorMode = "pair";
     if (s.colorSource !== "cover") s.colorSource = "wallpaper";
+    s.padSens = Math.min(5, Math.max(0.1, Number(s.padSens) || DEFAULTS.padSens));
+    s.padAssist = s.padAssist !== false;
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -255,7 +261,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     target.appendChild(r);
   };
   const num = (
-    key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov" | "window" | "pairGrace" | "fxSpeed",
+    key: "sens" | "length" | "thick" | "gap" | "cols" | "rows" | "zoom" | "size" | "lead" | "maxFrac" | "fov" | "window" | "pairGrace" | "fxSpeed" | "padSens",
     min: number,
     max: number,
     step: number,
@@ -274,7 +280,7 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
     });
     return i;
   };
-  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow" | "auto") => {
+  const check = (key: "outline" | "dot" | "particles" | "arcs" | "aimFollow" | "auto" | "padAssist") => {
     const i = document.createElement("input");
     i.type = "checkbox";
     i.checked = s[key];
@@ -408,6 +414,8 @@ export function buildSettings(panel: HTMLElement, store: RiftStore, onChange: (s
   row("粒子效果", check("particles"), "裂缝边飘出的火星、裂缝里的浮尘；掉帧可以关掉");
   page("aim");
   row("灵敏度（Valorant）", num("sens", 0.01, 10, 0.001), "和 Valorant 里填一样的数，转动角度相同");
+  row("手柄灵敏度", num("padSens", 0.1, 5, 0.1), "摇杆推到底时每秒转多少个 100 度（1.2 = 每秒 120 度）；推得轻转得慢");
+  row("手柄辅助瞄准", check("padAssist"), "推摇杆时准星往附近的靶子吸一点、划过靶子时转慢一点（像主机射击游戏）；只在用手柄时有效");
   row("准星颜色", color);
   row("线长", num("length", 0, 20, 1));
   row("粗细", num("thick", 1, 10, 1));

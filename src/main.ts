@@ -21,7 +21,7 @@ const HIT_PAD = 4;
 const COLLAPSE_DELAY = 120;
 // 新警告出现时，收起状态下先显示几秒文字
 const ALERT_TOAST_MS = 5000;
-// 小球保持多久、多大（长按 2 秒的判断在 Rust 的 hover.rs）
+// 小球保持多久、多大（长按 1 秒的判断在 Rust 的 hover.rs）
 const BALL_MS = 3000;
 const BALL = 8;
 
@@ -217,15 +217,24 @@ listen<boolean>("island-hover", (e) => {
   else collapseTimer = window.setTimeout(() => setExpanded(false), COLLAPSE_DELAY);
 });
 
-// ---------- 双击灵动岛：回到桌面 / 全部最小化（做什么在托盘"双击灵动岛"里选） ----------
-// 双击按钮（播放、番茄钟……）不算，那是在连点按钮
-island.addEventListener("dblclick", (e) => {
+// ---------- 双击灵动岛：回到桌面 / 全部最小化（做什么在托盘"双击灵动岛"里选）；三连击：弹出手机遥控二维码 ----------
+// 连点按钮（播放、番茄钟……）不算。双击要等一小会儿，看是不是还有第三下
+const TRIPLE_WAIT = 300;
+let doubleTimer: number | undefined;
+island.addEventListener("click", (e) => {
   if ((e.target as Element).closest("button")) return;
-  window.getSelection()?.removeAllRanges();
-  invoke("island_double_click").catch(() => {});
+  if (e.detail === 2) {
+    window.getSelection()?.removeAllRanges();
+    window.clearTimeout(doubleTimer);
+    doubleTimer = window.setTimeout(() => invoke("island_double_click").catch(() => {}), TRIPLE_WAIT);
+  } else if (e.detail === 3) {
+    window.getSelection()?.removeAllRanges();
+    window.clearTimeout(doubleTimer);
+    invoke("island_triple_click").catch(() => {});
+  }
 });
 
-// ---------- 长按 2 秒：缩成小球让开下面的东西，3 秒后恢复 ----------
+// ---------- 长按 1 秒：缩成小球让开下面的东西，3 秒后恢复 ----------
 // 长按由 Rust 判断（网页内核偶尔吃掉第一下按下，网页里判断不可靠），这里只管变形
 let ballTimer: number | undefined;
 // 长按触发后松手时的那一下 click 不算（不然会按到松手位置的按钮）
