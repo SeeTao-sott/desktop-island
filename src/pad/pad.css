@@ -1,0 +1,111 @@
+/* 手柄按键显示：半透明的手柄，按下的键亮起来。只改颜色、transform */
+:root {
+  --w-accent: rgba(140, 170, 255, 0.92);
+  --body: rgba(14, 14, 18, 0.72);
+  --edge: rgba(255, 255, 255, 0.2);
+  --idle: rgba(255, 255, 255, 0.1);
+  --text: rgba(255, 255, 255, 0.75);
+}
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+#pad {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font: 700 9px "Segoe UI", system-ui, sans-serif;
+}
+text {
+  fill: var(--text);
+  text-anchor: middle;
+  pointer-events: none;
+}
+.body {
+  fill: var(--body);
+  stroke: var(--edge);
+  stroke-width: 1.2;
+}
+.btn,
+.track,
+.well,
+.hub {
+  fill: var(--idle);
+  stroke: var(--edge);
+  stroke-width: 1;
+}
+.hub {
+  stroke: none;
+}
+.btn {
+  transition: fill 60ms;
+}
+.btn.on {
+  fill: var(--w-accent);
+  filter: drop-shadow(0 0 4px var(--w-accent));
+}
+.lbl {
+  font-size: 8px;
+}
+/* ABXY 按 Xbox 的颜色 */
+.face .a { --c: #5ee08a; }
+.face .b { --c: #ff5a4f; }
+.face .x { --c: #4f8cff; }
+.face .y { --c: #ffd24f; }
+.face .btn {
+  stroke: var(--c);
+  stroke-width: 1.5;
+}
+.face text {
+  font-size: 11px;
+}
+.face .btn.on {
+  fill: var(--c);
+  filter: drop-shadow(0 0 5px var(--c));
+}
+.face .btn.on + text {
+  fill: #111;
+}
+.trigger .fill {
+  fill: var(--w-accent);
+  transform-box: fill-box;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+#rt .fill {
+  transform-origin: right center;
+}
+.trigger text {
+  font-size: 7px;
+}
+.cap {
+  fill: rgba(255, 255, 255, 0.22);
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 1;
+}
+.stick.on .cap {
+  fill: var(--w-accent);
+  filter: drop-shadow(0 0 4px var(--w-accent));
+}
+.bat-shell {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1;
+}
+.bat-tip {
+  fill: var(--text);
+}
+.bat-bar {
+  fill: var(--idle);
+}
+.bat-bar.on {
+  fill: var(--text);
+}
+#battery.low .bat-bar.on {
+  fill: #ff5a4f;
+}

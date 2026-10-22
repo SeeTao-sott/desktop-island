@@ -9,6 +9,7 @@ mod config;
 mod desktop;
 mod desktop_icons;
 mod edge;
+mod pad;
 mod fileops;
 mod fullscreen;
 mod hotkey;
@@ -403,6 +404,7 @@ fn build_tray(
     desktop_hotkey: &str,
     edge: Option<Arc<edge::Edge>>,
     phone: Arc<phone::Phone>,
+    pad: Option<Arc<pad::Pad>>,
 ) -> tauri::Result<()> {
     let shelf_label = if hotkey.is_empty() { "打开/关闭架子".to_string() } else { format!("打开/关闭架子\t{hotkey}") };
     let widgets_label = if widgets_hotkey.is_empty() {
@@ -442,6 +444,36 @@ fn build_tray(
         edge.as_ref().is_some_and(|e| e.enabled()),
         None::<&str>,
     )?;
+    // 手柄按键显示：开关 + 放哪个角 + 大小
+    let has_pad = pad.is_some();
+    let pad_on = CheckMenuItem::with_id(app, "pad_on", "显示", has_pad, pad.as_ref().is_some_and(|p| p.enabled()), None::<&str>)?;
+    let pad_corner = pad.as_ref().map(|p| p.corner()).unwrap_or_default();
+    let pad_size = pad.as_ref().map(|p| p.size()).unwrap_or_default();
+    let pad_corners: Vec<CheckMenuItem<tauri::Wry>> = pad::CORNERS
+        .iter()
+        .map(|(k, text)| CheckMenuItem::with_id(app, format!("padc_{k}"), *text, has_pad, *k == pad_corner, None::<&str>))
+        .collect::<tauri::Result<_>>()?;
+    let pad_sizes: Vec<CheckMenuItem<tauri::Wry>> = pad::SIZES
+        .iter()
+        .map(|(k, text)| CheckMenuItem::with_id(app, format!("pads_{k}"), *text, has_pad, *k == pad_size, None::<&str>))
+        .collect::<tauri::Result<_>>()?;
+    let pad_menu = Submenu::with_items(
+        app,
+        "手柄按键显示",
+        has_pad,
+        &[
+            &pad_on,
+            &PredefinedMenuItem::separator(app)?,
+            &pad_corners[0],
+            &pad_corners[1],
+            &pad_corners[2],
+            &pad_corners[3],
+            &PredefinedMenuItem::separator(app)?,
+            &pad_sizes[0],
+            &pad_sizes[1],
+            &pad_sizes[2],
+        ],
+    )?;
     // 双击灵动岛做什么：三选一，打勾的是当前的
     let now = desktop::double_click();
     let dbl: Vec<CheckMenuItem<tauri::Wry>> = [
@@ -466,6 +498,7 @@ fn build_tray(
             &preview_item,
             &layout_menu,
             &edge_item,
+            &pad_menu,
             &phone_item,
             &phone_qr,
             &rift_item,
@@ -562,6 +595,33 @@ fn build_tray(
                     let on = edge_check.is_checked().unwrap_or(false);
                     e.set_enabled(on);
                     config::set_value(&cfg_path, "edge_glow", serde_json::Value::from(on));
+                }
+            }
+            "pad_on" => {
+                if let Some(p) = &pad {
+                    let on = pad_on.is_checked().unwrap_or(false);
+                    p.set_enabled(on);
+                    config::set_value(&cfg_path, "pad_overlay", serde_json::Value::from(on));
+                }
+            }
+            id if id.starts_with("padc_") => {
+                if let Some(p) = &pad {
+                    let k = &id[5..];
+                    p.set_corner(k);
+                    for (item, (key, _)) in pad_corners.iter().zip(pad::CORNERS) {
+                        let _ = item.set_checked(key == k);
+                    }
+                    config::set_value(&cfg_path, "pad_overlay_corner", serde_json::Value::from(k));
+                }
+            }
+            id if id.starts_with("pads_") => {
+                if let Some(p) = &pad {
+                    let k = &id[5..];
+                    p.set_size(k);
+                    for (item, (key, _)) in pad_sizes.iter().zip(pad::SIZES) {
+                        let _ = item.set_checked(key == k);
+                    }
+                    config::set_value(&cfg_path, "pad_overlay_size", serde_json::Value::from(k));
                 }
             }
             id if id.starts_with("layout_") => {
@@ -725,6 +785,9 @@ fn main() {
                 if let Some(e) = ah.try_state::<Arc<edge::Edge>>() {
                     e.place();
                 }
+                if let Some(p) = ah.try_state::<Arc<pad::Pad>>() {
+                    p.place();
+                }
                 if let Some(s) = &s4 {
                     let _ = s.place();
                 }
@@ -765,6 +828,18 @@ fn main() {
                 }
                 Err(err) => {
                     eprintln!("屏幕边缘律动窗口创建失败: {err}");
+                    None
+                }
+            };
+
+            // ---------- 手柄按键显示：屏幕角落、置顶、永远点击穿透，连着手柄时才显示 ----------
+            let pad = match pad::Pad::spawn(app.handle(), cfg.pad_overlay, &cfg.pad_overlay_corner, &cfg.pad_overlay_size) {
+                Ok(p) => {
+                    app.manage(p.clone());
+                    Some(p)
+                }
+                Err(err) => {
+                    eprintln!("手柄按键显示窗口创建失败: {err}");
                     None
                 }
             };
@@ -811,7 +886,7 @@ fn main() {
             }
 
             // 托盘失败不影响主体功能
-            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey, edge, phone) {
+            if let Err(e) = build_tray(app, cfg_path, shelf, &hotkey_label, widgets, &widgets_hotkey, keep, &desktop_hotkey, edge, phone, pad) {
                 eprintln!("托盘图标创建失败: {e}");
             }
             Ok(())
