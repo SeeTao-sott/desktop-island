@@ -857,7 +857,7 @@ fn main() {
                 t
             };
             let phone_shelf = shelf.as_ref().map(|_| PathBuf::from(&cfg.shelf_dir));
-            let phone = phone::Phone::new(app.handle(), token, cfg.phone_port, phone_shelf, keep.clone());
+            let phone = phone::Phone::new(app.handle(), token, cfg.phone_port, phone_shelf, keep.clone(), dir.clone());
             if cfg.phone_enabled {
                 if let Err(e) = phone.start() {
                     eprintln!("手机遥控没开成：{e}，过一会儿再试");

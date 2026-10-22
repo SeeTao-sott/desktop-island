@@ -11,7 +11,9 @@
 //! - 每个请求都要带二维码里的随机密钥（32 位十六进制），没带或不对一律拒绝
 //! - 只接受局域网 / 本机地址（192.168.x、10.x、172.16–31.x、IPv6 本地），外网来的直接拒绝
 //! - 传文件只写进架子的「手机」文件夹，文件名只取最后一段、重名自动改名，绝不覆盖；单个最大 1GB
-//! - 不读、不发任何别的东西；只是局域网里的 HTTP，没有上传到外面
+//! - 不读、不发任何别的东西；只在局域网里，没有上传到外面
+//! - 走 https（自己生成的证书，存在配置文件夹）：手机浏览器只在 https 网页里给陀螺仪数据（体感鼠标）。
+//!   证书不是机构签发的，手机第一次打开会提示"不安全"，点"高级 → 继续"一次就好
 
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -49,6 +51,8 @@ pub struct Phone {
     shelf_dir: Option<PathBuf>,
     keep: crate::desktop::Keep,
     server: Mutex<Option<Arc<Server>>>,
+    /// 证书放在哪个文件夹（配置文件夹）
+    cert_dir: PathBuf,
     snap: Arc<Mutex<Snapshot>>,
     /// 手机最近一次来要状态的时间（毫秒）；有人在看时才让系统状态线程干活
     last_poll: AtomicU64,
@@ -187,7 +191,7 @@ fn safe_name(raw: &str) -> String {
 }
 
 impl Phone {
-    pub fn new(app: &AppHandle, token: String, port: u16, shelf_dir: Option<PathBuf>, keep: crate::desktop::Keep) -> Arc<Phone> {
+    pub fn new(app: &AppHandle, token: String, port: u16, shelf_dir: Option<PathBuf>, keep: crate::desktop::Keep, cert_dir: PathBuf) -> Arc<Phone> {
         let phone = Arc::new(Phone {
             app: app.clone(),
             token,
@@ -195,6 +199,7 @@ impl Phone {
             shelf_dir,
             keep,
             server: Mutex::new(None),
+            cert_dir,
             snap: Arc::new(Mutex::new(Snapshot::default())),
             last_poll: AtomicU64::new(0),
             watching: AtomicBool::new(false),
@@ -231,7 +236,7 @@ impl Phone {
     /// 手机上要打开的地址（带密钥）
     pub fn url(&self) -> String {
         let ip = lan_ip().map(|i| i.to_string()).unwrap_or_else(|| "电脑的IP".into());
-        format!("http://{ip}:{}/?k={}", self.port, self.token)
+        format!("https://{ip}:{}/?k={}", self.port, self.token)
     }
 
     /// 二维码（SVG）
@@ -246,12 +251,39 @@ impl Phone {
         }
     }
 
+    /// https 证书：配置文件夹里有、并且是给现在这个局域网地址的就用；没有（或电脑地址变了）就生成一张新的存起来。
+    /// 证书一直用同一张，手机只在第一次（或换了证书时）提示一次"不安全"
+    fn ssl(&self) -> Result<tiny_http::SslConfig, String> {
+        let ip = lan_ip().map(|i| i.to_string()).unwrap_or_default();
+        let (cert_p, key_p, ip_p) = (self.cert_dir.join("phone-cert.pem"), self.cert_dir.join("phone-key.pem"), self.cert_dir.join("phone-cert-ip.txt"));
+        let saved = (std::fs::read(&cert_p), std::fs::read(&key_p), std::fs::read_to_string(&ip_p));
+        if let (Ok(certificate), Ok(private_key), Ok(old_ip)) = saved {
+            if old_ip.trim() == ip {
+                return Ok(tiny_http::SslConfig { certificate, private_key });
+            }
+        }
+        let mut names = vec!["localhost".to_string()];
+        if !ip.is_empty() {
+            names.insert(0, ip.clone());
+        }
+        let cert = rcgen::generate_simple_self_signed(names).map_err(|e| format!("证书生成失败：{e}"))?;
+        let pem = cert.serialize_pem().map_err(|e| format!("证书生成失败：{e}"))?;
+        let key = cert.serialize_private_key_pem();
+        let _ = std::fs::create_dir_all(&self.cert_dir);
+        let _ = std::fs::write(&cert_p, &pem);
+        let _ = std::fs::write(&key_p, &key);
+        let _ = std::fs::write(&ip_p, &ip);
+        eprintln!("手机遥控：生成了新的 https 证书（{ip}）");
+        Ok(tiny_http::SslConfig { certificate: pem.into_bytes(), private_key: key.into_bytes() })
+    }
+
     /// 开始监听
     pub fn start(self: &Arc<Self>) -> Result<(), String> {
         if self.running() {
             return Ok(());
         }
-        let server = Arc::new(Server::http(("0.0.0.0", self.port)).map_err(|e| format!("端口 {} 开不了：{e}", self.port))?);
+        let ssl = self.ssl()?;
+        let server = Arc::new(Server::https(("0.0.0.0", self.port), ssl).map_err(|e| format!("端口 {} 开不了：{e}", self.port))?);
         *self.server.lock().unwrap() = Some(server.clone());
         // 让媒体模块把当前在放的歌重推一遍，手机一打开就有
         if let Some(tx) = self.app.try_state::<crate::media::MediaTx>() {
