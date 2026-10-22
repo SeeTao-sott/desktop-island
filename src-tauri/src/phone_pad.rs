@@ -196,6 +196,9 @@ struct Inner {
     rest: (f64, f64),
     /// 键盘模式右摇杆的灵敏度
     sens: f64,
+    /// 游戏触控板直接按着的键（WASD 摇杆、Alt），和手柄分开
+    kb: Vec<(u16, bool)>,
+    kb_last: Instant,
 }
 
 pub struct PhonePad {
@@ -213,6 +216,8 @@ impl PhonePad {
                 idle: true,
                 rest: (0.0, 0.0),
                 sens: 1.0,
+                kb: Vec::new(),
+                kb_last: Instant::now(),
             }),
         });
         let me = pad.clone();
@@ -323,6 +328,11 @@ impl PhonePad {
             let dt = last_tick.elapsed().as_secs_f64().min(0.05);
             last_tick = Instant::now();
             let mut g = self.inner.lock().unwrap();
+            if !g.kb.is_empty() && g.kb_last.elapsed() > STALE {
+                eprintln!("游戏触控板：太久没收到手机，按着的键全部松开");
+                let old = std::mem::take(&mut g.kb);
+                send(&old.iter().map(|k| key(k.0, k.1, true)).collect::<Vec<_>>());
+            }
             if matches!(g.backend, Backend::Off) {
                 continue;
             }
@@ -355,6 +365,49 @@ impl PhonePad {
                 send(&[mouse(dx as i32, dy as i32, MOUSEEVENTF_MOVE)]);
             }
         }
+    }
+}
+
+/// 游戏触控板能按的键（名字 → 扫描码、是不是扩展键）
+fn kb_code(name: &str) -> Option<(u16, bool)> {
+    Some(match name {
+        "w" => (KEY_W, false),
+        "a" => (KEY_A, false),
+        "s" => (KEY_S, false),
+        "d" => (KEY_D, false),
+        "alt" => (0x38, false), // 左 Alt（原神之类的游戏按住它叫出鼠标）
+        "space" => (0x39, false),
+        "shift" => (0x2A, false),
+        _ => return None,
+    })
+}
+
+impl PhonePad {
+    /// 游戏触控板：现在应该按着哪些键（每次发全部；没变也 250ms 发一次心跳，超过 STALE 没收到就全松开）
+    pub fn keys(&self, names: &[&str]) -> Result<(), String> {
+        let mut want: Vec<(u16, bool)> = Vec::new();
+        for n in names {
+            let k = kb_code(n).ok_or_else(|| format!("不认识的键：{n}"))?;
+            if !want.contains(&k) {
+                want.push(k);
+            }
+        }
+        let mut g = self.inner.lock().unwrap();
+        g.kb_last = Instant::now();
+        let mut out = Vec::new();
+        for k in &g.kb {
+            if !want.contains(k) {
+                out.push(key(k.0, k.1, true));
+            }
+        }
+        for k in &want {
+            if !g.kb.contains(k) {
+                out.push(key(k.0, k.1, false));
+            }
+        }
+        send(&out);
+        g.kb = want;
+        Ok(())
     }
 }
 

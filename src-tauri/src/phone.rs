@@ -362,6 +362,19 @@ impl Phone {
                     Err(_) => text_resp(400, "看不懂"),
                 }
             }
+            // 游戏触控板：WASD 摇杆、Alt 现在按着哪些键（{"keys":["w","alt"]}）
+            (Method::Post, "/api/keys") => {
+                let mut buf = String::new();
+                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                let names: Vec<String> = serde_json::from_str::<Value>(&buf)
+                    .ok()
+                    .and_then(|v| v.get("keys").and_then(|k| serde_json::from_value(k.clone()).ok()))
+                    .unwrap_or_default();
+                match self.pad.keys(&names.iter().map(String::as_str).collect::<Vec<_>>()) {
+                    Ok(()) => json_resp(json!({ "ok": true, "blocked": crate::phone_pad::elevated_foreground() })),
+                    Err(e) => text_resp(400, &e),
+                }
+            }
             (Method::Get, "/api/windows") => json_resp(crate::phone_input::list_windows()),
             (Method::Post, "/api/windows/switch") => match query(&url, "id").and_then(|v| v.parse::<isize>().ok()) {
                 Some(id) => match crate::phone_input::switch_to(id) {
