@@ -218,20 +218,26 @@ listen<boolean>("island-hover", (e) => {
 });
 
 // ---------- 双击灵动岛：回到桌面 / 全部最小化（做什么在托盘"双击灵动岛"里选）；三连击：弹出手机遥控二维码 ----------
-// 连点按钮（播放、番茄钟……）不算。双击要等一小会儿，看是不是还有第三下
-const TRIPLE_WAIT = 300;
+// 连点按钮（播放、番茄钟……）不算。双击要等一小会儿，看是不是还有第三下：
+// 从第二下"按下"就开始等（不等松手），等多久按前两下的间隔来 —— 点得快，第三下也会来得快，不用干等 300ms
+const TRIPLE_WAIT_MIN = 120;
+const TRIPLE_WAIT_MAX = 300;
 let doubleTimer: number | undefined;
-island.addEventListener("click", (e) => {
-  if ((e.target as Element).closest("button")) return;
+let lastDownAt = 0;
+island.addEventListener("mousedown", (e) => {
+  if (e.button !== 0 || (e.target as Element).closest("button")) return;
+  const now = performance.now();
   if (e.detail === 2) {
-    window.getSelection()?.removeAllRanges();
+    e.preventDefault(); // 别选中文字
+    const wait = Math.min(TRIPLE_WAIT_MAX, Math.max(TRIPLE_WAIT_MIN, (now - lastDownAt) * 1.5));
     window.clearTimeout(doubleTimer);
-    doubleTimer = window.setTimeout(() => invoke("island_double_click").catch(() => {}), TRIPLE_WAIT);
+    doubleTimer = window.setTimeout(() => invoke("island_double_click").catch(() => {}), wait);
   } else if (e.detail === 3) {
-    window.getSelection()?.removeAllRanges();
+    e.preventDefault();
     window.clearTimeout(doubleTimer);
     invoke("island_triple_click").catch(() => {});
   }
+  lastDownAt = now;
 });
 
 // ---------- 长按 1 秒：缩成小球让开下面的东西，3 秒后恢复 ----------
