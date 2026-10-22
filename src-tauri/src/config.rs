@@ -64,7 +64,7 @@ pub struct Config {
     pub widgets_status_seconds: u32,
 
     // ---------- 回到桌面 ----------
-    /// 双击灵动岛做什么："desktop" 回到桌面（再双击恢复）、"minimize" 全部最小化（再双击恢复）、"off" 不做什么
+    /// 双击灵动岛做什么："desktop" 回到桌面（再双击恢复）、"minimize" 全部最小化（再双击恢复）、"phone_qr" 弹出手机遥控二维码、"off" 不做什么
     pub island_double_click: String,
     /// 回到桌面的快捷键，比如 "Ctrl+Alt+Q"；留空表示不用。做的事和双击灵动岛一样（双击设成"不做什么"时是回到桌面）。
     /// 不能用 Win+D（那是系统自己的）
@@ -149,7 +149,7 @@ impl Config {
         if self.widgets_color_mode != "manual" {
             self.widgets_color_mode = "auto".into();
         }
-        if !matches!(self.island_double_click.as_str(), "desktop" | "minimize" | "off") {
+        if !matches!(self.island_double_click.as_str(), "desktop" | "minimize" | "phone_qr" | "off") {
             self.island_double_click = "desktop".into();
         }
         if self.shelf_dir.trim().is_empty() {
