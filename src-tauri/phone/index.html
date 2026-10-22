@@ -1877,9 +1877,12 @@
         }
         xSend();
       }
+      // 顶上的 ✕、全屏是普通按钮：不拦它们的触摸，不然点击事件出不来（全屏还必须在点击里才让开）
+      const xPlain = (e) => !!(e.target.closest && e.target.closest("#xquit, #xfull"));
       xEl.addEventListener(
         "touchstart",
         (e) => {
+          if (xPlain(e)) return;
           e.preventDefault();
           for (const tc of e.changedTouches) {
             const el = tc.target.closest ? tc.target.closest("[data-b], [data-trig], .xzone") : null;
@@ -1912,6 +1915,7 @@
       xEl.addEventListener(
         "touchmove",
         (e) => {
+          if (xPlain(e)) return;
           e.preventDefault();
           for (const tc of e.changedTouches) {
             const t = xTouches.get(tc.identifier);
@@ -1924,6 +1928,7 @@
         { passive: false },
       );
       function xEnd(e) {
+        if (xPlain(e)) return;
         e.preventDefault();
         for (const tc of e.changedTouches) {
           const t = xTouches.get(tc.identifier);
