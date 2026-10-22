@@ -446,6 +446,91 @@
         font-variant-numeric: tabular-nums;
       }
 
+      /* ---------- 体感鼠标 ---------- */
+      #air {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        background: #07070b;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: calc(12px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
+      }
+      #air[hidden] {
+        display: none;
+      }
+      #airTop {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--sub);
+      }
+      #airTop button {
+        flex: 0 0 auto;
+        padding: 6px 12px;
+        font-size: 13px;
+        border-radius: 10px;
+      }
+      #airMsg {
+        flex: 1;
+        min-width: 0;
+      }
+      #airMsg.bad {
+        color: #ff8a8a;
+      }
+      #airHold {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border-radius: 24px;
+        border: 2px dashed #3a3a48;
+        color: #8a8aa0;
+        font-size: 18px;
+        font-weight: 700;
+        text-align: center;
+      }
+      #airHold small {
+        font-size: 12px;
+        font-weight: 400;
+        color: #5a5a70;
+      }
+      #airHold.on {
+        border-style: solid;
+        border-color: #8aa8ff;
+        background: rgba(138, 168, 255, 0.12);
+        color: #c8d4ff;
+      }
+      #airBtns {
+        display: flex;
+        gap: 12px;
+        height: 22%;
+      }
+      #airBtns div {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 20px;
+        border: 1.5px solid #3a3a48;
+        background: #191922;
+        color: #c8c8d4;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      #airBtns div.on {
+        background: #8aa8ff;
+        border-color: #8aa8ff;
+        color: #111;
+      }
+
       /* ---------- 游戏触控板（横屏铺满） ---------- */
       #tp {
         position: fixed;
@@ -748,6 +833,10 @@
       </div>
       <div id="padWarn" class="note" style="color: #ff8a8a" hidden>电脑前台的程序是以管理员身份运行的（很多游戏是），系统不让手机控制它。电脑托盘 →「以管理员身份重启」之后就可以了。</div>
       <div class="row"><button id="tpStart" class="main">横屏铺满（玩游戏用：WASD 摇杆 + Alt）</button></div>
+      <div class="row"><button id="airStart" class="main">体感鼠标（转动手机移动鼠标）</button></div>
+      <label class="sens">体感灵敏度 <input id="airSens" type="range" min="0.3" max="3" step="0.1" /> <span id="airSensV"></span></label>
+      <label class="sens"><input id="airInvX" type="checkbox" style="flex: none" /> 体感左右反过来</label>
+      <label class="sens"><input id="airInvY" type="checkbox" style="flex: none" /> 体感上下反过来</label>
       <label class="sens">灵敏度 <input id="sens" type="range" min="0.5" max="4" step="0.1" /> <span id="sensV"></span></label>
       <label class="sens"><input id="natural" type="checkbox" style="flex: none" /> 滚动方向跟手机一样（手指往上推＝页面往下）</label>
     </div>
@@ -795,6 +884,18 @@
         </div>
         <div class="note">想要真正的手柄：电脑上装 ViGEmBus（在 GitHub 搜 nefarius ViGEmBus，下载 Releases 里的安装包），装好后重新点「开始」就行，不用重启灵动岛。</div>
       </section>
+    </div>
+
+    <div id="air" hidden>
+      <div id="airTop">
+        <button id="airQuit">✕</button>
+        <span id="airMsg">像拿遥控器一样，手机顶端对着屏幕</span>
+      </div>
+      <div id="airHold">按住这里，转动手机＝移动鼠标<small>松开就停（可以把手机摆回中间再按）· 轻点＝左键</small></div>
+      <div id="airBtns">
+        <div data-air="left">左键</div>
+        <div data-air="right">右键</div>
+      </div>
     </div>
 
     <div id="tp" hidden>
@@ -1806,6 +1907,138 @@
       window.addEventListener("resize", () => G.open && fitGame());
 
 
+
+
+      // ---------- 体感鼠标：转动手机移动鼠标 ----------
+      // 用陀螺仪的角速度：左右 = 绕"竖直方向"转（角速度在重力方向上的分量，手机平拿、竖拿都对），上下 = 绕手机横轴转（抬头 / 低头）。
+      // 按住中间那块才动（像鼠标拿起来再放下）：手机偏了就松开、摆回中间再按。浏览器只在 https 里给陀螺仪数据。
+      const AIR = { open: false, hold: null, gx: 0, gy: 0, gz: 9.8, restX: 0, restY: 0, gotMotion: false };
+      let airSens = Number(localStorage.getItem("airSens")) || 1;
+      let airInvX = localStorage.getItem("airInvX") === "1";
+      let airInvY = localStorage.getItem("airInvY") === "1";
+      $("airSens").value = airSens;
+      $("airSensV").textContent = airSens.toFixed(1);
+      $("airInvX").checked = airInvX;
+      $("airInvY").checked = airInvY;
+      $("airSens").oninput = () => {
+        airSens = Number($("airSens").value);
+        $("airSensV").textContent = airSens.toFixed(1);
+        localStorage.setItem("airSens", airSens);
+      };
+      $("airInvX").onchange = () => localStorage.setItem("airInvX", (airInvX = $("airInvX").checked) ? "1" : "0");
+      $("airInvY").onchange = () => localStorage.setItem("airInvY", (airInvY = $("airInvY").checked) ? "1" : "0");
+      function airMsg(text, bad = false) {
+        $("airMsg").textContent = text;
+        $("airMsg").classList.toggle("bad", bad);
+      }
+      window.addEventListener("devicemotion", (e) => {
+        if (!AIR.open) return;
+        AIR.gotMotion = true;
+        const g = e.accelerationIncludingGravity;
+        if (g && g.x != null) {
+          // 重力方向慢慢跟（手抖的加速度别算进去）
+          AIR.gx += (g.x - AIR.gx) * 0.1;
+          AIR.gy += (g.y - AIR.gy) * 0.1;
+          AIR.gz += (g.z - AIR.gz) * 0.1;
+        }
+        const h = AIR.hold;
+        const r = e.rotationRate;
+        if (!h || !r) return;
+        const dt = Math.min(0.05, (e.interval || 16) / 1000);
+        const gm = Math.hypot(AIR.gx, AIR.gy, AIR.gz) || 1;
+        // 角速度（度 / 秒）：alpha 绕屏幕法线、beta 绕横轴、gamma 绕竖轴
+        const yaw = ((r.alpha || 0) * AIR.gz + (r.beta || 0) * AIR.gx + (r.gamma || 0) * AIR.gy) / gm;
+        const pitch = r.beta || 0;
+        // 很慢的转动是手在抖：不算
+        const dz = (v) => (Math.abs(v) < 2 ? 0 : v);
+        const sp = Math.hypot(yaw, pitch);
+        // 一度大约走 22 像素；转得快走得更远
+        const gain = 22 * airSens * (1 + Math.min(2, sp / 150));
+        const dx = -dz(yaw) * dt * gain * (airInvX ? -1 : 1);
+        const dy = -dz(pitch) * dt * gain * (airInvY ? -1 : 1);
+        h.moved += Math.abs(dx) + Math.abs(dy);
+        AIR.restX += dx;
+        AIR.restY += dy;
+        const mx = Math.trunc(AIR.restX),
+          my = Math.trunc(AIR.restY);
+        AIR.restX -= mx;
+        AIR.restY -= my;
+        if (mx || my) push({ t: "m", x: mx, y: my });
+      });
+      async function airOpen() {
+        if (!window.isSecureContext) {
+          toast("体感鼠标要用 https 地址打开：重新扫电脑上的二维码");
+          return;
+        }
+        // iPhone 要先问一下才给陀螺仪；安卓不用
+        if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+          const ok = await DeviceMotionEvent.requestPermission().catch(() => "denied");
+          if (ok !== "granted") {
+            toast("没有允许使用动作与方向");
+            return;
+          }
+        }
+        AIR.open = true;
+        AIR.gotMotion = false;
+        $("air").hidden = false;
+        airMsg("像拿遥控器一样，手机顶端对着屏幕");
+        setTimeout(() => {
+          if (AIR.open && !AIR.gotMotion) airMsg("收不到陀螺仪数据：这台手机或浏览器不支持", true);
+        }, 1500);
+      }
+      function airClose() {
+        AIR.open = false;
+        AIR.hold = null;
+        $("air").hidden = true;
+        $("airHold").classList.remove("on");
+        for (const el of document.querySelectorAll("#airBtns .on")) {
+          el.classList.remove("on");
+          btn(el.dataset.air, "up");
+        }
+      }
+      $("airStart").onclick = airOpen;
+      $("airQuit").onclick = airClose;
+      const airHold = $("airHold");
+      airHold.addEventListener(
+        "touchstart",
+        (e) => {
+          e.preventDefault();
+          if (AIR.hold) return;
+          AIR.hold = { id: e.changedTouches[0].identifier, at: performance.now(), moved: 0 };
+          AIR.restX = AIR.restY = 0;
+          airHold.classList.add("on");
+        },
+        { passive: false },
+      );
+      function airHoldEnd(e) {
+        e.preventDefault();
+        const h = AIR.hold;
+        if (!h || ![...e.changedTouches].some((t) => t.identifier === h.id)) return;
+        AIR.hold = null;
+        airHold.classList.remove("on");
+        // 轻点、手机也没怎么动：左键
+        if (performance.now() - h.at < 250 && h.moved < 6) btn("left");
+      }
+      airHold.addEventListener("touchend", airHoldEnd, { passive: false });
+      airHold.addEventListener("touchcancel", airHoldEnd, { passive: false });
+      for (const el of document.querySelectorAll("#airBtns [data-air]")) {
+        const down = (e) => {
+          e.preventDefault();
+          el.classList.add("on");
+          if (navigator.vibrate) navigator.vibrate(10);
+          btn(el.dataset.air, "down");
+        };
+        const up = (e) => {
+          e.preventDefault();
+          if (!el.classList.contains("on")) return;
+          el.classList.remove("on");
+          btn(el.dataset.air, "up");
+        };
+        el.addEventListener("touchstart", down, { passive: false });
+        el.addEventListener("touchend", up, { passive: false });
+        el.addEventListener("touchcancel", up, { passive: false });
+      }
+      document.addEventListener("visibilitychange", () => document.hidden && AIR.open && airClose());
 
       // ---------- 游戏触控板：横屏铺满 ----------
       // 左手边：Alt（按住；轻点一下锁住，再点松开）和一个摇杆（推哪边按哪个 WASD）；其余整块都是触控板：
