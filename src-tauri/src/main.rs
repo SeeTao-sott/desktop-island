@@ -338,6 +338,12 @@ fn island_double_click(keep: State<'_, desktop::Keep>) {
     desktop::run(desktop::double_click(), keep.inner().clone());
 }
 
+/// 三连击灵动岛：弹出手机遥控的二维码
+#[tauri::command]
+fn island_triple_click(app: AppHandle) {
+    open_phone_qr(&app);
+}
+
 #[tauri::command]
 fn config_get(cfg: State<'_, Config>) -> Config {
     cfg.inner().clone()
@@ -651,6 +657,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             set_hit_rect,
             island_double_click,
+            island_triple_click,
             rift::rift_log,
             rift::rift_close,
             rift::rift_open,

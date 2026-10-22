@@ -3,7 +3,7 @@
 //! 不挂任何鼠标/键盘钩子，不读键盘，也不碰其他进程。
 //!
 //! 长按在这里判断而不是在网页里：网页内核偶尔会把没激活窗口上的第一下按下吃掉，长按就不灵了。
-//! 在胶囊上按住左键不动：0.35 秒发 "start"（胶囊轻轻缩一下），满 2 秒发 "fire"（变小球），
+//! 在胶囊上按住左键不动：0.35 秒发 "start"（胶囊轻轻缩一下），满 1 秒发 "fire"（变小球），
 //! 中途松开或拖动了发 "cancel"。
 
 use std::sync::Arc;
@@ -25,7 +25,7 @@ const SLOW: Duration = Duration::from_millis(120);
 const NEAR_MARGIN: i32 = 160;
 /// 长按：多久开始有反馈、多久算数、按着移动多远就不算（物理像素）
 const HOLD_HINT: Duration = Duration::from_millis(350);
-const HOLD_FIRE: Duration = Duration::from_millis(2000);
+const HOLD_FIRE: Duration = Duration::from_millis(1000);
 const HOLD_SLOP: i32 = 10;
 
 pub fn spawn(win: WebviewWindow, state: Arc<IslandState>) {
