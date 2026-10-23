@@ -51,6 +51,8 @@ windows = { version = "0.62", features = [
   "Win32_System_Memory",
   "Win32_Security_Cryptography",
   "Win32_Graphics_Dwm",
+  "Win32_Networking_WinSock",
+  "Win32_Devices_Bluetooth",
 ] }
 # 手机遥控的网页走 https（手机浏览器只在 https 里给陀螺仪数据，体感鼠标要用）
 tiny_http = { version = "0.12.0", features = ["ssl-rustls"] }

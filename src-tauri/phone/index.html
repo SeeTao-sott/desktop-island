@@ -973,7 +973,88 @@
     <script>
       const key = new URLSearchParams(location.search).get("k") || "";
       const $ = (id) => document.getElementById(id);
-      const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "X-Key": key, ...(opts.headers || {}) } });
+      // ---------- 在「桌面遥控」App 里：请求走蓝牙 ----------
+      // App 提供 window.BT：request(编号, 方法, 路径, 内容) 发出去，回应由 App 调 __bt.resp 送回来。
+      // 网页其余部分照旧用 api()，不用管走的是 https 还是蓝牙。
+      const BT = window.BT || null;
+      const btWait = new Map();
+      let btSeq = 0;
+      if (BT) {
+        window.__bt = {
+          resp(id, status, type, body) {
+            const w = btWait.get(id);
+            if (!w) return;
+            btWait.delete(id);
+            w.ok(new Response(body, { status, headers: { "Content-Type": type } }));
+          },
+          fail(id, msg) {
+            const w = btWait.get(id);
+            if (!w) return;
+            btWait.delete(id);
+            w.no(new Error(msg));
+          },
+          // 连接状态：连着 / 连接中 / 断了（App 主动告诉网页）
+          status(text, on) {
+            $("dot").textContent = text;
+            $("dot").classList.toggle("on", !!on);
+            if (on) poll();
+          },
+          // 传文件：App 自己选文件、自己分段发，这里只管显示进度
+          upStart(id, name) {
+            const row = document.createElement("div");
+            const n = document.createElement("span");
+            n.textContent = name;
+            const st = document.createElement("em");
+            st.textContent = "0%";
+            row.append(n, st);
+            $("files").prepend(row);
+            btWait.set(id, {
+              ok: async (r) => {
+                const t = await r.text();
+                if (r.ok) {
+                  const j = JSON.parse(t);
+                  st.textContent = "✓ 已存好";
+                  if (j.name !== name) n.textContent = `${name} → ${j.name}`;
+                } else st.textContent = `✗ ${t}`;
+              },
+              no: (e) => (st.textContent = `✗ ${e.message}`),
+            });
+            btWait.get(id).st = st;
+          },
+          upProg(id, pct) {
+            const w = btWait.get(id);
+            if (w?.st) w.st.textContent = `${pct}%`;
+          },
+        };
+        // 振动、全屏、横屏交给 App（App 本来就是全屏的，只管转方向）
+        navigator.vibrate = (p) => (BT.vibrate(Array.isArray(p) ? p.reduce((a, b) => a + b, 0) : Number(p) || 0), true);
+        let fsEl = null;
+        Element.prototype.requestFullscreen = function () {
+          fsEl = this;
+          return Promise.resolve();
+        };
+        Object.defineProperty(document, "fullscreenElement", { get: () => fsEl, configurable: true });
+        document.exitFullscreen = () => {
+          fsEl = null;
+          BT.setLandscape(false);
+          return Promise.resolve();
+        };
+        // 点右上角的连接状态：换电脑 / 重新连接
+        $("dot").onclick = () => BT.choosePc();
+        $("dot").style.cursor = "pointer";
+        if (screen.orientation) {
+          screen.orientation.lock = (o) => (BT.setLandscape(String(o).startsWith("landscape")), Promise.resolve());
+          screen.orientation.unlock = () => BT.setLandscape(false);
+        }
+      }
+      const api = (path, opts = {}) =>
+        BT
+          ? new Promise((ok, no) => {
+              const id = ++btSeq;
+              btWait.set(id, { ok, no });
+              BT.request(id, opts.method || "GET", path, opts.body == null ? null : String(opts.body));
+            })
+          : fetch(path, { ...opts, headers: { "X-Key": key, ...(opts.headers || {}) } });
       let toastTimer = 0;
       function toast(msg) {
         const t = $("toast");
@@ -1009,22 +1090,28 @@
           media = s.media;
           mediaAt = performance.now();
           pomo = s.pomo;
-          showMedia(s.cover);
+          showMedia();
+          // 封面只在换歌时要一次（状态里只带编号）
+          if (s.coverId !== coverId) {
+            coverId = s.coverId;
+            const c = coverId ? (await (await api("/api/cover")).json()).cover : "";
+            $("cover").style.backgroundImage = c ? `url("${c}")` : "";
+          }
           showStat(s.stat);
           $("uploadCard").hidden = !s.upload;
           $("padWarn").hidden = !s.blocked;
         } catch (e) {
-          $("dot").textContent = "连不上";
+          $("dot").textContent = BT ? "蓝牙没连上 · 点这里" : "连不上";
           $("dot").classList.remove("on");
           if (String(e.message).includes("密钥")) toast(e.message);
         }
       }
-      function showMedia(cover) {
+      let coverId = null;
+      function showMedia() {
         const on = media && media.active;
         $("title").textContent = on ? media.title || "（没有歌名）" : "没有在播放";
         $("artist").textContent = on ? media.artist || media.source || "" : "";
         $("toggle").textContent = on && media.playing ? "⏸" : "▶";
-        $("cover").style.backgroundImage = cover ? `url("${cover}")` : "";
         document.querySelectorAll("[data-media]").forEach((b) => (b.disabled = !on));
       }
       function showStat(st) {
@@ -1102,7 +1189,7 @@
       };
 
       // ---------- 传文件：一个一个传，显示进度 ----------
-      $("pick").onclick = () => $("file").click();
+      $("pick").onclick = () => (BT ? BT.pickUpload() : $("file").click());
       $("file").onchange = async () => {
         const files = [...$("file").files];
         $("file").value = "";

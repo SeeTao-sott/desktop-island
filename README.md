@@ -170,6 +170,18 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 鼠标是用系统的模拟输入做的（不碰别的程序）。以管理员身份运行的程序（比如任务管理器）系统不让模拟输入；
 玩有反作弊的游戏时别用手机控鼠标，免得被当成外挂。
 
+### 蓝牙（「桌面遥控」安卓 App）
+
+不想走 Wi-Fi、想要延迟更低：用安卓 App，所有功能（包括触控板、体感鼠标、音游、传文件）都走经典蓝牙。
+
+1. 电脑和手机先在系统里配对（Windows 设置 → 蓝牙和其他设备 → 添加设备）
+2. 托盘打开「蓝牙遥控（手机 App）」
+3. 手机装 `android/` 编出来的 App（`cd android && ./gradlew assembleRelease`，APK 在 `app/build/outputs/apk/release/`），
+   第一次打开选你的电脑；以后自动连，断了自己重连。点右上角的连接状态可以换电脑
+
+App 里显示的就是同一个网页（打包进 App），只是请求改走蓝牙，所以网页改了两边一起更新（App 要重新编一次）。
+只接受和电脑配对过的手机；蓝牙这条线不用密钥。距离大约 10 米，传大文件比 Wi-Fi 慢。
+
 安全：默认关着；二维码里带一串随机密钥，没有密钥的请求一律拒绝；只接受家里局域网的连接。
 第一次打开时 Windows 防火墙会问要不要允许，选「专用网络」。想让旧二维码失效：删掉配置里的 `phone_token` 再重启。
 网页走 https（手机浏览器只在 https 里给陀螺仪数据，体感鼠标要用），证书是电脑自己生成的（配置文件夹里的 `phone-cert.pem`）：
@@ -241,6 +253,7 @@ D:\Projects\desktop-island\src-tauri\target\release\desktop-island.exe
 | `island_double_click` | `"desktop"` | 双击灵动岛做什么：`"desktop"` 回到桌面、`"minimize"` 全部最小化、`"off"` 不做什么（托盘里也能改） |
 | `phone_enabled` | `false` | 手机遥控（托盘里也能开关） |
 | `phone_port` | `8787` | 手机遥控网页用的端口 |
+| `phone_bt` | `false` | 蓝牙遥控（手机 App 用；托盘里也能开关） |
 | `phone_token` | 自动生成 | 二维码里的密钥；删掉再重启会换一个新的，旧链接全部失效 |
 | `edge_glow` | `false` | 屏幕边缘律动（托盘里也能开关） |
 | `show_desktop_hotkey` | `""` | 回到桌面的快捷键，比如 `"Ctrl+Alt+Q"`；做的事和双击灵动岛一样。留空表示不用，不能用 Win+D |

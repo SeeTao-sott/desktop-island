@@ -100,7 +100,7 @@ impl PadState {
 }
 
 /// 键盘模式下"按着的"：扫描码集合 + 鼠标三个键
-#[derive(Default, PartialEq, Clone)]
+#[derive(Default, PartialEq, Clone, Debug)]
 struct Held {
     keys: Vec<(u16, bool)>,
     left: bool,

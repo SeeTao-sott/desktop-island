@@ -81,6 +81,8 @@ pub struct Config {
     pub phone_port: u16,
     /// 二维码里的随机密钥；第一次用时自动生成，想让旧手机失效就删掉这一项再重启
     pub phone_token: String,
+    /// 手机遥控也走蓝牙（手机上用「桌面遥控」App，要先在系统里配对）
+    pub phone_bt: bool,
 }
 
 /// 默认放在 OneDrive 里（和桌面同一个盘、继续云端备份）；没有 OneDrive 就放在用户文件夹里
@@ -126,6 +128,7 @@ impl Default for Config {
             phone_enabled: false,
             phone_port: 8787,
             phone_token: String::new(),
+            phone_bt: false,
         }
     }
 }
