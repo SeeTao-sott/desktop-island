@@ -3,6 +3,8 @@
 
     <!-- 安卓 12 以上：连已配对的蓝牙设备 -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- 当蓝牙鼠标时让电脑搜得到手机 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <!-- 安卓 11 以下的老写法 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.VIBRATE" />

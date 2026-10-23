@@ -851,6 +851,18 @@
       <label class="sens"><input id="airInvX" type="checkbox" style="flex: none" /> 体感左右反过来（转动移动模式）</label>
       <label class="sens"><input id="airInvY" type="checkbox" style="flex: none" /> 体感上下反过来（转动移动模式）</label>
       <label class="sens"><input id="airLock" type="checkbox" style="flex: none" /> 点按键时定住鼠标（手抖时也能双击）</label>
+      <section class="card" id="hidBox" hidden style="margin-top: 12px">
+        <h2>蓝牙鼠标（App 专用，最顺）</h2>
+        <div id="hidState" class="note" style="margin-top: 0">没开：鼠标现在走普通蓝牙</div>
+        <div class="row">
+          <button id="hidBtn" class="main">开启</button>
+          <button id="hidPair">重新配对…</button>
+        </div>
+        <div class="note">
+          开启后手机就是一只真正的蓝牙鼠标（电脑当硬件鼠标认）。第一次：点「重新配对…」，在电脑「蓝牙和其他设备」里先删掉这台手机，再「添加设备」选它。
+          有的手机系统不开放这个功能，那就只能用普通蓝牙。
+        </div>
+      </section>
       <label class="sens">灵敏度 <input id="sens" type="range" min="0.5" max="4" step="0.1" /> <span id="sensV"></span></label>
       <label class="sens"><input id="natural" type="checkbox" style="flex: none" /> 滚动方向跟手机一样（手指往上推＝页面往下）</label>
     </div>
@@ -1021,6 +1033,11 @@
             });
             btWait.get(id).st = st;
           },
+          // 蓝牙鼠标（HID）的状态
+          hid(text, ready) {
+            $("hidState").textContent = text;
+            $("hidState").style.color = ready ? "var(--ok)" : "";
+          },
           upProg(id, pct) {
             const w = btWait.get(id);
             if (w?.st) w.st.textContent = `${pct}%`;
@@ -1038,6 +1055,22 @@
           fsEl = null;
           BT.setLandscape(false);
           return Promise.resolve();
+        };
+        // 蓝牙鼠标的开关（状态 App 记着）
+        $("hidBox").hidden = false;
+        let hidOn = localStorage.getItem("hidOn") === "1";
+        $("hidBtn").textContent = hidOn ? "关闭" : "开启";
+        $("hidBtn").onclick = () => {
+          hidOn = !hidOn;
+          localStorage.setItem("hidOn", hidOn ? "1" : "0");
+          $("hidBtn").textContent = hidOn ? "关闭" : "开启";
+          BT.hidOn(hidOn);
+        };
+        $("hidPair").onclick = () => {
+          hidOn = true;
+          localStorage.setItem("hidOn", "1");
+          $("hidBtn").textContent = "关闭";
+          BT.hidPair();
         };
         // 点右上角的连接状态：换电脑 / 重新连接
         $("dot").onclick = () => BT.choosePc();
@@ -1256,7 +1289,7 @@
           btFlushQueued = true;
           queueMicrotask(() => {
             btFlushQueued = false;
-            if (queue.length) BT.fire("POST", "/api/mouse", JSON.stringify(queue.splice(0, queue.length)));
+            if (queue.length) BT.mouse(JSON.stringify(queue.splice(0, queue.length)));
           });
           return;
         }

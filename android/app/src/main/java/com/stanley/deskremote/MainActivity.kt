@@ -36,9 +36,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * 网页从 https://appassets.androidplatform.net/ 载入（App 自己供文件）：
  * 算"安全网页"，陀螺仪（体感鼠标）才能用。
  */
-class MainActivity : Activity(), BtLink.Listener {
+class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     private lateinit var web: WebView
     private val link = BtLink(this)
+    private val hid by lazy { HidMouse(this, this) }
     private val prefs by lazy { getSharedPreferences("remote", MODE_PRIVATE) }
     /** 发出去还没回应的请求编号：断线时统一告诉网页失败了 */
     private val pending: MutableSet<Int> = ConcurrentHashMap.newKeySet()
@@ -49,6 +50,8 @@ class MainActivity : Activity(), BtLink.Listener {
         private const val ASSET_HOST = "appassets.androidplatform.net"
         private const val REQ_PERM = 1
         private const val REQ_FILES = 2
+        private const val REQ_DISCOVER = 3
+        private const val REQ_ADVERTISE = 4
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -86,6 +89,10 @@ class MainActivity : Activity(), BtLink.Listener {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_ADVERTISE) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) discoverable()
+            return
+        }
         if (requestCode != REQ_PERM) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) connectSaved()
         else onStatus("没有蓝牙权限：到系统设置里给「桌面遥控」打开「附近的设备」", false)
@@ -97,6 +104,8 @@ class MainActivity : Activity(), BtLink.Listener {
     }
 
     override fun onDestroy() {
+        // App 关了就不再当鼠标
+        hid.stop()
         link.stop()
         web.destroy()
         super.onDestroy()
@@ -132,7 +141,18 @@ class MainActivity : Activity(), BtLink.Listener {
             return
         }
         val dev = list.find { it.address == prefs.getString("pc", null) }
-        if (dev == null) choosePc() else link.start(dev)
+        if (dev == null) choosePc() else {
+            link.start(dev)
+            if (prefs.getBoolean("hid", false)) hid.start(dev)
+        }
+    }
+
+    /** 现在选的那台电脑 */
+    @SuppressLint("MissingPermission")
+    private fun savedPc(): BluetoothDevice? = bonded()?.find { it.address == prefs.getString("pc", null) }
+
+    override fun onHidState(text: String, ready: Boolean) {
+        js("window.__bt&&__bt.hid&&__bt.hid(${JSONObject.quote(text)},$ready)")
     }
 
     @SuppressLint("MissingPermission")
@@ -157,8 +177,17 @@ class MainActivity : Activity(), BtLink.Listener {
             .setItems(names) { _, i ->
                 prefs.edit().putString("pc", list[i].address).apply()
                 link.start(list[i])
+                if (prefs.getBoolean("hid", false)) hid.start(list[i])
             }
             .show()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun discoverable() {
+        // 先确保已经在当鼠标（电脑配对时才看得到"鼠标"这个服务）
+        savedPc()?.let { hid.start(it) }
+        prefs.edit().putBoolean("hid", true).apply()
+        startActivityForResult(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120), REQ_DISCOVER)
     }
 
     // ---------------- 蓝牙 → 网页 ----------------
@@ -194,6 +223,32 @@ class MainActivity : Activity(), BtLink.Listener {
                 pending.remove(id)
                 js("window.__bt&&__bt.fail($id,${JSONObject.quote("蓝牙没连上")})")
             }
+        }
+
+        /** 鼠标动作：当着蓝牙鼠标就变成 HID 报告发；不是的话走普通那条线（只发不等） */
+        @JavascriptInterface
+        fun mouse(json: String) {
+            val ok = runCatching { hid.events(org.json.JSONArray(json)) }.getOrDefault(false)
+            if (!ok) fire("POST", "/api/mouse", json)
+        }
+
+        /** 打开 / 关掉"手机当蓝牙鼠标" */
+        @JavascriptInterface
+        fun hidOn(on: Boolean) = runOnUiThread {
+            prefs.edit().putBoolean("hid", on).apply()
+            if (!on) return@runOnUiThread hid.stop()
+            val pc = savedPc() ?: return@runOnUiThread onHidState("先选好电脑（点右上角）", false)
+            hid.start(pc)
+        }
+
+        /** 让电脑搜得到手机 2 分钟（电脑上重新配对时用） */
+        @JavascriptInterface
+        fun hidPair() = runOnUiThread {
+            if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE), REQ_ADVERTISE)
+                return@runOnUiThread
+            }
+            discoverable()
         }
 
         /** 只发不等回应（鼠标移动、手柄状态）：一直发，不用等上一个回来 */
