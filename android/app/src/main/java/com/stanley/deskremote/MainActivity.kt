@@ -155,9 +155,9 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
 
     /** 记成"我的电脑"（还没选过的话），普通蓝牙那条线也连上 */
     private fun usePc(device: BluetoothDevice) {
-        if (prefs.getString("pc", null) == device.address) return
-        prefs.edit().putString("pc", device.address).apply()
-        link.start(device)
+        if (prefs.getString("pc", null) != device.address) prefs.edit().putString("pc", device.address).apply()
+        // 同一台电脑重新配对后也要连：以前只在换电脑时才连，结果只连上了鼠标，其他功能没连
+        if (!link.connected) link.start(device)
     }
 
     // 配对完成：电脑刚和手机配好对，顺便记成"我的电脑"、作为鼠标连过去
