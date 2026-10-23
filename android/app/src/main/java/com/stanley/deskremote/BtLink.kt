@@ -54,11 +54,12 @@ class BtLink(private val listener: Listener) {
     private val high = LinkedBlockingQueue<ByteArray>()
     private val low = LinkedBlockingQueue<ByteArray>(8)
 
-    /** 连这台电脑（换电脑时先断开旧的） */
+    /** 连这台电脑。换了电脑才断开旧的；还是同一台就别打断正在进行的连接（以前每次都掐断，会一直连不上） */
     @Synchronized
     fun start(dev: BluetoothDevice) {
+        val changed = device?.address != dev.address
         device = dev
-        socket?.let { runCatching { it.close() } }
+        if (changed) socket?.let { runCatching { it.close() } }
         if (worker?.isAlive == true) return
         stopped = false
         worker = Thread({ loop() }, "bt-link").apply { isDaemon = true; start() }
@@ -86,6 +87,7 @@ class BtLink(private val listener: Listener) {
 
     @SuppressLint("MissingPermission")
     private fun loop() {
+        var why = ""
         while (!stopped) {
             val dev = device ?: return
             val name = runCatching { dev.name }.getOrNull() ?: dev.address
@@ -100,14 +102,15 @@ class BtLink(private val listener: Listener) {
                 listener.onStatus("蓝牙已连接", true)
                 session(s)
             } catch (e: IOException) {
-                // 连不上或者断了：下面统一处理
+                // 连不上或者断了：把原因带上，方便看是哪边的问题
+                why = e.message ?: e.javaClass.simpleName
             } finally {
                 connected = false
                 socket?.let { runCatching { it.close() } }
                 socket = null
             }
             if (stopped) return
-            listener.onStatus("蓝牙断开，正在重连…（电脑上要打开「蓝牙遥控」）", false)
+            listener.onStatus("蓝牙断开，正在重连…（$why；电脑上要打开「蓝牙遥控」）", false)
             try {
                 Thread.sleep(3000)
             } catch (e: InterruptedException) {
