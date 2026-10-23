@@ -196,6 +196,13 @@ class MainActivity : Activity(), BtLink.Listener {
             }
         }
 
+        /** 只发不等回应（鼠标移动、手柄状态）：一直发，不用等上一个回来 */
+        @JavascriptInterface
+        fun fire(method: String, url: String, body: String?) {
+            val head = JSONObject().put("id", 0).put("m", method).put("u", url).put("nr", true)
+            link.send(BtLink.frame(head, body?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)))
+        }
+
         @JavascriptInterface
         fun vibrate(ms: Int) {
             if (ms <= 0) return

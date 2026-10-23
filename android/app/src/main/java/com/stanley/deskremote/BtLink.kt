@@ -122,7 +122,8 @@ class BtLink(private val listener: Listener) {
         val writer = Thread({
             try {
                 while (connected) {
-                    val f = high.poll() ?: low.poll(10, TimeUnit.MILLISECONDS) ?: high.poll(10, TimeUnit.MILLISECONDS) ?: continue
+                    // 空闲时等在普通队上：鼠标一来马上醒（传文件的分段最多晚 20ms 才发，无所谓）
+                    val f = high.poll() ?: low.poll() ?: high.poll(20, TimeUnit.MILLISECONDS) ?: continue
                     out.write(f)
                     out.flush()
                 }

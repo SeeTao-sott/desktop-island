@@ -6,7 +6,9 @@
 //! 线上的格式（两个方向一样）：一帧 = [头长度 u32 小端][头 JSON][内容长度 u32 小端][内容]
 //! - 请求头 {"id":1,"m":"POST","u":"/api/mouse"}；内容太大时拆成几帧，前面的帧带 "more":true
 //! - 回应头 {"id":1,"s":200,"t":"application/json; charset=utf-8"}
-//! 每个请求单独开线程处理，所以传文件时别的请求（鼠标）不会被挡住。
+//! 一般请求单独开线程处理（传文件、读歌单时不挡别的）。
+//! 鼠标、手柄、按键、音游点击这类又小又频繁的，在读线程上按到达顺序马上做（不会乱序）；
+//! 请求头带 "nr":true 的不回应 —— 手机只管一直发，不用等回应再发下一个，和蓝牙鼠标一样顺。
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -101,14 +103,31 @@ pub fn serve<R: Read, W: Write + Send + 'static>(router: Arc<dyn Route>, mut rea
             continue;
         }
         let (m, u, data) = pending.remove(&id).unwrap();
-        let router = router.clone();
-        let writer = writer.clone();
-        thread::spawn(move || {
-            let len = data.len() as u64;
-            let r = router.route(&m, &u, &mut data.as_slice(), Some(len));
-            let _ = write_frame(&mut *writer.lock().unwrap(), &json!({ "id": id, "s": r.status, "t": r.ctype }), &r.body);
-        });
+        let no_reply = head.get("nr").and_then(Value::as_bool).unwrap_or(false);
+        let now = inline(&u);
+        let run = {
+            let router = router.clone();
+            let writer = writer.clone();
+            move || {
+                let len = data.len() as u64;
+                let r = router.route(&m, &u, &mut data.as_slice(), Some(len));
+                if !no_reply {
+                    let _ = write_frame(&mut *writer.lock().unwrap(), &json!({ "id": id, "s": r.status, "t": r.ctype }), &r.body);
+                }
+            }
+        };
+        if now {
+            run();
+        } else {
+            thread::spawn(run);
+        }
     }
+}
+
+/// 又小又要按顺序的请求：在读线程上直接做
+fn inline(url: &str) -> bool {
+    let path = url.split('?').next().unwrap_or("");
+    matches!(path, "/api/mouse" | "/api/pad" | "/api/keys" | "/api/rhythm/hit")
 }
 
 // ---------------- 蓝牙套接字 ----------------
@@ -284,6 +303,8 @@ mod tests {
         write_frame(&mut c, &json!({ "id": 3, "m": "POST", "u": "/api/mouse" }), b"[]").unwrap();
         write_frame(&mut c, &json!({ "id": 2, "more": true }), &part).unwrap();
         write_frame(&mut c, &json!({ "id": 2 }), &part).unwrap();
+        // 不要回应的：电脑照做，但不回
+        write_frame(&mut c, &json!({ "id": 0, "m": "POST", "u": "/api/mouse", "nr": true }), b"[]").unwrap();
         let mut got = HashMap::new();
         for _ in 0..3 {
             let (h, b) = read_frame(&mut c).unwrap();
@@ -294,5 +315,9 @@ mod tests {
         assert_eq!(got[&2]["u"], "/api/upload?name=a.jpg");
         assert_eq!(got[&2]["len"], 150_000);
         assert_eq!(got[&2]["sum"], 150_000);
+        // 再发一个要回应的：收到的应该是它（编号 4），而不是上面那个不要回应的
+        write_frame(&mut c, &json!({ "id": 4, "m": "GET", "u": "/api/time" }), b"").unwrap();
+        let (h, _) = read_frame(&mut c).unwrap();
+        assert_eq!(h["id"], 4);
     }
 }

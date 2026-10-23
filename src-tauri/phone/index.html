@@ -1248,7 +1248,18 @@
         } else queue.push(ev);
         flush();
       }
+      // 蓝牙（App 里）：不等回应，攒一下同一刻的动作就发（同一轮事件里的移动合成一个）
+      let btFlushQueued = false;
       function flush() {
+        if (BT) {
+          if (btFlushQueued) return;
+          btFlushQueued = true;
+          queueMicrotask(() => {
+            btFlushQueued = false;
+            if (queue.length) BT.fire("POST", "/api/mouse", JSON.stringify(queue.splice(0, queue.length)));
+          });
+          return;
+        }
         if (sending || !queue.length) return;
         sending = true;
         const batch = queue.splice(0, queue.length);
@@ -2386,6 +2397,8 @@
       let tpSending = false,
         tpDirty = false;
       function tpSendKeys() {
+        // 蓝牙：变了马上发（不等回应）；下面那个要回应的照常跑，用来知道"被管理员程序挡住"
+        if (BT) BT.fire("POST", "/api/keys", JSON.stringify({ keys: [...TP.keys] }));
         if (tpSending) {
           tpDirty = true;
           return;
@@ -2632,6 +2645,8 @@
         localStorage.setItem("xsens", xsens);
       };
       function xSend(end = false) {
+        // 蓝牙：变了马上发（不等回应）；下面那个要回应的照常跑，用来知道现在是手柄还是键盘模式
+        if (BT && !end) BT.fire("POST", "/api/pad", JSON.stringify({ b: X.b, lt: X.lt, rt: X.rt, lx: X.lx, ly: X.ly, rx: X.rx, ry: X.ry, sens: xsens }));
         if (xSending && !end) {
           xDirty = true;
           return;
