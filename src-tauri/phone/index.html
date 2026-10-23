@@ -1177,15 +1177,17 @@
       // 还按着才发"按下"，松手发"松开"（按住、拖动照样能用）。
       // 不这样的话，"松开"要排在"按下"那个请求回来之后才发，电脑上每一下都至少按住一个网络来回，单击、双击都像长按
       const HOLD_MS = 180;
-      function press(name) {
+      function press(name, onHold) {
         let down = false;
         const timer = setTimeout(() => {
           down = true;
           btn(name, "down");
+          onHold?.();
         }, HOLD_MS);
         return () => {
           clearTimeout(timer);
           btn(name, down ? "up" : "click");
+          return !down; // true = 这一下是"点一下"
         };
       }
       const buzz = () => navigator.vibrate && navigator.vibrate(8);
@@ -2112,6 +2114,7 @@
         }
         const x = Math.min(1, Math.max(0, AIR.fx(0.5 + (AIR.yaw - c.cy) / (2 * c.wy), t)));
         const y = Math.min(1, Math.max(0, AIR.fy(0.5 - (AIR.pitch - c.cp) / (2 * c.hp), t)));
+        if (airLocked()) return;
         // 变化不到一个像素左右就不发
         if (Math.abs(x - AIR.lastX) < 0.0004 && Math.abs(y - AIR.lastY) < 0.0004) return;
         AIR.lastX = x;
@@ -2148,8 +2151,29 @@
           my = Math.trunc(AIR.restY);
         AIR.restX -= mx;
         AIR.restY -= my;
+        if (airLocked()) {
+          AIR.restX = AIR.restY = 0;
+          return;
+        }
         if (mx || my) push({ t: "m", x: mx, y: my });
       });
+
+      // 体感模式点按键时把鼠标定住：按下去手一抖，两下就不在同一个位置，电脑不认双击。
+      // 按着的时候定住；按住超过一会儿（要拖动）就放开；点一下松手后再定住一小会儿，等可能的第二下
+      const AIR_DBL_MS = 400;
+      let airPressing = 0;
+      let airLockUntil = 0;
+      const airLocked = () => airLockUntil > performance.now();
+      function airPress(name) {
+        airPressing++;
+        airLockUntil = Infinity;
+        const release = press(name, () => (airLockUntil = 0)); // 按住了：要拖动，鼠标跟着走
+        return () => {
+          airPressing = Math.max(0, airPressing - 1);
+          const click = release();
+          if (airPressing === 0) airLockUntil = click ? performance.now() + AIR_DBL_MS : 0;
+        };
+      }
 
       async function airOpen() {
         if (!window.isSecureContext) {
@@ -2184,6 +2208,8 @@
         AIR.open = false;
         AIR.hold = null;
         AIR.step = 0;
+        airPressing = 0;
+        airLockUntil = 0;
         $("air").hidden = true;
         const h = $("airHold");
         if (h.classList.contains("on") && AIR.mode === "abs") AIR.release?.();
@@ -2212,7 +2238,7 @@
               return;
             }
             airHold.classList.add("on");
-            AIR.release = press("left");
+            AIR.release = airPress("left");
             return;
           }
           AIR.restX = AIR.restY = 0;
@@ -2244,7 +2270,7 @@
           if (el.release) return;
           el.classList.add("on");
           if (navigator.vibrate) navigator.vibrate(10);
-          el.release = press(el.dataset.air);
+          el.release = airPress(el.dataset.air);
         };
         const up = (e) => {
           e.preventDefault();
