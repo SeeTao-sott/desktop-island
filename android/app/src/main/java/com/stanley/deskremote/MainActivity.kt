@@ -90,9 +90,14 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
         setContentView(web)
         registerReceiver(bondReceiver, android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
         web.loadUrl("https://$ASSET_HOST/index.html")
-        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_PERM)
-        } else {
+        // 安卓 13 以上：显示"正在连着电脑"的通知要先问（不给也能用，只是通知不显示）
+        val ask = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+            ask.add(Manifest.permission.BLUETOOTH_CONNECT)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            ask.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (ask.isNotEmpty()) requestPermissions(ask.toTypedArray(), REQ_PERM) else {
+            KeepAlive.start(this)
             connectSaved()
         }
     }
@@ -104,7 +109,12 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
             return
         }
         if (requestCode != REQ_PERM) return
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) connectSaved()
+        val bt = Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        if (bt) {
+            // 前台服务（connectedDevice 类型）要先有蓝牙权限才能开
+            KeepAlive.start(this)
+            connectSaved()
+        }
         else onStatus("没有蓝牙权限：到系统设置里给「桌面遥控」打开「附近的设备」", false)
     }
 
@@ -116,6 +126,7 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     override fun onDestroy() {
         // App 关了就不再当鼠标
         runCatching { unregisterReceiver(bondReceiver) }
+        KeepAlive.stop(this)
         hid.stop()
         link.stop()
         web.destroy()
