@@ -1173,6 +1173,21 @@
           });
       }
       const btn = (b, a = "click") => push({ t: "b", b, a });
+      // 按键：按下后先等一小会儿再发"按下"。这期间就松手＝发一个完整的"点一下"（按下+松开在电脑上一起做）；
+      // 还按着才发"按下"，松手发"松开"（按住、拖动照样能用）。
+      // 不这样的话，"松开"要排在"按下"那个请求回来之后才发，电脑上每一下都至少按住一个网络来回，单击、双击都像长按
+      const HOLD_MS = 180;
+      function press(name) {
+        let down = false;
+        const timer = setTimeout(() => {
+          down = true;
+          btn(name, "down");
+        }, HOLD_MS);
+        return () => {
+          clearTimeout(timer);
+          btn(name, down ? "up" : "click");
+        };
+      }
       const buzz = () => navigator.vibrate && navigator.vibrate(8);
 
       let sens = Number(localStorage.getItem("sens")) || 1.6;
@@ -1307,17 +1322,20 @@
 
       // 下面的按键：按下就按下、松开就松开（按住左键再用另一根手指划＝拖动）
       document.querySelectorAll(".mbtn").forEach((b) => {
+        let release = null;
         const down = (e) => {
           e.preventDefault();
+          if (release) return;
           b.classList.add("down");
-          btn(b.dataset.btn, "down");
+          release = press(b.dataset.btn);
           buzz();
         };
         const up = (e) => {
           e.preventDefault();
-          if (!b.classList.contains("down")) return;
+          if (!release) return;
           b.classList.remove("down");
-          btn(b.dataset.btn, "up");
+          release();
+          release = null;
         };
         b.addEventListener("touchstart", down);
         b.addEventListener("touchend", up);
@@ -2168,11 +2186,13 @@
         AIR.step = 0;
         $("air").hidden = true;
         const h = $("airHold");
-        if (h.classList.contains("on") && AIR.mode === "abs") btn("left", "up");
+        if (h.classList.contains("on") && AIR.mode === "abs") AIR.release?.();
+        AIR.release = null;
         h.classList.remove("on");
         for (const el of document.querySelectorAll("#airBtns .on")) {
           el.classList.remove("on");
-          btn(el.dataset.air, "up");
+          el.release?.();
+          el.release = null;
         }
       }
       $("airStart").onclick = airOpen;
@@ -2192,7 +2212,7 @@
               return;
             }
             airHold.classList.add("on");
-            btn("left", "down");
+            AIR.release = press("left");
             return;
           }
           AIR.restX = AIR.restY = 0;
@@ -2209,7 +2229,8 @@
         airHold.classList.remove("on");
         if (h.cal) return;
         if (AIR.mode === "abs") {
-          if (was) btn("left", "up");
+          if (was) AIR.release?.();
+          AIR.release = null;
           return;
         }
         // 转动移动：轻点、手机也没怎么动＝左键
@@ -2220,15 +2241,17 @@
       for (const el of document.querySelectorAll("#airBtns [data-air]")) {
         const down = (e) => {
           e.preventDefault();
+          if (el.release) return;
           el.classList.add("on");
           if (navigator.vibrate) navigator.vibrate(10);
-          btn(el.dataset.air, "down");
+          el.release = press(el.dataset.air);
         };
         const up = (e) => {
           e.preventDefault();
-          if (!el.classList.contains("on")) return;
+          if (!el.release) return;
           el.classList.remove("on");
-          btn(el.dataset.air, "up");
+          el.release();
+          el.release = null;
         };
         el.addEventListener("touchstart", down, { passive: false });
         el.addEventListener("touchend", up, { passive: false });
