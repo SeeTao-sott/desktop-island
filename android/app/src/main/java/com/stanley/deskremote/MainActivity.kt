@@ -43,6 +43,9 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     private val prefs by lazy { getSharedPreferences("remote", MODE_PRIVATE) }
     /** 发出去还没回应的请求编号：断线时统一告诉网页失败了 */
     private val pending: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+    /** 最近一次的连接状态（网页载完时补发） */
+    @Volatile private var lastLink: Pair<String, Boolean>? = null
+    @Volatile private var lastHid: Pair<String, Boolean>? = null
     /** 传文件用的编号，和网页自己的编号错开 */
     private val uploadSeq = AtomicInteger(1_000_000_000)
 
@@ -66,6 +69,12 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             webViewClient = object : WebViewClient() {
+                // 网页载完：把载入前发生的连接状态再告诉它一次（不然会一直显示"没开"）
+                override fun onPageFinished(view: WebView, url: String) {
+                    lastLink?.let { (t, on) -> js("window.__bt&&__bt.status(${JSONObject.quote(t)},$on)") }
+                    lastHid?.let { (t, on) -> js("window.__bt&&__bt.hid&&__bt.hid(${JSONObject.quote(t)},$on)") }
+                }
+
                 override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                     if (req.url.host != ASSET_HOST) return null
                     val path = req.url.path?.trimStart('/') ?: return null
@@ -173,6 +182,7 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     }
 
     override fun onHidState(text: String, ready: Boolean) {
+        lastHid = text to ready
         js("window.__bt&&__bt.hid&&__bt.hid(${JSONObject.quote(text)},$ready)")
     }
 
@@ -216,6 +226,7 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     private fun js(code: String) = web.post { web.evaluateJavascript(code, null) }
 
     override fun onStatus(text: String, connected: Boolean) {
+        lastLink = text to connected
         if (!connected) {
             // 断了：还在等回应的请求都算失败，网页别一直等
             val ids = pending.toList()
