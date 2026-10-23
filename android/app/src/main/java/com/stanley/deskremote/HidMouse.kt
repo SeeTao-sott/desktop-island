@@ -23,6 +23,9 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
     interface Listener {
         /** ready = 已经作为鼠标连上电脑，可以发了 */
         fun onHidState(text: String, ready: Boolean)
+
+        /** 有电脑把这只鼠标连上了（配对后电脑主动连过来时，App 顺便把它记成"我的电脑"） */
+        fun onHidHost(device: BluetoothDevice)
     }
 
     companion object {
@@ -61,13 +64,15 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
 
     val ready get() = host != null
 
-    /** 开始当鼠标，连这台电脑 */
-    fun start(pc: BluetoothDevice) {
-        target = pc
+    @Volatile private var registered = false
+
+    /** 开始当鼠标；pc = 要连的电脑（还没配对时可以是 null：先准备好，等电脑来配对） */
+    fun start(pc: BluetoothDevice?) {
+        if (pc != null) target = pc
         wanted = true
         val h = hid
         if (h != null) {
-            h.connect(pc)
+            if (registered) target?.let { h.connect(it) } ?: waitingForPc()
             return
         }
         listener.onHidState("正在打开蓝牙鼠标…", false)
@@ -104,21 +109,25 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
 
     private val callback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+            this@HidMouse.registered = registered
             if (!registered) {
                 host = null
                 listener.onHidState("蓝牙鼠标没开成", false)
                 return
             }
             val pc = pluggedDevice ?: target
+            if (pc == null) return waitingForPc()
             listener.onHidState("正在作为鼠标连电脑…", false)
-            if (pc != null && wanted) hid?.connect(pc)
+            if (wanted) hid?.connect(pc)
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     host = device
+                    target = device
                     buttons = 0
+                    listener.onHidHost(device)
                     listener.onHidState("蓝牙鼠标已连上", true)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -133,6 +142,18 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
 
         override fun onGetReport(device: BluetoothDevice, type: Byte, id: Byte, bufferSize: Int) {
             hid?.replyReport(device, type, id, ByteArray(if (id.toInt() == 2) 5 else 7))
+        }
+    }
+
+    private fun waitingForPc() =
+        listener.onHidState("已经准备好当鼠标：在电脑「蓝牙和其他设备 → 添加设备」里配对这台手机", false)
+
+    /** 刚和这台电脑配对好：作为鼠标连过去 */
+    fun paired(pc: BluetoothDevice) {
+        target = pc
+        if (wanted && registered && host == null) {
+            listener.onHidState("正在作为鼠标连电脑…", false)
+            hid?.connect(pc)
         }
     }
 

@@ -79,6 +79,7 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
             addJavascriptInterface(Bridge(), "BT")
         }
         setContentView(web)
+        registerReceiver(bondReceiver, android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
         web.loadUrl("https://$ASSET_HOST/index.html")
         if (Build.VERSION.SDK_INT >= 31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_PERM)
@@ -105,6 +106,7 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
 
     override fun onDestroy() {
         // App 关了就不再当鼠标
+        runCatching { unregisterReceiver(bondReceiver) }
         hid.stop()
         link.stop()
         web.destroy()
@@ -141,15 +143,34 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
             return
         }
         val dev = list.find { it.address == prefs.getString("pc", null) }
-        if (dev == null) choosePc() else {
-            link.start(dev)
-            if (prefs.getBoolean("hid", false)) hid.start(dev)
-        }
+        if (prefs.getBoolean("hid", false)) hid.start(dev)
+        if (dev == null) choosePc() else link.start(dev)
     }
 
     /** 现在选的那台电脑 */
     @SuppressLint("MissingPermission")
     private fun savedPc(): BluetoothDevice? = bonded()?.find { it.address == prefs.getString("pc", null) }
+
+    override fun onHidHost(device: BluetoothDevice) = usePc(device)
+
+    /** 记成"我的电脑"（还没选过的话），普通蓝牙那条线也连上 */
+    private fun usePc(device: BluetoothDevice) {
+        if (prefs.getString("pc", null) == device.address) return
+        prefs.edit().putString("pc", device.address).apply()
+        link.start(device)
+    }
+
+    // 配对完成：电脑刚和手机配好对，顺便记成"我的电脑"、作为鼠标连过去
+    private val bondReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context, i: Intent) {
+            val d: BluetoothDevice = (if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                else @Suppress("DEPRECATION") i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)) ?: return
+            if (i.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1) != BluetoothDevice.BOND_BONDED) return
+            if (!prefs.getBoolean("hid", false) && prefs.getString("pc", null) != null) return
+            usePc(d)
+            hid.paired(d)
+        }
+    }
 
     override fun onHidState(text: String, ready: Boolean) {
         js("window.__bt&&__bt.hid&&__bt.hid(${JSONObject.quote(text)},$ready)")
@@ -185,8 +206,8 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
     @Suppress("DEPRECATION")
     private fun discoverable() {
         // 先确保已经在当鼠标（电脑配对时才看得到"鼠标"这个服务）
-        savedPc()?.let { hid.start(it) }
         prefs.edit().putBoolean("hid", true).apply()
+        hid.start(savedPc())
         startActivityForResult(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120), REQ_DISCOVER)
     }
 
@@ -237,8 +258,8 @@ class MainActivity : Activity(), BtLink.Listener, HidMouse.Listener {
         fun hidOn(on: Boolean) = runOnUiThread {
             prefs.edit().putBoolean("hid", on).apply()
             if (!on) return@runOnUiThread hid.stop()
-            val pc = savedPc() ?: return@runOnUiThread onHidState("先选好电脑（点右上角）", false)
-            hid.start(pc)
+            // 没选过电脑也先准备好当鼠标：电脑来配对时就能看到"鼠标"
+            hid.start(savedPc())
         }
 
         /** 让电脑搜得到手机 2 分钟（电脑上重新配对时用） */
