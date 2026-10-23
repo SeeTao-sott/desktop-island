@@ -850,6 +850,7 @@
       <label class="sens">体感灵敏度（转动移动模式） <input id="airSens" type="range" min="0.3" max="3" step="0.1" /> <span id="airSensV"></span></label>
       <label class="sens"><input id="airInvX" type="checkbox" style="flex: none" /> 体感左右反过来（转动移动模式）</label>
       <label class="sens"><input id="airInvY" type="checkbox" style="flex: none" /> 体感上下反过来（转动移动模式）</label>
+      <label class="sens"><input id="airLock" type="checkbox" style="flex: none" /> 点按键时定住鼠标（手抖时也能双击）</label>
       <label class="sens">灵敏度 <input id="sens" type="range" min="0.5" max="4" step="0.1" /> <span id="sensV"></span></label>
       <label class="sens"><input id="natural" type="checkbox" style="flex: none" /> 滚动方向跟手机一样（手指往上推＝页面往下）</label>
     </div>
@@ -1988,12 +1989,14 @@
       let airSmooth = Number(localStorage.getItem("airSmooth")) || 1;
       let airInvX = localStorage.getItem("airInvX") === "1";
       let airInvY = localStorage.getItem("airInvY") === "1";
+      let airLockOn = localStorage.getItem("airLock") === "1";
       $("airSens").value = airSens;
       $("airSensV").textContent = airSens.toFixed(1);
       $("airSmooth").value = airSmooth;
       $("airSmoothV").textContent = airSmooth.toFixed(1);
       $("airInvX").checked = airInvX;
       $("airInvY").checked = airInvY;
+      $("airLock").checked = airLockOn;
       $("airSens").oninput = () => {
         airSens = Number($("airSens").value);
         $("airSensV").textContent = airSens.toFixed(1);
@@ -2007,6 +2010,7 @@
       };
       $("airInvX").onchange = () => localStorage.setItem("airInvX", (airInvX = $("airInvX").checked) ? "1" : "0");
       $("airInvY").onchange = () => localStorage.setItem("airInvY", (airInvY = $("airInvY").checked) ? "1" : "0");
+      $("airLock").onchange = () => localStorage.setItem("airLock", (airLockOn = $("airLock").checked) ? "1" : "0");
       function airMsg(text, cls = "") {
         $("airMsg").textContent = text;
         $("airMsg").className = cls;
@@ -2158,13 +2162,14 @@
         if (mx || my) push({ t: "m", x: mx, y: my });
       });
 
-      // 体感模式点按键时把鼠标定住：按下去手一抖，两下就不在同一个位置，电脑不认双击。
+      // 体感模式点按键时把鼠标定住（设置里的开关，默认关）：按下去手一抖，两下就不在同一个位置，电脑不认双击。
       // 按着的时候定住；按住超过一会儿（要拖动）就放开；点一下松手后再定住一小会儿，等可能的第二下
       const AIR_DBL_MS = 400;
       let airPressing = 0;
       let airLockUntil = 0;
       const airLocked = () => airLockUntil > performance.now();
       function airPress(name) {
+        if (!airLockOn) return press(name);
         airPressing++;
         airLockUntil = Infinity;
         const release = press(name, () => (airLockUntil = 0)); // 按住了：要拖动，鼠标跟着走
