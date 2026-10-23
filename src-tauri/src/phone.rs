@@ -51,6 +51,8 @@ pub struct Phone {
     shelf_dir: Option<PathBuf>,
     keep: crate::desktop::Keep,
     server: Mutex<Option<Arc<Server>>>,
+    /// 蓝牙那条线（开着才有）
+    bt: Mutex<Option<crate::phone_bt::BtServer>>,
     /// 证书放在哪个文件夹（配置文件夹）
     cert_dir: PathBuf,
     snap: Arc<Mutex<Snapshot>>,
@@ -130,18 +132,34 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// 封面的编号（内容变了编号就变），手机看到编号变了才去要封面
+fn cover_id(cover: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    if cover.is_empty() {
+        return String::new();
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cover.hash(&mut h);
+    format!("{:x}", h.finish())
+}
+
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }
 
-fn json_resp(v: Value) -> Response<std::io::Cursor<Vec<u8>>> {
-    Response::from_data(v.to_string().into_bytes()).with_header(header("Content-Type", "application/json; charset=utf-8"))
+/// 一个回应。和传输方式无关：https（浏览器）和蓝牙（手机 App）共用同一套处理
+pub struct Resp {
+    pub status: u16,
+    pub ctype: &'static str,
+    pub body: Vec<u8>,
 }
 
-fn text_resp(code: u16, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    Response::from_data(msg.as_bytes().to_vec())
-        .with_status_code(code)
-        .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+fn json_resp(v: Value) -> Resp {
+    Resp { status: 200, ctype: "application/json; charset=utf-8", body: v.to_string().into_bytes() }
+}
+
+fn text_resp(code: u16, msg: &str) -> Resp {
+    Resp { status: code, ctype: "text/plain; charset=utf-8", body: msg.as_bytes().to_vec() }
 }
 
 /// 把文字放进剪贴板（Unicode 文本）
@@ -199,6 +217,7 @@ impl Phone {
             shelf_dir,
             keep,
             server: Mutex::new(None),
+            bt: Mutex::new(None),
             cert_dir,
             snap: Arc::new(Mutex::new(Snapshot::default())),
             last_poll: AtomicU64::new(0),
@@ -304,6 +323,28 @@ impl Phone {
         Ok(())
     }
 
+    /// 开蓝牙服务（和 https 互不影响，可以只开一个）
+    pub fn start_bt(self: &Arc<Self>) -> Result<(), String> {
+        let mut bt = self.bt.lock().unwrap();
+        if bt.is_none() {
+            *bt = Some(crate::phone_bt::BtServer::start(self.clone())?);
+        }
+        Ok(())
+    }
+
+    pub fn stop_bt(&self) {
+        self.bt.lock().unwrap().take();
+    }
+
+    pub fn bt_running(&self) -> bool {
+        self.bt.lock().unwrap().is_some()
+    }
+
+    /// 现在有几台手机用蓝牙连着
+    pub fn bt_clients(&self) -> usize {
+        self.bt.lock().unwrap().as_ref().map_or(0, |b| b.clients.load(Ordering::SeqCst))
+    }
+
     pub fn stop(&self) {
         if let Some(s) = self.server.lock().unwrap().take() {
             s.unblock();
@@ -312,24 +353,37 @@ impl Phone {
     }
 
     fn handle(&self, mut rq: Request) {
+        let reply = |rq: Request, r: Resp| {
+            let _ = rq.respond(Response::from_data(r.body).with_status_code(r.status).with_header(header("Content-Type", r.ctype)));
+        };
         if !is_local(rq.remote_addr()) {
-            let _ = rq.respond(text_resp(403, "只接受家里局域网的连接"));
-            return;
+            return reply(rq, text_resp(403, "只接受家里局域网的连接"));
         }
         let url = rq.url().to_string();
-        let path = url.split('?').next().unwrap_or("/").to_string();
         let key = query(&url, "k").or_else(|| {
             rq.headers().iter().find(|h| h.field.equiv("X-Key")).map(|h| h.value.as_str().to_string())
         });
         if key.as_deref() != Some(self.token.as_str()) {
-            let _ = rq.respond(text_resp(403, "密钥不对：请重新扫电脑上的二维码（托盘 → 手机遥控 → 显示二维码）"));
-            return;
+            return reply(rq, text_resp(403, "密钥不对：请重新扫电脑上的二维码（托盘 → 手机遥控 → 显示二维码）"));
         }
-        let method = rq.method().clone();
-        let resp = match (method, path.as_str()) {
-            (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec()).with_header(header("Content-Type", "text/html; charset=utf-8")),
-            (Method::Get, "/api/state") => json_resp(self.state()),
-            (Method::Post, p) if p.starts_with("/api/media/") => {
+        let method = match rq.method() {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            _ => "",
+        };
+        let len = rq.body_length().map(|n| n as u64);
+        let r = self.route(method, &url, rq.as_reader(), len);
+        reply(rq, r);
+    }
+
+    /// 按路径处理一个请求（密钥、来源已经由各自的传输方式检查过）
+    pub fn route(&self, method: &str, url: &str, body: &mut dyn Read, body_len: Option<u64>) -> Resp {
+        let path = url.split('?').next().unwrap_or("/");
+        match (method, path) {
+            ("GET", "/") => Resp { status: 200, ctype: "text/html; charset=utf-8", body: PAGE.as_bytes().to_vec() },
+            ("GET", "/api/state") => json_resp(self.state()),
+            ("GET", "/api/cover") => json_resp(json!({ "cover": self.snap.lock().unwrap().cover })),
+            ("POST", p) if p.starts_with("/api/media/") => {
                 let msg = match &p[11..] {
                     "toggle" => Some(crate::media::Msg::Toggle),
                     "next" => Some(crate::media::Msg::Next),
@@ -344,20 +398,20 @@ impl Phone {
                     _ => text_resp(400, "不认识的操作"),
                 }
             }
-            (Method::Post, p) if p.starts_with("/api/pomodoro/") => {
+            ("POST", p) if p.starts_with("/api/pomodoro/") => {
                 let a = &p[14..];
                 match (["start", "pause", "resume", "cancel", "dismiss"].contains(&a), self.app.try_state::<Arc<crate::pomodoro::Pomodoro>>()) {
                     (true, Some(pomo)) => json_resp(serde_json::to_value(pomo.act(a)).unwrap_or(Value::Null)),
                     _ => text_resp(400, "不认识的操作"),
                 }
             }
-            (Method::Post, "/api/desktop") => {
+            ("POST", "/api/desktop") => {
                 crate::desktop::run(crate::desktop::Action::Desktop, self.keep.clone());
                 json_resp(json!({ "ok": true }))
             }
-            (Method::Post, "/api/text") => {
+            ("POST", "/api/text") => {
                 let mut buf = String::new();
-                match rq.as_reader().take(MAX_TEXT).read_to_string(&mut buf) {
+                match (&mut *body).take(MAX_TEXT).read_to_string(&mut buf) {
                     Ok(_) if !buf.is_empty() => match set_clipboard(&buf) {
                         Ok(()) => {
                             eprintln!("手机发来文字（{} 字），已放进剪贴板", buf.chars().count());
@@ -368,19 +422,19 @@ impl Phone {
                     _ => text_resp(400, "没收到文字"),
                 }
             }
-            (Method::Post, "/api/upload") => self.upload(&mut rq, &url),
-            (Method::Post, "/api/mouse") => {
+            ("POST", "/api/upload") => self.upload(body, body_len, url),
+            ("POST", "/api/mouse") => {
                 let mut buf = String::new();
-                let _ = rq.as_reader().take(MAX_MOUSE).read_to_string(&mut buf);
+                let _ = (&mut *body).take(MAX_MOUSE).read_to_string(&mut buf);
                 match serde_json::from_str::<Vec<Value>>(&buf).map_err(|e| e.to_string()).and_then(|l| crate::phone_input::mouse_events(&l)) {
                     Ok(_) => json_resp(json!({ "ok": true })),
                     Err(e) => text_resp(400, &e),
                 }
             }
             // 手机当手柄：一帧状态 → 虚拟 Xbox 手柄 / 键盘鼠标
-            (Method::Post, "/api/pad") => {
+            ("POST", "/api/pad") => {
                 let mut buf = String::new();
-                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                let _ = (&mut *body).take(4096).read_to_string(&mut buf);
                 match serde_json::from_str::<Value>(&buf) {
                     Ok(v) => {
                         let s = crate::phone_pad::PadState::from_json(&v);
@@ -395,9 +449,9 @@ impl Phone {
                 }
             }
             // 游戏触控板：WASD 摇杆、Alt 现在按着哪些键（{"keys":["w","alt"]}）
-            (Method::Post, "/api/keys") => {
+            ("POST", "/api/keys") => {
                 let mut buf = String::new();
-                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                let _ = (&mut *body).take(4096).read_to_string(&mut buf);
                 let names: Vec<String> = serde_json::from_str::<Value>(&buf)
                     .ok()
                     .and_then(|v| v.get("keys").and_then(|k| serde_json::from_value(k.clone()).ok()))
@@ -407,8 +461,8 @@ impl Phone {
                     Err(e) => text_resp(400, &e),
                 }
             }
-            (Method::Get, "/api/windows") => json_resp(crate::phone_input::list_windows()),
-            (Method::Post, "/api/windows/switch") => match query(&url, "id").and_then(|v| v.parse::<isize>().ok()) {
+            ("GET", "/api/windows") => json_resp(crate::phone_input::list_windows()),
+            ("POST", "/api/windows/switch") => match query(url, "id").and_then(|v| v.parse::<isize>().ok()) {
                 Some(id) => match crate::phone_input::switch_to(id) {
                     Ok(()) => json_resp(json!({ "ok": true })),
                     Err(e) => text_resp(409, &e),
@@ -416,9 +470,9 @@ impl Phone {
                 None => text_resp(400, "没说切到哪个窗口"),
             },
             // ---------- 音游（手机模式）：手机选歌、点靶子，电脑照常放歌和画裂缝 ----------
-            (Method::Get, "/api/time") => json_resp(json!({ "now": now_ms() })),
-            (Method::Get, "/api/rhythm/songs") => json_resp(serde_json::to_value(crate::rhythm_songs(self.app.clone())).unwrap_or(Value::Null)),
-            (Method::Post, "/api/rhythm/open") => {
+            ("GET", "/api/time") => json_resp(json!({ "now": now_ms() })),
+            ("GET", "/api/rhythm/songs") => json_resp(serde_json::to_value(crate::rhythm_songs(self.app.clone())).unwrap_or(Value::Null)),
+            ("POST", "/api/rhythm/open") => {
                 // 电脑回到桌面（已经在桌面就不按，免得又切回去），弹出选歌菜单
                 if !crate::phone_input::at_desktop() {
                     crate::desktop::run(crate::desktop::Action::Desktop, self.keep.clone());
@@ -427,8 +481,8 @@ impl Phone {
                 let _ = self.app.emit_to("widgets", "phone-rhythm", ());
                 json_resp(json!({ "ok": true }))
             }
-            (Method::Post, "/api/rhythm/play") => {
-                let (id, c, d) = (query(&url, "id"), query(&url, "c"), query(&url, "d"));
+            ("POST", "/api/rhythm/play") => {
+                let (id, c, d) = (query(url, "id"), query(url, "c"), query(url, "d"));
                 match (id, c, d) {
                     (Some(id), Some(characteristic), Some(difficulty)) => {
                         // 电脑上的选歌菜单收起来，打开裂缝
@@ -443,11 +497,11 @@ impl Phone {
                     _ => text_resp(400, "没说玩哪首"),
                 }
             }
-            (Method::Get, "/api/rhythm/state") => json_resp(crate::rift::phone_state()),
-            (Method::Get, "/api/rhythm/plan") => json_resp(crate::rift::phone_plan()),
-            (Method::Post, "/api/rhythm/hit") => {
+            ("GET", "/api/rhythm/state") => json_resp(crate::rift::phone_state()),
+            ("GET", "/api/rhythm/plan") => json_resp(crate::rift::phone_plan()),
+            ("POST", "/api/rhythm/hit") => {
                 let mut buf = String::new();
-                let _ = rq.as_reader().take(4096).read_to_string(&mut buf);
+                let _ = (&mut *body).take(4096).read_to_string(&mut buf);
                 match serde_json::from_str::<Value>(&buf) {
                     Ok(v) => {
                         let _ = self.app.emit_to(crate::rift::LABEL, "rift-phone-hit", v);
@@ -456,7 +510,7 @@ impl Phone {
                     Err(_) => text_resp(400, "看不懂"),
                 }
             }
-            (Method::Post, p) if p.starts_with("/api/rhythm/cmd/") => {
+            ("POST", p) if p.starts_with("/api/rhythm/cmd/") => {
                 let a = &p[16..];
                 if ["start", "pause", "resume", "restart", "quit"].contains(&a) {
                     let _ = self.app.emit_to(crate::rift::LABEL, "rift-phone-cmd", a);
@@ -465,13 +519,12 @@ impl Phone {
                     text_resp(400, "不认识的操作")
                 }
             }
-            (Method::Post, "/api/alttab") => {
+            ("POST", "/api/alttab") => {
                 crate::phone_input::alt_tab();
                 json_resp(json!({ "ok": true }))
             }
             _ => text_resp(404, "没有这个"),
-        };
-        let _ = rq.respond(resp);
+        }
     }
 
     fn state(&self) -> Value {
@@ -490,7 +543,7 @@ impl Phone {
         let shelf = self.shelf_dir.is_some();
         json!({
             "media": s.media,
-            "cover": s.cover,
+            "coverId": cover_id(&s.cover),
             "pomo": s.pomo,
             "stat": s.stat,
             "upload": shelf,
@@ -500,9 +553,9 @@ impl Phone {
         })
     }
 
-    fn upload(&self, rq: &mut Request, url: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    fn upload(&self, body: &mut dyn Read, body_len: Option<u64>, url: &str) -> Resp {
         let Some(root) = &self.shelf_dir else { return text_resp(400, "架子没开，不能收文件") };
-        let len = rq.body_length().unwrap_or(0) as u64;
+        let len = body_len.unwrap_or(0);
         if len > MAX_UPLOAD {
             return text_resp(413, "文件太大（最大 1GB）");
         }
@@ -516,7 +569,7 @@ impl Phone {
         let tmp = std::env::temp_dir().join(format!("desktop-island-phone-{}.part", now_ms()));
         let result = (|| -> std::io::Result<u64> {
             let mut f = std::fs::File::create(&tmp)?;
-            let n = std::io::copy(&mut rq.as_reader().take(MAX_UPLOAD + 1), &mut f)?;
+            let n = std::io::copy(&mut body.take(MAX_UPLOAD + 1), &mut f)?;
             if n > MAX_UPLOAD {
                 return Err(std::io::Error::other("文件太大"));
             }
@@ -544,6 +597,12 @@ impl Phone {
                 text_resp(500, &format!("没传完：{e}"))
             }
         }
+    }
+}
+
+impl crate::phone_bt::Route for Phone {
+    fn route(&self, method: &str, url: &str, body: &mut dyn Read, body_len: Option<u64>) -> Resp {
+        Phone::route(self, method, url, body, body_len)
     }
 }
 

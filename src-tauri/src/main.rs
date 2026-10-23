@@ -17,6 +17,7 @@ mod icons;
 mod media;
 mod osu;
 mod phone;
+mod phone_bt;
 mod phone_input;
 mod phone_pad;
 mod pomodoro;
@@ -202,7 +203,7 @@ fn open_phone_qr(app: &AppHandle) {
 /// 二维码窗口要的东西：开没开、网址、二维码 SVG
 #[tauri::command]
 fn phone_info(p: State<'_, Arc<phone::Phone>>) -> serde_json::Value {
-    serde_json::json!({ "running": p.running(), "url": p.url(), "svg": p.qr_svg() })
+    serde_json::json!({ "running": p.running(), "url": p.url(), "svg": p.qr_svg(), "bt": p.bt_running(), "btClients": p.bt_clients() })
 }
 
 #[tauri::command]
@@ -483,6 +484,7 @@ fn build_tray(
     // 手机遥控：开关 + 二维码
     let phone_item = CheckMenuItem::with_id(app, "phone", "手机遥控", true, phone.running(), None::<&str>)?;
     let phone_qr = MenuItem::with_id(app, "phone_qr", "手机遥控二维码…", true, None::<&str>)?;
+    let phone_bt_item = CheckMenuItem::with_id(app, "phone_bt", "蓝牙遥控（手机 App）", true, phone.bt_running(), None::<&str>)?;
     let edge_item = CheckMenuItem::with_id(
         app,
         "edge_glow",
@@ -517,6 +519,7 @@ fn build_tray(
             &edge_item,
             &phone_item,
             &phone_qr,
+            &phone_bt_item,
             &rift_item,
             &PredefinedMenuItem::separator(app)?,
             &desktop_item,
@@ -535,6 +538,7 @@ fn build_tray(
     let auto_item = auto.clone();
     let edge_check = edge_item.clone();
     let phone_check = phone_item.clone();
+    let phone_bt_check = phone_bt_item.clone();
     let icons_item = icons.clone();
     TrayIconBuilder::with_id("island")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -608,6 +612,18 @@ fn build_tray(
                 }
             }
             "phone_qr" => open_phone_qr(app),
+            "phone_bt" => {
+                if phone_bt_check.is_checked().unwrap_or(false) {
+                    if let Err(e) = phone.start_bt() {
+                        eprintln!("蓝牙遥控没开成：{e}");
+                    }
+                } else {
+                    phone.stop_bt();
+                }
+                let on = phone.bt_running();
+                let _ = phone_bt_check.set_checked(on);
+                config::set_value(&cfg_path, "phone_bt", serde_json::Value::from(on));
+            }
             "edge_glow" => {
                 if let Some(e) = &edge {
                     let on = edge_check.is_checked().unwrap_or(false);
@@ -872,6 +888,11 @@ fn main() {
                             }
                         }
                     });
+                }
+            }
+            if cfg.phone_bt {
+                if let Err(e) = phone.start_bt() {
+                    eprintln!("蓝牙遥控没开成：{e}");
                 }
             }
             app.manage(phone.clone());
