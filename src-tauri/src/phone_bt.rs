@@ -32,6 +32,8 @@ pub const SERVICE_UUID: GUID = GUID::from_u128(0x7d2e9b14_5c3a_4f61_a8e0_3b9c6d1
 /// 一个请求的内容最多 1GB（和 https 传文件一样）
 const MAX_BODY: usize = 1 << 30;
 const MAX_HEAD: usize = 64 * 1024;
+/// 固定用的 RFCOMM 通道（1~30 里不常被占的一个）
+const FIXED_CHANNEL: u32 = 21;
 
 /// 处理请求的那一方（就是 Phone；测试时换成假的）
 pub trait Route: Send + Sync + 'static {
@@ -207,9 +209,14 @@ impl BtServer {
             if setsockopt(s, SOL_RFCOMM as i32, SO_BTH_AUTHENTICATE as i32, Some(&on)) != 0 {
                 eprintln!("蓝牙遥控：设不了「只接受配对设备」：{}", std::io::Error::last_os_error());
             }
-            let mut addr = Box::new(SOCKADDR_BTH { addressFamily: AF_BTH, btAddr: 0, serviceClassId: GUID::zeroed(), port: u32::MAX });
+            // 先用固定的通道：程序被强制结束时系统里的旧登记删不掉，旧登记指的也是这个通道，手机照样连得上；
+            // 被别的程序占了才让系统随便分一个
+            let mut addr = Box::new(SOCKADDR_BTH { addressFamily: AF_BTH, btAddr: 0, serviceClassId: GUID::zeroed(), port: FIXED_CHANNEL });
             let len = size_of::<SOCKADDR_BTH>() as i32;
             if bind(s, &*addr as *const SOCKADDR_BTH as *const SOCKADDR, len) != 0 {
+                addr.port = u32::MAX;
+            }
+            if addr.port == u32::MAX && bind(s, &*addr as *const SOCKADDR_BTH as *const SOCKADDR, len) != 0 {
                 let e = std::io::Error::last_os_error();
                 let _ = closesocket(s);
                 return Err(format!("蓝牙开不了（是不是关着？）：{e}"));

@@ -401,6 +401,10 @@ fn restart_as_admin(app: &AppHandle) {
     let r = unsafe { ShellExecuteW(None, &HSTRING::from("runas"), &HSTRING::from(exe.as_os_str()), &HSTRING::from(args.join(" ")), None, SW_SHOWNORMAL) };
     // 返回值大于 32 才是成功；点了 UAC 的"否"就照常留着这一个
     if r.0 as isize > 32 {
+        // 蓝牙服务的登记撤掉再退（点了"否"就不撤，这一个照常用）
+        if let Some(p) = app.try_state::<Arc<phone::Phone>>() {
+            p.stop_bt();
+        }
         app.exit(0);
     } else {
         claim_single_instance();
@@ -591,8 +595,12 @@ fn build_tray(
                 let _ = autostart::set(want);
                 let _ = auto_item.set_checked(autostart::is_enabled());
             }
+            // 退出前把蓝牙服务的登记撤掉：留在系统里的旧登记会让手机连到没人听的通道
             "restart_admin" => restart_as_admin(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                phone.stop_bt();
+                app.exit(0)
+            }
             "show_desktop" => desktop::run(desktop::Action::Desktop, keep.clone()),
             "phone" => {
                 let want = phone_check.is_checked().unwrap_or(false);
