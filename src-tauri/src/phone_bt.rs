@@ -168,6 +168,8 @@ pub struct BtServer {
     stopped: Arc<AtomicBool>,
     /// 现在连着几台手机
     pub clients: Arc<AtomicUsize>,
+    /// 服务坏了（蓝牙被关掉 / 重启过）：Phone 那边看到就重开一个
+    pub dead: Arc<AtomicBool>,
 }
 
 unsafe impl Send for BtServer {}
@@ -228,6 +230,12 @@ impl BtServer {
             }
             let mut l = len;
             getsockname(s, &mut *addr as *mut SOCKADDR_BTH as *mut SOCKADDR, &mut l);
+            // 刚开机时蓝牙还没准备好，拿不到本机地址：算失败，过一会儿再试
+            let local = addr.btAddr;
+            if local == 0 {
+                let _ = closesocket(s);
+                return Err("蓝牙还没准备好".into());
+            }
             if set_service(&mut addr, true) != 0 {
                 let e = std::io::Error::last_os_error();
                 let _ = closesocket(s);
@@ -239,15 +247,18 @@ impl BtServer {
             let clients = Arc::new(AtomicUsize::new(0));
             let (st, cl) = (stopped.clone(), clients.clone());
             let raw = s.0;
+            let dead = Arc::new(AtomicBool::new(false));
+            let dd = dead.clone();
             thread::spawn(move || loop {
                 let c = match accept(SOCKET(raw), None, None) {
                     Ok(c) => c,
-                    Err(_) => {
-                        if st.load(Ordering::SeqCst) {
-                            return;
+                    Err(e) => {
+                        if !st.load(Ordering::SeqCst) {
+                            // 不是我们自己关的：蓝牙被关掉或重启了，这个服务已经没用，交给 Phone 重开
+                            eprintln!("蓝牙遥控：服务断了（{e}），稍后重开");
+                            dd.store(true, Ordering::SeqCst);
                         }
-                        thread::sleep(std::time::Duration::from_millis(500));
-                        continue;
+                        return;
                     }
                 };
                 let router = router.clone();
@@ -261,7 +272,7 @@ impl BtServer {
                     eprintln!("蓝牙遥控：手机断开了");
                 });
             });
-            Ok(BtServer { listen: s, addr, stopped, clients })
+            Ok(BtServer { listen: s, addr, stopped, clients, dead })
         }
     }
 }

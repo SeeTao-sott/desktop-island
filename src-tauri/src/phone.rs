@@ -53,6 +53,9 @@ pub struct Phone {
     server: Mutex<Option<Arc<Server>>>,
     /// 蓝牙那条线（开着才有）
     bt: Mutex<Option<crate::phone_bt::BtServer>>,
+    /// 用户想开蓝牙服务（开不成时后台会一直重试）
+    bt_want: AtomicBool,
+    bt_retrying: AtomicBool,
     /// 证书放在哪个文件夹（配置文件夹）
     cert_dir: PathBuf,
     snap: Arc<Mutex<Snapshot>>,
@@ -218,6 +221,8 @@ impl Phone {
             keep,
             server: Mutex::new(None),
             bt: Mutex::new(None),
+            bt_want: AtomicBool::new(false),
+            bt_retrying: AtomicBool::new(false),
             cert_dir,
             snap: Arc::new(Mutex::new(Snapshot::default())),
             last_poll: AtomicU64::new(0),
@@ -238,6 +243,22 @@ impl Phone {
         let me = phone.clone();
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(5));
+            // 蓝牙服务要开着却没开成 / 坏了：再试一次（只在第一次失败时打日志，免得刷屏）
+            if me.bt_want.load(Ordering::SeqCst) {
+                let broken = me.bt.lock().unwrap().as_ref().is_none_or(|b| b.dead.load(Ordering::SeqCst));
+                if broken {
+                    match me.start_bt() {
+                        Ok(()) => eprintln!("蓝牙遥控：重新开好了"),
+                        Err(e) => {
+                            if !me.bt_retrying.swap(true, Ordering::SeqCst) {
+                                eprintln!("蓝牙遥控还没开成：{e}，每 5 秒再试");
+                            }
+                        }
+                    }
+                } else {
+                    me.bt_retrying.store(false, Ordering::SeqCst);
+                }
+            }
             if me.watching.load(Ordering::SeqCst) && now_ms().saturating_sub(me.last_poll.load(Ordering::SeqCst)) > 15_000 {
                 me.watching.store(false, Ordering::SeqCst);
                 if let Some(st) = me.app.try_state::<Arc<crate::sysstat::SysStat>>() {
@@ -324,8 +345,14 @@ impl Phone {
     }
 
     /// 开蓝牙服务（和 https 互不影响，可以只开一个）
+    /// 开蓝牙服务。开不成（刚开机蓝牙还没好、蓝牙关着）也记住"要开"，后台每 5 秒再试，
+    /// 中途蓝牙被关掉 / 重启导致服务坏了也会自动重开
     pub fn start_bt(self: &Arc<Self>) -> Result<(), String> {
+        self.bt_want.store(true, Ordering::SeqCst);
         let mut bt = self.bt.lock().unwrap();
+        if bt.as_ref().is_some_and(|b| b.dead.load(Ordering::SeqCst)) {
+            bt.take();
+        }
         if bt.is_none() {
             *bt = Some(crate::phone_bt::BtServer::start(self.clone())?);
         }
@@ -333,11 +360,13 @@ impl Phone {
     }
 
     pub fn stop_bt(&self) {
+        self.bt_want.store(false, Ordering::SeqCst);
         self.bt.lock().unwrap().take();
     }
 
+    /// 托盘上的勾：用户想开着就算开着（正在等蓝牙准备好也算）
     pub fn bt_running(&self) -> bool {
-        self.bt.lock().unwrap().is_some()
+        self.bt_want.load(Ordering::SeqCst)
     }
 
     /// 现在有几台手机用蓝牙连着
