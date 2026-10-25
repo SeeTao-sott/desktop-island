@@ -65,11 +65,32 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
     val ready get() = host != null
 
     @Volatile private var registered = false
+    /** 这次打开 App 后连上过（断了就是意外断开，自己重连；没连上过才提示重新配对） */
+    @Volatile private var everConnected = false
+    private var watcher: Thread? = null
+
+    /** 断了自己重连：电脑的蓝牙偶尔会自己重启（这台的网卡蓝牙二合一芯片），断开后每 5 秒连一次 */
+    @Synchronized
+    private fun watch() {
+        if (watcher?.isAlive == true) return
+        watcher = Thread({
+            while (wanted) {
+                try {
+                    Thread.sleep(5000)
+                } catch (e: InterruptedException) {
+                    return@Thread
+                }
+                val pc = target
+                if (wanted && registered && host == null && pc != null) runCatching { hid?.connect(pc) }
+            }
+        }, "hid-reconnect").apply { isDaemon = true; start() }
+    }
 
     /** 开始当鼠标；pc = 要连的电脑（还没配对时可以是 null：先准备好，等电脑来配对） */
     fun start(pc: BluetoothDevice?) {
         if (pc != null) target = pc
         wanted = true
+        watch()
         val h = hid
         if (h != null) {
             if (registered) target?.let { h.connect(it) } ?: waitingForPc()
@@ -126,6 +147,7 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     host = device
                     target = device
+                    everConnected = true
                     buttons = 0
                     listener.onHidHost(device)
                     listener.onHidState("蓝牙鼠标已连上", true)
@@ -133,7 +155,11 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     if (host == device) host = null
                     listener.onHidState(
-                        if (wanted) "电脑没接受这只鼠标：在电脑上删掉这台手机、重新配对一次（配对时手机要开着这个页面）" else "蓝牙鼠标关了",
+                        when {
+                            !wanted -> "蓝牙鼠标关了"
+                            everConnected -> "蓝牙鼠标断了，正在重连…"
+                            else -> "电脑没接受这只鼠标：在电脑上删掉这台手机、重新配对一次（配对时手机要开着这个页面）"
+                        },
                         false,
                     )
                 }
