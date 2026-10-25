@@ -69,7 +69,10 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
     @Volatile private var everConnected = false
     private var watcher: Thread? = null
 
-    /** 断了自己重连：电脑的蓝牙偶尔会自己重启（这台的网卡蓝牙二合一芯片），断开后每 5 秒连一次 */
+    /**
+     * 断了自己修：电脑的蓝牙偶尔会自己重启（这台的网卡蓝牙二合一芯片），手机系统有时还会把"当鼠标"的登记撤掉。
+     * 每 5 秒看一次：系统的 HID 服务没了就重新要，登记被撤了就重新登记，没连着就再连。
+     */
     @Synchronized
     private fun watch() {
         if (watcher?.isAlive == true) return
@@ -80,8 +83,16 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
                 } catch (e: InterruptedException) {
                     return@Thread
                 }
+                if (!wanted) break
                 val pc = target
-                if (wanted && registered && host == null && pc != null) runCatching { hid?.connect(pc) }
+                val h = hid
+                runCatching {
+                    when {
+                        h == null -> openProxy()
+                        !registered -> register(h)
+                        host == null && pc != null -> h.connect(pc)
+                    }
+                }
             }
         }, "hid-reconnect").apply { isDaemon = true; start() }
     }
@@ -97,24 +108,34 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
             return
         }
         listener.onHidState("正在打开蓝牙鼠标…", false)
+        openProxy()
+    }
+
+    /** 向系统要 HID 设备服务（要到了就登记成鼠标） */
+    private fun openProxy() {
         val ok = adapter?.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
                 val p = proxy as BluetoothHidDevice
                 hid = p
-                val sdp = BluetoothHidDeviceAppSdpSettings("桌面遥控", "手机触控板", "DeskRemote", BluetoothHidDevice.SUBCLASS1_MOUSE, DESCRIPTOR)
-                val qos = BluetoothHidDeviceAppQosSettings(BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT, 800, 9, 0, 11250, BluetoothHidDeviceAppQosSettings.MAX)
-                if (!p.registerApp(sdp, null, qos, exec, callback)) {
-                    listener.onHidState("这台手机不让 App 当蓝牙鼠标（系统没开放这个功能）", false)
-                }
+                register(p)
             }
 
             override fun onServiceDisconnected(profile: Int) {
                 hid = null
                 host = null
-                listener.onHidState("蓝牙鼠标关了", false)
+                registered = false
+                listener.onHidState(if (wanted) "手机蓝牙重启了，正在重新打开蓝牙鼠标…" else "蓝牙鼠标关了", false)
             }
         }, BluetoothProfile.HID_DEVICE) ?: false
         if (!ok) listener.onHidState("这台手机不支持当蓝牙鼠标", false)
+    }
+
+    private fun register(p: BluetoothHidDevice) {
+        val sdp = BluetoothHidDeviceAppSdpSettings("桌面遥控", "手机触控板", "DeskRemote", BluetoothHidDevice.SUBCLASS1_MOUSE, DESCRIPTOR)
+        val qos = BluetoothHidDeviceAppQosSettings(BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT, 800, 9, 0, 11250, BluetoothHidDeviceAppQosSettings.MAX)
+        if (!p.registerApp(sdp, null, qos, exec, callback)) {
+            listener.onHidState("这台手机不让 App 当蓝牙鼠标（系统没开放这个功能）", false)
+        }
     }
 
     fun stop() {
@@ -133,7 +154,8 @@ class HidMouse(private val ctx: Context, private val listener: Listener) {
             this@HidMouse.registered = registered
             if (!registered) {
                 host = null
-                listener.onHidState("蓝牙鼠标没开成", false)
+                // 被系统撤掉了：后台每 5 秒会重新登记
+                listener.onHidState(if (wanted) "蓝牙鼠标被系统关掉了，正在重新打开…" else "蓝牙鼠标关了", false)
                 return
             }
             val pc = pluggedDevice ?: target

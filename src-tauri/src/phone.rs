@@ -56,6 +56,8 @@ pub struct Phone {
     /// 用户想开蓝牙服务（开不成时后台会一直重试）
     bt_want: AtomicBool,
     bt_retrying: AtomicBool,
+    /// 看门狗走了几轮（每 5 秒一轮）
+    bt_tick: AtomicU64,
     /// 证书放在哪个文件夹（配置文件夹）
     cert_dir: PathBuf,
     snap: Arc<Mutex<Snapshot>>,
@@ -223,6 +225,7 @@ impl Phone {
             bt: Mutex::new(None),
             bt_want: AtomicBool::new(false),
             bt_retrying: AtomicBool::new(false),
+            bt_tick: AtomicU64::new(0),
             cert_dir,
             snap: Arc::new(Mutex::new(Snapshot::default())),
             last_poll: AtomicU64::new(0),
@@ -245,8 +248,18 @@ impl Phone {
             thread::sleep(Duration::from_secs(5));
             // 蓝牙服务要开着却没开成 / 坏了：再试一次（只在第一次失败时打日志，免得刷屏）
             if me.bt_want.load(Ordering::SeqCst) {
-                let broken = me.bt.lock().unwrap().as_ref().is_none_or(|b| b.dead.load(Ordering::SeqCst));
+                let tick = me.bt_tick.fetch_add(1, Ordering::SeqCst);
+                let broken = {
+                    let mut bt = me.bt.lock().unwrap();
+                    match bt.as_mut() {
+                        None => true,
+                        Some(b) if b.dead.load(Ordering::SeqCst) => true,
+                        // 每 30 秒补登一次服务（登记被蓝牙重启冲掉时手机会连不上）；补登失败就当坏了重开
+                        Some(b) => tick % 6 == 5 && b.clients.load(Ordering::SeqCst) == 0 && !b.refresh(),
+                    }
+                };
                 if broken {
+                    me.bt.lock().unwrap().take();
                     match me.start_bt() {
                         Ok(()) => eprintln!("蓝牙遥控：重新开好了"),
                         Err(e) => {

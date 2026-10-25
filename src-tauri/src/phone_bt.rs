@@ -277,6 +277,17 @@ impl BtServer {
     }
 }
 
+impl BtServer {
+    /// 重新登记一次服务。蓝牙芯片自己重启后，系统里的登记会没掉、但套接字看起来还好好的，
+    /// 手机就会一直"找不到服务"；定时补登一下就好。登记失败 = 服务已经坏了
+    pub fn refresh(&mut self) -> bool {
+        unsafe {
+            set_service(&mut self.addr, false);
+            set_service(&mut self.addr, true) == 0
+        }
+    }
+}
+
 impl Drop for BtServer {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::SeqCst);
