@@ -334,6 +334,35 @@
       .songName {
         font-weight: 700;
       }
+      /* 分类标签（在电脑的选歌菜单里点歌右边的「分类」）：横着滑 */
+      #songCats {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        margin-top: 10px;
+        padding-bottom: 2px;
+        scrollbar-width: none;
+      }
+      #songCats[hidden] {
+        display: none;
+      }
+      #songCats button {
+        flex: 0 0 auto;
+        padding: 7px 14px;
+        font-size: 13px;
+        border-radius: 999px;
+      }
+      #songCats button.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      #songCats i {
+        font-style: normal;
+        font-size: 11px;
+        opacity: 0.65;
+        margin-left: 5px;
+      }
       .songBy {
         font-size: 12px;
         color: var(--sub);
@@ -894,6 +923,7 @@
         <label class="sens">点击补偿 <input id="comp" type="range" min="0" max="150" step="5" /> <span id="compV"></span></label>
         <div class="note">结算说"平均偏晚"就往右调一点（手机屏幕感应手指有延迟）。</div>
       </section>
+      <div id="songCats" hidden></div>
       <div id="songs"><div class="note">读取歌单…</div></div>
     </div>
 
@@ -1543,17 +1573,59 @@
 
       // ---------- 音游（手机模式）：手机上选歌、点靶子，电脑放歌、画裂缝、记分 ----------
       const DIFF_LABEL = { Easy: "简单", Normal: "普通", Hard: "困难", Expert: "专家", ExpertPlus: "专家+" };
-      let songsLoaded = false;
-      async function loadSongs(force = false) {
-        if (songsLoaded && !force) return;
+      // 分类：全部 / 各个分类 / 未分类（记住上次选的）
+      const ALL_CAT = "",
+        NO_CAT = "\u0000未分类";
+      let songCat = localStorage.getItem("songCat") ?? ALL_CAT;
+      let allSongs = [],
+        catOrder = [];
+      async function loadSongs() {
         const list = $("songs");
         try {
           const r = await api("/api/rhythm/songs");
           if (!r.ok) throw new Error(await r.text());
-          const songs = await r.json();
-          songsLoaded = true;
+          allSongs = await r.json();
+          // 分类的先后；旧版电脑没有这个接口，就按歌里出现的顺序
+          catOrder = await api("/api/rhythm/categories")
+            .then((x) => (x.ok ? x.json() : null))
+            .then((c) => c?.order ?? null)
+            .catch(() => null);
+          catOrder ??= [...new Set(allSongs.flatMap((x) => x.tags ?? []))];
+          renderSongs();
+        } catch (e) {
+          list.textContent = `读歌单失败：${e.message}`;
+        }
+      }
+      function renderSongs() {
+        const list = $("songs"),
+          bar = $("songCats");
+        const tagsOf = (x) => x.tags ?? [];
+        const none = allSongs.filter((x) => !tagsOf(x).length).length;
+        if (songCat !== ALL_CAT && !(songCat === NO_CAT ? none : catOrder.includes(songCat))) songCat = ALL_CAT;
+        const items = [[ALL_CAT, "全部", allSongs.length], ...catOrder.map((c) => [c, c, allSongs.filter((x) => tagsOf(x).includes(c)).length])];
+        if (none) items.push([NO_CAT, "未分类", none]);
+        bar.hidden = !catOrder.length;
+        bar.replaceChildren(
+          ...items.map(([id, label, n]) => {
+            const b = document.createElement("button");
+            b.className = songCat === id ? "on" : "";
+            b.textContent = label;
+            const c = document.createElement("i");
+            c.textContent = n;
+            b.append(c);
+            b.onclick = () => {
+              songCat = id;
+              localStorage.setItem("songCat", id);
+              renderSongs();
+            };
+            return b;
+          }),
+        );
+        const songs = allSongs.filter((x) => (songCat === ALL_CAT ? true : songCat === NO_CAT ? !tagsOf(x).length : tagsOf(x).includes(songCat)));
+        {
           list.replaceChildren();
-          if (!songs.length) list.textContent = "电脑的 charts 文件夹里还没有歌";
+          if (!allSongs.length) list.textContent = "电脑的 charts 文件夹里还没有歌";
+          else if (!songs.length) list.textContent = "这个分类里没有歌";
           for (const s of songs) {
             const card = document.createElement("div");
             card.className = "song";
@@ -1581,8 +1653,6 @@
             card.append(name, by, diffs);
             list.append(card);
           }
-        } catch (e) {
-          list.textContent = `读歌单失败：${e.message}`;
         }
       }
       const enc = encodeURIComponent;

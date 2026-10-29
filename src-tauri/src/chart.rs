@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -616,6 +616,57 @@ pub fn save_prefs(path: &Path, id: &str, offset_ms: Option<i32>, speed: Option<f
     fs::rename(&tmp, path)
 }
 
+/// 自己给歌分的类，存在配置文件夹的 rhythm-categories.json：
+/// { "order": ["分类名", …]（选歌时标签的先后）, "songs": { "文件夹名": ["分类名", …] } }。一首歌可以在好几个分类里
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+pub struct Categories {
+    #[serde(default)]
+    pub order: Vec<String>,
+    #[serde(default)]
+    pub songs: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl Categories {
+    /// 整理：分类名去掉首尾空格、最长 20 字、不重复、不要空的；歌只留在存在的分类里，按 order 排；没分类的歌不记
+    pub fn tidy(mut self) -> Self {
+        let mut order: Vec<String> = Vec::new();
+        for name in self.order.drain(..) {
+            let n: String = name.trim().chars().take(20).collect();
+            if !n.is_empty() && !order.contains(&n) {
+                order.push(n);
+            }
+        }
+        let songs = std::mem::take(&mut self.songs)
+            .into_iter()
+            .filter_map(|(id, tags)| {
+                let tags: Vec<String> = order.iter().filter(|o| tags.iter().any(|t| t.trim() == o.as_str())).cloned().collect();
+                (!tags.is_empty()).then_some((id, tags))
+            })
+            .collect();
+        Self { order, songs }
+    }
+
+    /// 某首歌的分类（按 order 的先后）
+    pub fn of(&self, id: &str) -> Vec<String> {
+        self.songs.get(id).cloned().unwrap_or_default()
+    }
+}
+
+pub fn load_categories(path: &Path) -> Categories {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Categories>(&t).ok())
+        .map(Categories::tidy)
+        .unwrap_or_default()
+}
+
+pub fn save_categories(path: &Path, cats: &Categories) -> std::io::Result<()> {
+    let text = serde_json::to_string_pretty(cats).map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,5 +914,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn categories_tidy() {
+        let c = Categories {
+            order: vec![" 动漫 ".into(), "".into(), "中文".into(), "动漫".into()],
+            songs: [
+                ("a".to_string(), vec!["中文".to_string(), "动漫".to_string(), "没有这个".to_string()]),
+                ("b".to_string(), vec!["没有这个".to_string()]),
+            ]
+            .into_iter()
+            .collect(),
+        }
+        .tidy();
+        assert_eq!(c.order, vec!["动漫", "中文"]);
+        assert_eq!(c.of("a"), vec!["动漫", "中文"]);
+        assert!(c.of("b").is_empty());
+        assert!(!c.songs.contains_key("b"));
     }
 }

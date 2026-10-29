@@ -225,6 +225,27 @@ struct SongEntry {
     /// 这首歌保存过的判定偏移（毫秒）和下落速度倍数
     offset_ms: i64,
     speed: f64,
+    /// 自己给这首歌分的类（按分类的先后）
+    tags: Vec<String>,
+}
+
+fn categories_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("rhythm-categories.json"))
+}
+
+/// 歌曲分类：所有分类（先后）和每首歌在哪些分类里
+#[tauri::command]
+fn rhythm_categories_get(app: AppHandle) -> chart::Categories {
+    categories_path(&app).map(|p| chart::load_categories(&p)).unwrap_or_default()
+}
+
+/// 保存整份分类（整理后再存），返回整理后的样子
+#[tauri::command]
+fn rhythm_categories_set(app: AppHandle, cats: chart::Categories) -> Result<chart::Categories, String> {
+    let path = categories_path(&app).ok_or("找不到配置文件夹")?;
+    let cats = cats.tidy();
+    chart::save_categories(&path, &cats).map_err(|e| format!("分类没保存成功：{e}"))?;
+    Ok(cats)
 }
 
 fn offsets_path(app: &AppHandle) -> Option<PathBuf> {
@@ -236,11 +257,13 @@ fn offsets_path(app: &AppHandle) -> Option<PathBuf> {
 fn rhythm_songs(app: AppHandle) -> Vec<SongEntry> {
     let Some(root) = chart::charts_dir() else { return Vec::new() };
     let offsets = offsets_path(&app).map(|p| chart::load_offsets(&p)).unwrap_or_default();
+    let cats = rhythm_categories_get(app.clone());
     chart::list_songs(&root)
         .into_iter()
         .map(|info| {
             let (offset_ms, speed) = chart::song_prefs(&offsets, &info.id);
-            SongEntry { info, offset_ms, speed }
+            let tags = cats.of(&info.id);
+            SongEntry { info, offset_ms, speed, tags }
         })
         .collect()
 }
@@ -728,6 +751,8 @@ fn main() {
             rhythm_chart,
             rhythm_audio,
             rhythm_prefs_set,
+            rhythm_categories_get,
+            rhythm_categories_set,
             rhythm_now_playing,
             widgets_layout_get,
             widgets_layout_save,

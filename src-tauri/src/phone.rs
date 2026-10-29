@@ -514,6 +514,7 @@ impl Phone {
             // ---------- 音游（手机模式）：手机选歌、点靶子，电脑照常放歌和画裂缝 ----------
             ("GET", "/api/time") => json_resp(json!({ "now": now_ms() })),
             ("GET", "/api/rhythm/songs") => json_resp(serde_json::to_value(crate::rhythm_songs(self.app.clone())).unwrap_or(Value::Null)),
+            ("GET", "/api/rhythm/categories") => json_resp(serde_json::to_value(crate::rhythm_categories_get(self.app.clone())).unwrap_or(Value::Null)),
             ("POST", "/api/rhythm/open") => {
                 // 电脑回到桌面（已经在桌面就不按，免得又切回去），弹出选歌菜单
                 if !crate::phone_input::at_desktop() {

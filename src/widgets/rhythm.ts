@@ -33,6 +33,13 @@ interface Song {
   offset_ms: number;
   /** 下落速度倍数：1 = 提前 1.5 秒出现；2 = 提前 0.75 秒（落得快一倍） */
   speed: number;
+  /** 自己分的类 */
+  tags: string[];
+}
+/** 歌曲分类（rhythm-categories.json） */
+interface Categories {
+  order: string[];
+  songs: Record<string, string[]>;
 }
 interface Note {
   t: number;
@@ -123,6 +130,27 @@ function setPlayMode(m: PlayMode) {
   }
 }
 
+// ---------------- 分类 ----------------
+
+/** 选歌时停在哪个分类：ALL = 全部，NONE = 未分类，其他 = 分类名 */
+const ALL = "";
+const NONE = "\u0000未分类";
+const CAT_KEY = "rhythm-cat";
+function savedCat(): string {
+  try {
+    return localStorage.getItem(CAT_KEY) ?? ALL;
+  } catch {
+    return ALL;
+  }
+}
+function setSavedCat(c: string) {
+  try {
+    localStorage.setItem(CAT_KEY, c);
+  } catch {
+    // 记不住就算了
+  }
+}
+
 /** 裂缝射击：先让小组件窗口退出音游模式（沉回桌面、交还焦点），再打开裂缝窗口 */
 async function openRift(song: Song, diff: Difficulty) {
   cleanup?.();
@@ -195,6 +223,8 @@ function showMenu(anchor: Rect) {
         modes.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
       });
     }
+    // 分类标签：全部 / 各个分类 / 未分类；双击分类可以改名或删除
+    const tabs = el("div", "rh-cats", card);
     const list = el("div", "rh-list", card);
     el("div", "rh-empty", list, "读取中…");
 
@@ -208,42 +238,184 @@ function showMenu(anchor: Rect) {
     };
     place();
 
-    invoke<Song[]>("rhythm_songs")
-      .then((songs) => {
-        list.replaceChildren();
-        if (songs.length === 0) {
-          el("div", "rh-empty", list, "charts 文件夹里还没有歌。把 BeatSaver 的 zip 或 osu! 的 .osz（改成 .zip）解压进去，一首歌一个文件夹。");
+    let songs: Song[] = [];
+    let cats: Categories = { order: [], songs: {} };
+    let cur = savedCat();
+    /** 正在给哪首歌改分类（展开着的那一首） */
+    let editing = "";
+    /** 正在改名的分类 */
+    let renaming = "";
+
+    /** 存分类：先按新的画出来，存好后再用整理过的结果刷新 */
+    const saveCats = (next: Categories) => {
+      cats = next;
+      render();
+      invoke<Categories>("rhythm_categories_set", { cats: next })
+        .then((c) => {
+          cats = c;
+          render();
+        })
+        .catch((e) => console.error(e));
+    };
+    const tagsOf = (id: string) => cats.songs[id] ?? [];
+    const inCur = (song: Song) => (cur === ALL ? true : cur === NONE ? tagsOf(song.id).length === 0 : tagsOf(song.id).includes(cur));
+
+    function renderTabs() {
+      tabs.replaceChildren();
+      if (cur !== ALL && cur !== NONE && !cats.order.includes(cur)) cur = ALL;
+      const none = songs.filter((s) => tagsOf(s.id).length === 0).length;
+      if (cur === NONE && !none) cur = ALL;
+      // 还没建过分类：不显示标签，歌右边的「分类」就是入口
+      tabs.hidden = !cats.order.length;
+      const items: [string, string, number][] = [
+        [ALL, "全部", songs.length],
+        ...cats.order.map((c): [string, string, number] => [c, c, songs.filter((s) => tagsOf(s.id).includes(c)).length]),
+      ];
+      if (none) items.push([NONE, "未分类", none]);
+      for (const [id, label, n] of items) {
+        if (renaming && id === renaming) {
+          // 改名：回车保存，Esc 取消；名字清空再回车 = 删掉这个分类（歌不会删，只是不在这个分类里了）
+          const input = el("input", "rh-cat-input", tabs);
+          input.value = id;
+          input.maxLength = 20;
+          input.title = "回车保存 · 清空后回车 = 删掉这个分类（歌还在）· Esc 取消";
+          const done = (ok: boolean) => {
+            if (renaming !== id) return;
+            renaming = "";
+            const name = input.value.trim();
+            if (!ok || name === id || (name && cats.order.includes(name))) return render(); // 没改、取消、重名
+            const order = name ? cats.order.map((c) => (c === id ? name : c)) : cats.order.filter((c) => c !== id);
+            const map: Record<string, string[]> = {};
+            for (const [sid, t] of Object.entries(cats.songs)) map[sid] = name ? t.map((c) => (c === id ? name : c)) : t.filter((c) => c !== id);
+            if (cur === id) setSavedCat((cur = name || ALL));
+            saveCats({ order, songs: map });
+          };
+          input.addEventListener("keydown", (e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") done(true);
+            if (e.key === "Escape") done(false);
+          });
+          input.addEventListener("blur", () => done(false));
+          queueMicrotask(() => (input.focus(), input.select()));
+          continue;
         }
-        for (const song of songs) {
-          const row = el("div", "rh-song", list);
-          const meta = el("div", "rh-song-meta", row);
-          el("div", "rh-song-name", meta, song.title + (song.sub_title ? ` ${song.sub_title}` : ""));
-          el("div", "rh-song-artist", meta, `${song.artist}${song.mapper ? ` · 谱 ${song.mapper}` : ""} · ${Math.round(song.bpm)} BPM`);
-          const diffs = el("div", "rh-diffs", row);
-          if (song.format === "osu") {
-            // osu!：每个 .osu 一个难度。同一种玩法排在一起（standard 在前），各自按靶子数从少到多排；
-            // 太鼓、接水果、mania 在按钮上标出来；不认识的模式灰着，写上原因
-            const sorted = [...song.difficulties].sort(
-              (a, b) => Number(!!a.note) - Number(!!b.note) || a.tag.localeCompare(b.tag) || a.count - b.count,
-            );
-            for (const d of sorted) {
-              const extra = d.note || d.tag;
-              const b = el("button", "rh-diff", diffs, extra ? `${d.name}（${extra}）` : d.name);
-              b.title = `${d.name} · ${d.count} 个靶子`;
-              b.disabled = !!d.note;
-              b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
-            }
-          } else {
-            // 只列标准谱（单手、无方向等玩法对 4 键没有意义）；没有标准谱就全列
-            const std = song.difficulties.filter((d) => d.characteristic === "Standard");
-            for (const d of std.length ? std : song.difficulties) {
-              const b = el("button", "rh-diff", diffs, diffLabel(song, d));
-              b.title = `${d.characteristic} / ${d.name}`;
-              b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
-            }
+        const b = el("button", "rh-cat" + (cur === id ? " on" : ""), tabs);
+        el("span", "", b, label);
+        el("span", "rh-cat-n", b, String(n));
+        b.addEventListener("click", () => {
+          setSavedCat((cur = id));
+          render();
+          list.scrollTop = 0;
+        });
+        if (id !== ALL && id !== NONE) {
+          b.title = "双击改名或删除";
+          b.addEventListener("dblclick", () => {
+            renaming = id;
+            render();
+          });
+        }
+      }
+    }
+
+    /** 展开的分类编辑：点分类 = 放进 / 拿出；输入新名字回车 = 新建分类并放进去 */
+    function tagEditor(song: Song, row: HTMLElement) {
+      const box = el("div", "rh-tagbox", row);
+      const mine = tagsOf(song.id);
+      for (const c of cats.order) {
+        const on = mine.includes(c);
+        const b = el("button", "rh-tag" + (on ? " on" : ""), box, (on ? "✓ " : "") + c);
+        b.addEventListener("click", () =>
+          saveCats({ order: cats.order, songs: { ...cats.songs, [song.id]: on ? mine.filter((x) => x !== c) : [...mine, c] } }),
+        );
+      }
+      const input = el("input", "rh-tag-input", box);
+      input.placeholder = cats.order.length ? "新分类，回车添加" : "输入分类名（比如 动漫、中文、练习），回车";
+      input.maxLength = 20;
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") {
+          editing = "";
+          render();
+        }
+        if (e.key !== "Enter") return;
+        const name = input.value.trim();
+        if (!name) return;
+        const order = cats.order.includes(name) ? cats.order : [...cats.order, name];
+        saveCats({ order, songs: { ...cats.songs, [song.id]: mine.includes(name) ? mine : [...mine, name] } });
+        list.querySelector<HTMLInputElement>(".rh-tag-input")?.focus();
+      });
+      if (!cats.order.length) queueMicrotask(() => input.focus());
+    }
+
+    function renderList() {
+      const top = list.scrollTop;
+      list.replaceChildren();
+      if (songs.length === 0) {
+        el("div", "rh-empty", list, "charts 文件夹里还没有歌。把 BeatSaver 的 zip 或 osu! 的 .osz（改成 .zip）解压进去，一首歌一个文件夹。");
+        return;
+      }
+      const shown = songs.filter(inCur);
+      if (!shown.length) el("div", "rh-empty", list, "这个分类里还没有歌。去「全部」里点歌右边的「分类」把歌放进来。");
+      for (const song of shown) {
+        const row = el("div", "rh-song", list);
+        const head = el("div", "rh-song-head", row);
+        const meta = el("div", "rh-song-meta", head);
+        el("div", "rh-song-name", meta, song.title + (song.sub_title ? ` ${song.sub_title}` : ""));
+        const tags = tagsOf(song.id);
+        el(
+          "div",
+          "rh-song-artist",
+          meta,
+          `${song.artist}${song.mapper ? ` · 谱 ${song.mapper}` : ""} · ${Math.round(song.bpm)} BPM` + (tags.length && cur === ALL ? ` · ${tags.join("、")}` : ""),
+        );
+        const tagBtn = el("button", "rh-tagbtn" + (editing === song.id ? " on" : ""), head, "分类");
+        tagBtn.title = "给这首歌分类";
+        tagBtn.addEventListener("click", () => {
+          editing = editing === song.id ? "" : song.id;
+          render();
+        });
+        const diffs = el("div", "rh-diffs", row);
+        if (song.format === "osu") {
+          // osu!：每个 .osu 一个难度。同一种玩法排在一起（standard 在前），各自按靶子数从少到多排；
+          // 太鼓、接水果、mania 在按钮上标出来；不认识的模式灰着，写上原因
+          const sorted = [...song.difficulties].sort(
+            (a, b) => Number(!!a.note) - Number(!!b.note) || a.tag.localeCompare(b.tag) || a.count - b.count,
+          );
+          for (const d of sorted) {
+            const extra = d.note || d.tag;
+            const b = el("button", "rh-diff", diffs, extra ? `${d.name}（${extra}）` : d.name);
+            b.title = `${d.name} · ${d.count} 个靶子`;
+            b.disabled = !!d.note;
+            b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
+          }
+        } else {
+          // 只列标准谱（单手、无方向等玩法对 4 键没有意义）；没有标准谱就全列
+          const std = song.difficulties.filter((d) => d.characteristic === "Standard");
+          for (const d of std.length ? std : song.difficulties) {
+            const b = el("button", "rh-diff", diffs, diffLabel(song, d));
+            b.title = `${d.characteristic} / ${d.name}`;
+            b.addEventListener("click", () => (phoneMenu || playMode() === "rift" ? openRift(song, d) : loadAndPlay(song, d, anchor)));
           }
         }
-        place();
+        if (editing === song.id) tagEditor(song, row);
+      }
+      list.scrollTop = top;
+    }
+
+    function render() {
+      // 重画会换掉输入框：正在新分类框里打字的话，画完把光标放回去
+      const typing = document.activeElement?.classList.contains("rh-tag-input");
+      renderTabs();
+      renderList();
+      place();
+      if (typing) list.querySelector<HTMLInputElement>(".rh-tag-input")?.focus();
+    }
+
+    Promise.all([invoke<Song[]>("rhythm_songs"), invoke<Categories>("rhythm_categories_get").catch(() => cats)])
+      .then(([s, c]) => {
+        songs = s;
+        cats = c;
+        render();
       })
       .catch(() => {
         list.replaceChildren();
